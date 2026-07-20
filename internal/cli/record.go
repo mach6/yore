@@ -24,14 +24,14 @@ func stateDir() string { return config.Dir() }
 // via flags. All it does is one fsync'd spool append plus a best-effort
 // daemon poke. Bad flags are swallowed by the cobra command (exit 0) before
 // this runs, keeping the shell unbreakable.
-func runRecord(exit int, durMs, startMs int64, session, cwd, tag string) int {
+func runRecord(exit int, durMs, startMs int64, session, cwd, tag string) {
 	raw, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20)) // sanity cap: 1MiB of command text
 	if err != nil {
-		return 0
+		return
 	}
 	cmd := strings.TrimRight(string(raw), "\n")
 	if strings.TrimSpace(cmd) == "" {
-		return 0
+		return
 	}
 
 	// Recording gate. Any rejection returns silently (exit 0) — never break the
@@ -40,12 +40,12 @@ func runRecord(exit int, durMs, startMs int64, session, cwd, tag string) int {
 	cfg, _ := config.Load(dir)
 	// histignorespace: a leading space opts a command out of history unless the
 	// user has explicitly turned that off. Checked on the raw text.
-	if !cfg.RecordSpacePrefixedOn() && len(cmd) > 0 && (cmd[0] == ' ' || cmd[0] == '\t') {
-		return 0
+	if !cfg.RecordSpacePrefixedOn() && cmd != "" && (cmd[0] == ' ' || cmd[0] == '\t') {
+		return
 	}
 	filter, _ := redact.New(cfg.IgnorePatterns, cfg.IgnoreDirs)
 	if filter.SkipDir(cwd) || filter.Sensitive(cmd) {
-		return 0
+		return
 	}
 
 	start := startMs
@@ -77,7 +77,6 @@ func runRecord(exit int, durMs, startMs int64, session, cwd, tag string) int {
 	if spool.Append(config.SpoolDir(dir), r) == nil {
 		pokeDaemon(dir)
 	}
-	return 0
 }
 
 // pokeDaemon nudges a running daemon to ingest the spool, spawning one if
@@ -89,8 +88,8 @@ func pokeDaemon(dir string) {
 		spawnDaemon()
 		return
 	}
-	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(100 * time.Millisecond))
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(100 * time.Millisecond))
 	_ = proto.WriteMsg(conn, proto.Request{Op: proto.OpPing})
 	// The response is irrelevant; the write itself resets the idle timer and
 	// triggers ingest. Read just to avoid RST-before-processing races.

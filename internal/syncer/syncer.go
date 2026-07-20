@@ -153,7 +153,7 @@ func recordFromPayload(pt []byte, hostID string, seq uint64, keyID string) (rec.
 // result (and the HK version) for the lifetime of the Syncer. It errors if the
 // server has no wrap for us — meaning this device is not (or no longer) an
 // active member of the group.
-func (s *Syncer) resolveHK(ctx context.Context) ([32]byte, int, error) {
+func (s *Syncer) resolveHK(ctx context.Context) (key [32]byte, version int, err error) {
 	s.mu.Lock()
 	if s.hkResolved {
 		hk, ver := s.hk, s.hkVersion

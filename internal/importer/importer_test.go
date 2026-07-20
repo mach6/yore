@@ -25,7 +25,7 @@ type want struct {
 // than require) for the per-record checks so that a mismatch on one field or
 // one record doesn't hide mismatches on the others in the same run — but the
 // length check stays a require since indexing got[i] below depends on it.
-func check(t *testing.T, got []rec.Record, host string, wants []want) {
+func check(t *testing.T, got []rec.Record, wants []want) {
 	t.Helper()
 	require.Len(t, got, len(wants), "got %d records, want %d: %+v", len(got), len(wants), got)
 	for i, w := range wants {
@@ -38,7 +38,7 @@ func check(t *testing.T, got []rec.Record, host string, wants []want) {
 		assert.Empty(t, r.Cwd, "record %d cwd", i)
 		assert.Empty(t, r.HostID, "record %d hostID", i)
 		assert.Empty(t, r.Hostname, "record %d hostname", i)
-		assert.Equal(t, rec.ImportID(host, w.startMs, w.cmd), r.ID, "record %d id not deterministic ImportID", i)
+		assert.Equal(t, rec.ImportID(testHost, w.startMs, w.cmd), r.ID, "record %d id not deterministic ImportID", i)
 	}
 }
 
@@ -47,7 +47,7 @@ func TestZsh(t *testing.T) {
 	require.NoError(t, err)
 	got, err := Zsh(strings.NewReader(string(b)), testHost)
 	require.NoError(t, err)
-	check(t, got, testHost, []want{
+	check(t, got, []want{
 		{startMs: 1600000000000, dur: rec.Int64Ptr(5000), cmd: "echo hello"},
 		{startMs: 1600000100000, dur: rec.Int64Ptr(0), cmd: "git status"},
 		{startMs: 0, dur: nil, cmd: "plain command without timestamp"},
@@ -109,7 +109,7 @@ func TestZshUnit(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := Zsh(strings.NewReader(tc.in), testHost)
 			require.NoError(t, err)
-			check(t, got, testHost, tc.wants)
+			check(t, got, tc.wants)
 		})
 	}
 }
@@ -123,7 +123,7 @@ func TestZshMetafied(t *testing.T) {
 
 	got, err := Zsh(strings.NewReader(string(line)), testHost)
 	require.NoError(t, err)
-	check(t, got, testHost, []want{
+	check(t, got, []want{
 		{startMs: 1600000000000, dur: rec.Int64Ptr(0), cmd: s},
 	})
 }
@@ -147,7 +147,7 @@ func TestBash(t *testing.T) {
 	require.NoError(t, err)
 	got, err := Bash(strings.NewReader(string(b)), testHost)
 	require.NoError(t, err)
-	check(t, got, testHost, []want{
+	check(t, got, []want{
 		{startMs: 1600000000000, cmd: "echo first"},
 		{startMs: 0, cmd: "echo no timestamp"},
 		{startMs: 1600000200000, cmd: "echo last wins"}, // consecutive ts, last wins
@@ -188,7 +188,7 @@ func TestBashUnit(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := Bash(strings.NewReader(tc.in), testHost)
 			require.NoError(t, err)
-			check(t, got, testHost, tc.wants)
+			check(t, got, tc.wants)
 		})
 	}
 }

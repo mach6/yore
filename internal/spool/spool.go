@@ -39,11 +39,11 @@ func Append(spoolDir string, r rec.Record) error {
 		return err
 	}
 	if _, err := f.Write(line); err != nil {
-		f.Close()
+		_ = f.Close()
 		return err
 	}
 	if err := f.Sync(); err != nil {
-		f.Close()
+		_ = f.Close()
 		return err
 	}
 	return f.Close()
@@ -92,7 +92,7 @@ func drainFile(path string, fn func(rec.Record) error) (int, error) {
 		}
 		return 0, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	n := 0
 	br := bufio.NewReader(f)

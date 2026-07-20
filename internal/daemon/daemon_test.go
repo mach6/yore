@@ -42,7 +42,7 @@ func startDaemon(t *testing.T, dir string, idle time.Duration) (*Client, *daemon
 	t.Cleanup(func() {
 		select {
 		case <-h.done:
-			c.Close()
+			_ = c.Close()
 			return
 		default:
 		}
@@ -55,7 +55,7 @@ func startDaemon(t *testing.T, dir string, idle time.Duration) (*Client, *daemon
 		case <-time.After(2 * time.Second):
 			assert.Fail(t, "daemon did not shut down in cleanup")
 		}
-		c.Close()
+		_ = c.Close()
 	})
 	return c, h
 }
@@ -79,8 +79,8 @@ func rawRequest(t *testing.T, dir string, req proto.Request) proto.Response {
 	t.Helper()
 	conn, err := net.DialTimeout("unix", config.SocketPath(dir), 500*time.Millisecond)
 	require.NoError(t, err, "dial")
-	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
 	require.NoError(t, proto.WriteMsg(conn, req), "write")
 	var resp proto.Response
 	require.NoError(t, proto.ReadMsg(bufio.NewReader(conn), &resp), "read")
@@ -131,7 +131,7 @@ func TestEnsureRunningDialSuccess(t *testing.T) {
 	// and never spawns (which, under test, would re-exec the test binary).
 	c, err := EnsureRunning(dir)
 	require.NoError(t, err, "EnsureRunning")
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	require.NoError(t, c.Ping(), "Ping")
 	_ = h
 }
@@ -249,7 +249,7 @@ func TestIncrementalQueriesConsistent(t *testing.T) {
 	// Compare against a fresh connection's full-scan result.
 	fresh, _ := startDaemonClient(t, dir)
 	full, _ := fresh.Query(proto.QueryReq{Q: "git"})
-	fresh.Close()
+	_ = fresh.Close()
 
 	assert.Equal(t, ids(full.Rows), ids(inc.Rows), "incremental != full")
 	assert.Equal(t, []string{"r4", "r2", "r1"}, ids(inc.Rows), "git rows")
@@ -285,7 +285,7 @@ func TestSecondRunLockedLosesQuietly(t *testing.T) {
 
 	// The first daemon must still be serving (the loser did not disturb it).
 	c := dialRetry(t, dir, time.Second)
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	assert.NoError(t, c.Ping(), "first daemon not serving after loser")
 }
 

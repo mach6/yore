@@ -23,7 +23,7 @@ func newDevice(t *testing.T, url string) (*Syncer, *store.Store) {
 	t.Helper()
 	st, err := store.Open(t.TempDir())
 	require.NoError(t, err, "store.Open")
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 	key, err := cryptobox.GenerateDeviceKey()
 	require.NoError(t, err, "GenerateDeviceKey")
 	return New(st, NewHTTPClient(url, testToken, ""), key, testEpoch), st

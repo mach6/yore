@@ -52,7 +52,7 @@ func newServer(t *testing.T) string {
 	require.NoError(t, err, "server.New")
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
-	t.Cleanup(func() { srv.Close() })
+	t.Cleanup(func() { _ = srv.Close() })
 	return ts.URL
 }
 

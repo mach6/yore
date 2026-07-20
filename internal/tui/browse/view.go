@@ -487,7 +487,7 @@ const (
 // commandSegments turns a command into highlighted, single-line, width-limited
 // runs, collapsing embedded newlines to a dim ⏎ marker. Returns the runs and
 // their total display width.
-func commandSegments(th *theme.Theme, cmd string, q match.Query, maxCols int) ([]styledSeg, int) {
+func commandSegments(th *theme.Theme, cmd string, q match.Query, maxCols int) (segs []styledSeg, width int) {
 	if maxCols <= 0 || cmd == "" {
 		return nil, 0
 	}
@@ -561,7 +561,6 @@ func commandSegments(th *theme.Theme, cmd string, q match.Query, maxCols int) ([
 		return nil, 0
 	}
 
-	var segs []styledSeg
 	var run strings.Builder
 	curK := kept[0].k
 	flush := func() {

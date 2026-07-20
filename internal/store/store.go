@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"go.etcd.io/bbolt"
+	bolterrors "go.etcd.io/bbolt/errors"
 
 	"yore/internal/config"
 	"yore/internal/rec"
@@ -49,7 +50,7 @@ func Open(dir string) (*Store, error) {
 	}
 	db, err := bbolt.Open(config.DBPath(dir), 0o600, &bbolt.Options{Timeout: 200 * time.Millisecond})
 	if err != nil {
-		if errors.Is(err, bbolt.ErrTimeout) {
+		if errors.Is(err, bolterrors.ErrTimeout) {
 			return nil, ErrLocked
 		}
 		return nil, err
@@ -79,7 +80,7 @@ func Open(dir string) (*Store, error) {
 		return nil
 	})
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 	return s, nil

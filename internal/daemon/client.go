@@ -69,8 +69,7 @@ func EnsureRunning(dir string) (*Client, error) {
 
 // Ping resets the daemon's idle timer and nudges spool ingest.
 func (c *Client) Ping() error {
-	_, err := c.ok(proto.Request{Op: proto.OpPing}, opDeadline)
-	return err
+	return c.ok(proto.Request{Op: proto.OpPing}, opDeadline)
 }
 
 // Query runs a search.
@@ -120,8 +119,7 @@ func (c *Client) Hosts() (proto.HostsInfo, error) {
 
 // Delete tombstones one record by id.
 func (c *Client) Delete(id string) error {
-	_, err := c.ok(proto.Request{Op: proto.OpDelete, DeleteID: id}, opDeadline)
-	return err
+	return c.ok(proto.Request{Op: proto.OpDelete, DeleteID: id}, opDeadline)
 }
 
 // Devices lists enrolled devices (via the daemon's syncer).
@@ -141,41 +139,37 @@ func (c *Client) Devices() (proto.DevicesInfo, error) {
 
 // Approve admits a pending device (wraps the History Key for it).
 func (c *Client) Approve(id string) error {
-	_, err := c.ok(proto.Request{Op: proto.OpApprove, DeviceID: id}, syncDeadline)
-	return err
+	return c.ok(proto.Request{Op: proto.OpApprove, DeviceID: id}, syncDeadline)
 }
 
 // Revoke revokes a device and rotates keys.
 func (c *Client) Revoke(id string) error {
-	_, err := c.ok(proto.Request{Op: proto.OpRevoke, DeviceID: id}, syncDeadline)
-	return err
+	return c.ok(proto.Request{Op: proto.OpRevoke, DeviceID: id}, syncDeadline)
 }
 
 // Sync forces a synchronous push/pull cycle (no-op if sync isn't configured).
 func (c *Client) Sync() error {
-	_, err := c.ok(proto.Request{Op: proto.OpSync}, syncDeadline)
-	return err
+	return c.ok(proto.Request{Op: proto.OpSync}, syncDeadline)
 }
 
 // Shutdown asks the daemon to exit gracefully.
 func (c *Client) Shutdown() error {
-	_, err := c.ok(proto.Request{Op: proto.OpShutdown}, opDeadline)
-	return err
+	return c.ok(proto.Request{Op: proto.OpShutdown}, opDeadline)
 }
 
 // Close closes the connection (it does not stop the daemon).
 func (c *Client) Close() error { return c.conn.Close() }
 
 // ok performs a roundtrip and checks Response.OK.
-func (c *Client) ok(req proto.Request, deadline time.Duration) (proto.Response, error) {
+func (c *Client) ok(req proto.Request, deadline time.Duration) error {
 	resp, err := c.roundtrip(req, deadline)
 	if err != nil {
-		return resp, err
+		return err
 	}
 	if !resp.OK {
-		return resp, respErr(resp)
+		return respErr(resp)
 	}
-	return resp, nil
+	return nil
 }
 
 // roundtrip writes one request and reads one response under a deadline. It
@@ -187,7 +181,7 @@ func (c *Client) roundtrip(req proto.Request, deadline time.Duration) (proto.Res
 	if err := c.conn.SetDeadline(time.Now().Add(deadline)); err != nil {
 		return proto.Response{}, err
 	}
-	defer c.conn.SetDeadline(time.Time{})
+	defer func() { _ = c.conn.SetDeadline(time.Time{}) }()
 
 	if err := proto.WriteMsg(c.conn, req); err != nil {
 		return proto.Response{}, err

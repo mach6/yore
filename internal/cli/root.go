@@ -116,7 +116,8 @@ func newRecordCmd() *cobra.Command {
 		SilenceUsage:          true,
 		DisableFlagsInUseLine: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return code(runRecord(exit, durMs, startMs, session, cwd, tag))
+			runRecord(exit, durMs, startMs, session, cwd, tag)
+			return nil
 		},
 	}
 	cmd.Flags().IntVar(&exit, "exit", -1, "exit status of the command (-1 = unknown)")
@@ -474,7 +475,7 @@ func completeDeviceIDs(*cobra.Command, []string, string) ([]cobra.Completion, co
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	info, err := c.Devices()
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp

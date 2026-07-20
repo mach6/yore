@@ -131,7 +131,8 @@ func Load(dir string) (Config, error) {
 	if err != nil {
 		return c, err
 	}
-	return c, json.Unmarshal(b, &c)
+	err = json.Unmarshal(b, &c)
+	return c, err
 }
 
 // Save writes config.json (0600).

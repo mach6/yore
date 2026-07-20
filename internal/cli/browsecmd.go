@@ -20,7 +20,7 @@ func runBrowse(acceptFile string) int {
 		fmt.Fprintln(os.Stderr, "yore browse: daemon unavailable:", err)
 		return 1
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	cwd, _ := os.Getwd()
 	cfg, _ := config.Load(stateDir())

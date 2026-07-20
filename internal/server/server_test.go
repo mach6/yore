@@ -42,13 +42,13 @@ func (c *testClient) withKey(devID string, priv ed25519.PrivateKey) *testClient 
 	return &cp
 }
 
-func (c *testClient) do(method, path string, body any) (int, []byte) {
+func (c *testClient) do(method, path string, body any) (status int, resp []byte) {
 	c.t.Helper()
 	return c.send(method, path, marshal(c.t, body), true)
 }
 
 // doRaw sends raw bytes as the body (for malformed-JSON cases).
-func (c *testClient) doRaw(method, path string, raw []byte) (int, []byte) {
+func (c *testClient) doRaw(method, path string, raw []byte) (status int, resp []byte) {
 	c.t.Helper()
 	return c.send(method, path, raw, true)
 }
@@ -56,7 +56,7 @@ func (c *testClient) doRaw(method, path string, raw []byte) (int, []byte) {
 // send issues the request, attaching the bearer token and — when sign is true
 // and the client has a signing identity — the reqsign headers over the exact
 // body bytes and the request's RequestURI.
-func (c *testClient) send(method, path string, body []byte, sign bool) (int, []byte) {
+func (c *testClient) send(method, path string, body []byte, sign bool) (status int, resp []byte) {
 	c.t.Helper()
 	req := c.newRequest(method, path, body)
 	if sign && c.priv != nil {
@@ -72,7 +72,7 @@ func (c *testClient) send(method, path string, body []byte, sign bool) (int, []b
 // goroutine: testify's FailNow is illegal off the main test goroutine, so the
 // caller ships the result back and asserts on the main goroutine. It mirrors
 // do -> send(sign=true).
-func (c *testClient) sendConcurrent(method, path string, body any) (int, []byte, error) {
+func (c *testClient) sendConcurrent(method, path string, body any) (status int, respBody []byte, err error) {
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return 0, nil, fmt.Errorf("marshal: %w", err)
@@ -102,14 +102,14 @@ func (c *testClient) sendConcurrent(method, path string, body any) (int, []byte,
 	if err != nil {
 		return 0, nil, fmt.Errorf("do request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, data, nil
 }
 
 // sendSignedAt signs the request at a specific clock time (used to forge a
 // stale-timestamp request).
-func (c *testClient) sendSignedAt(method, path string, body []byte, now time.Time) (int, []byte) {
+func (c *testClient) sendSignedAt(method, path string, body []byte, now time.Time) (status int, resp []byte) {
 	c.t.Helper()
 	req := c.newRequest(method, path, body)
 	for k, v := range c.signHeaders(req, method, body, now) {
@@ -119,7 +119,7 @@ func (c *testClient) sendSignedAt(method, path string, body []byte, now time.Tim
 }
 
 // sendWithHeaders replays a captured signature verbatim (same nonce).
-func (c *testClient) sendWithHeaders(method, path string, body []byte, headers map[string]string) (int, []byte) {
+func (c *testClient) sendWithHeaders(method, path string, body []byte, headers map[string]string) (status int, resp []byte) {
 	c.t.Helper()
 	req := c.newRequest(method, path, body)
 	for k, v := range headers {
@@ -158,11 +158,11 @@ func (c *testClient) signHeaders(req *http.Request, method string, body []byte, 
 	return hdrs
 }
 
-func (c *testClient) roundtrip(req *http.Request) (int, []byte) {
+func (c *testClient) roundtrip(req *http.Request) (status int, body []byte) {
 	c.t.Helper()
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(c.t, err, "do request")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, data
 }
@@ -177,16 +177,16 @@ func marshal(t *testing.T, body any) []byte {
 	return b
 }
 
-func setup(t *testing.T) (*Server, *testClient) {
+func setup(t *testing.T) *testClient {
 	t.Helper()
 	s, err := New(Options{DBPath: filepath.Join(t.TempDir(), "sync.db"), Token: "tok"})
 	require.NoError(t, err, "New")
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(func() {
 		srv.Close()
-		s.Close()
+		_ = s.Close()
 	})
-	return s, &testClient{t: t, base: srv.URL, token: "tok"}
+	return &testClient{t: t, base: srv.URL, token: "tok"}
 }
 
 func mustJSON[T any](t *testing.T, data []byte) T {
@@ -226,9 +226,9 @@ func registerDevice(t *testing.T, base *testClient, id string) *testClient {
 
 // activateDevice activates id, signed by `signer` — an already-active device,
 // or (for the very first device) the pending device itself at bootstrap.
-func activateDevice(t *testing.T, signer *testClient, id string, version int) {
+func activateDevice(t *testing.T, signer *testClient, id string) {
 	t.Helper()
-	req := wire.ActivateReq{Wrap: wire.HKWrap{DeviceID: id, HKVersion: version, Blob: []byte("hk-" + id)}}
+	req := wire.ActivateReq{Wrap: wire.HKWrap{DeviceID: id, HKVersion: 1, Blob: []byte("hk-" + id)}}
 	status, body := signer.do("POST", "/v1/devices/"+id+"/activate", req)
 	require.Equalf(t, http.StatusOK, status, "activate %s: body %s", id, body)
 }
@@ -238,7 +238,7 @@ func activateDevice(t *testing.T, signer *testClient, id string, version int) {
 func bootstrapActive(t *testing.T, base *testClient, id string) *testClient {
 	t.Helper()
 	dc := registerDevice(t, base, id)
-	activateDevice(t, dc, id, 1) // bootstrap: the pending device self-activates
+	activateDevice(t, dc, id) // bootstrap: the pending device self-activates
 	return dc
 }
 
@@ -252,7 +252,7 @@ func TestNewRefusesEmptyToken(t *testing.T) {
 // ---- auth (bearer token; runs before signatures) ----
 
 func TestAuth(t *testing.T) {
-	_, c := setup(t)
+	c := setup(t)
 
 	// Health is open.
 	noAuth := &testClient{t: t, base: c.base, token: ""}
@@ -288,7 +288,7 @@ func TestAuth(t *testing.T) {
 // ---- register signature ----
 
 func TestRegisterSignature(t *testing.T) {
-	s, c := setup(t)
+	c := setup(t)
 
 	// Happy path: self-signed register stores the sign key and is pending.
 	pub, priv, _ := ed25519.GenerateKey(nil)
@@ -298,7 +298,6 @@ func TestRegisterSignature(t *testing.T) {
 	d := mustJSON[wire.Device](t, body)
 	require.Equal(t, wire.DevicePending, d.Status, "register status")
 	require.True(t, bytes.Equal(d.SignKey, pub), "register: sign key stored")
-	_ = s
 
 	// No signature (valid token) => 401.
 	status, _ = c.do("POST", "/v1/devices", wire.RegisterReq{ID: "B", Name: "B", PubKey: pubKey(), SignKey: pub})
@@ -317,7 +316,7 @@ func TestRegisterSignature(t *testing.T) {
 // ---- push signature ----
 
 func TestPushSignature(t *testing.T) {
-	_, c := setup(t)
+	c := setup(t)
 	dev := bootstrapActive(t, c, "pusher")
 	pushBody := marshal(t, wire.PushReq{HostID: "hostA", Records: mkRecords(1, 3)})
 
@@ -346,7 +345,7 @@ func TestPushSignature(t *testing.T) {
 }
 
 func TestPushHappyAndIdempotent(t *testing.T) {
-	_, c := setup(t)
+	c := setup(t)
 	dev := bootstrapActive(t, c, "pusher")
 
 	status, body := dev.do("POST", "/v1/records", wire.PushReq{HostID: "hostA", Records: mkRecords(1, 3)})
@@ -364,7 +363,7 @@ func TestPushHappyAndIdempotent(t *testing.T) {
 }
 
 func TestPushValidation(t *testing.T) {
-	_, c := setup(t)
+	c := setup(t)
 	dev := bootstrapActive(t, c, "pusher")
 
 	tests := []struct {
@@ -400,7 +399,7 @@ func TestPushValidation(t *testing.T) {
 // ---- pull ----
 
 func TestPullPaging(t *testing.T) {
-	_, c := setup(t)
+	c := setup(t)
 	dev := bootstrapActive(t, c, "pusher")
 
 	// Load 2500 records over 3 pushes (push caps at 1000).
@@ -434,7 +433,7 @@ func TestPullPaging(t *testing.T) {
 }
 
 func TestPullUnknownAndBeyond(t *testing.T) {
-	_, c := setup(t)
+	c := setup(t)
 	dev := bootstrapActive(t, c, "pusher")
 
 	// Unknown host => empty, no NextAfter, not 404.
@@ -456,7 +455,7 @@ func TestPullUnknownAndBeyond(t *testing.T) {
 // ---- reads stay token-only ----
 
 func TestReadsTokenOnly(t *testing.T) {
-	_, c := setup(t)
+	c := setup(t)
 	dev := bootstrapActive(t, c, "reader")
 	dev.do("POST", "/v1/records", wire.PushReq{HostID: "h", Records: mkRecords(1, 3)})
 
@@ -477,7 +476,7 @@ func TestReadsTokenOnly(t *testing.T) {
 // ---- hosts ----
 
 func TestHosts(t *testing.T) {
-	_, c := setup(t)
+	c := setup(t)
 	dev := bootstrapActive(t, c, "pusher")
 	dev.do("POST", "/v1/records", wire.PushReq{HostID: "alpha", Records: mkRecords(1, 5)})
 	dev.do("POST", "/v1/records", wire.PushReq{HostID: "beta", Records: mkRecords(1, 9)})
@@ -496,7 +495,7 @@ func TestHosts(t *testing.T) {
 // ---- device lifecycle ----
 
 func TestDeviceLifecycle(t *testing.T) {
-	_, c := setup(t)
+	c := setup(t)
 
 	// Register A (self-signed) => pending.
 	pubA, privA, _ := ed25519.GenerateKey(nil)
@@ -519,7 +518,7 @@ func TestDeviceLifecycle(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, status, "wrong wrap.device_id")
 
 	// Bootstrap first activate sets version=1.
-	activateDevice(t, dcA, "A", 1)
+	activateDevice(t, dcA, "A")
 
 	// hk_version is now 1: activating B at wrong version fails, at 1 succeeds.
 	// B is approved by the active device A (signer need not be the resource).
@@ -528,7 +527,7 @@ func TestDeviceLifecycle(t *testing.T) {
 	wrongVer := wire.ActivateReq{Wrap: wire.HKWrap{DeviceID: "B", HKVersion: 2}}
 	status, _ = dcA.do("POST", "/v1/devices/B/activate", wrongVer)
 	require.Equal(t, http.StatusBadRequest, status, "activate B wrong version")
-	activateDevice(t, dcA, "B", 1)
+	activateDevice(t, dcA, "B")
 
 	// A's HK wrap is retrievable (token-only GET).
 	status, _ = c.do("GET", "/v1/keys/hk?device_id=A", nil)
@@ -562,10 +561,10 @@ func TestDeviceLifecycle(t *testing.T) {
 // ---- revoke signature ----
 
 func TestRevokeSignature(t *testing.T) {
-	_, c := setup(t)
+	c := setup(t)
 	dcA := bootstrapActive(t, c, "A")
 	dcB := registerDevice(t, c, "B")
-	activateDevice(t, dcA, "B", 1)
+	activateDevice(t, dcA, "B")
 
 	// Token-only revoke (no signature) => 401.
 	status, _ := c.do("POST", "/v1/devices/B/revoke", nil)
@@ -581,7 +580,7 @@ func TestRevokeSignature(t *testing.T) {
 // ---- DEK ----
 
 func TestDEK(t *testing.T) {
-	_, c := setup(t)
+	c := setup(t)
 	dcA := bootstrapActive(t, c, "A") // current hk_version = 1
 
 	mkDEKs := func(ids []string, version int) []wire.DEKWrap {
@@ -600,7 +599,7 @@ func TestDEK(t *testing.T) {
 	require.Equal(t, 5, mustJSON[map[string]int](t, body)["stored"], "upload dek stored")
 
 	// Idempotent re-upload => stored 0.
-	status, body = dcA.do("POST", "/v1/keys/dek", mkDEKs(ids, 1))
+	_, body = dcA.do("POST", "/v1/keys/dek", mkDEKs(ids, 1))
 	require.Equal(t, 0, mustJSON[map[string]int](t, body)["stored"], "re-upload dek stored")
 
 	// Wrong HKVersion => 400.
@@ -637,10 +636,10 @@ func TestDEK(t *testing.T) {
 
 // rotateSetup bootstraps A, approves B, and uploads 3 DEKs at v1; it returns A's
 // signing client (the surviving active device) and the DEK key ids.
-func rotateSetup(t *testing.T, c *testClient) (*testClient, []string) {
+func rotateSetup(t *testing.T, c *testClient) (signer *testClient, keyIDs []string) {
 	dcA := bootstrapActive(t, c, "A")
 	dcB := registerDevice(t, c, "B")
-	activateDevice(t, dcA, "B", 1)
+	activateDevice(t, dcA, "B")
 	_ = dcB
 
 	ids := []string{"key-001", "key-002", "key-003"}
@@ -654,7 +653,7 @@ func rotateSetup(t *testing.T, c *testClient) (*testClient, []string) {
 }
 
 func TestRotateHappy(t *testing.T) {
-	_, c := setup(t)
+	c := setup(t)
 	dcA, ids := rotateSetup(t, c)
 
 	// Revoke B (signed by active A); only A survives.
@@ -683,7 +682,7 @@ func TestRotateHappy(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, status, "get hk B after rotate")
 
 	// All DEKs replaced with v2.
-	status, body = c.do("GET", "/v1/keys/dek?limit=1000", nil)
+	_, body = c.do("GET", "/v1/keys/dek?limit=1000", nil)
 	resp := mustJSON[wire.DEKListResp](t, body)
 	require.Len(t, resp.Wraps, 3, "dek count after rotate")
 	for _, w := range resp.Wraps {
@@ -696,7 +695,7 @@ func TestRotateHappy(t *testing.T) {
 }
 
 func TestRotatePartialIsAllOrNothing(t *testing.T) {
-	_, c := setup(t)
+	c := setup(t)
 	dcA, ids := rotateSetup(t, c)
 	status, _ := dcA.do("POST", "/v1/devices/B/revoke", nil)
 	require.Equal(t, http.StatusOK, status, "revoke B failed")
@@ -730,7 +729,7 @@ func TestRotatePartialIsAllOrNothing(t *testing.T) {
 }
 
 func TestRotateWrongVersion(t *testing.T) {
-	_, c := setup(t)
+	c := setup(t)
 	dcA, ids := rotateSetup(t, c)
 
 	newDEKs := make([]wire.DEKWrap, 0, len(ids))
@@ -750,7 +749,7 @@ func TestRotateWrongVersion(t *testing.T) {
 // ---- concurrency ----
 
 func TestConcurrentPushDistinctHosts(t *testing.T) {
-	_, c := setup(t)
+	c := setup(t)
 	dev := bootstrapActive(t, c, "pusher")
 
 	const hosts = 10

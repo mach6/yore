@@ -47,7 +47,7 @@ func (s *server) runQuery(f *match.Filter, q proto.QueryReq) proto.QueryResp {
 
 	// Local corpus contributes unless the scope targets a specific remote host.
 	local := s.store.Hostname()
-	wantLocal := !(scope == proto.ScopeHost && q.Host != "" && q.Host != local)
+	wantLocal := scope != proto.ScopeHost || q.Host == "" || q.Host == local
 
 	var rows []rec.Record
 	if wantLocal {

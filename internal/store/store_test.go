@@ -17,7 +17,7 @@ func openTemp(t *testing.T) *Store {
 	t.Helper()
 	s, err := Open(t.TempDir())
 	require.NoError(t, err, "Open")
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() { _ = s.Close() })
 	return s
 }
 
@@ -74,7 +74,7 @@ func TestSecondOpenLocked(t *testing.T) {
 	dir := t.TempDir()
 	s, err := Open(dir)
 	require.NoError(t, err)
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	_, err = Open(dir)
 	require.ErrorIs(t, err, ErrLocked, "second Open")
@@ -190,7 +190,7 @@ func BenchmarkAppend(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -206,7 +206,7 @@ func BenchmarkAll200k(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	const total = 200_000
 	const chunk = 5_000

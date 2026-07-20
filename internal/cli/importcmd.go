@@ -65,7 +65,7 @@ func runImport(format string, rest []string) int {
 		fmt.Fprintln(os.Stderr, "yore:", err)
 		return 1
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	for _, src := range sources {
 		f, err := os.Open(src.Path)
@@ -80,7 +80,7 @@ func runImport(format string, rest []string) int {
 		case "bash":
 			recs, err = importer.Bash(f, s.HostID())
 		}
-		f.Close()
+		_ = f.Close()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "yore: %s: %v (skipped)\n", src.Path, err)
 			continue
@@ -141,8 +141,8 @@ func requestDaemonShutdown(dir string) {
 	if err != nil {
 		return
 	}
-	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(500 * time.Millisecond))
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(500 * time.Millisecond))
 	_ = proto.WriteMsg(conn, proto.Request{Op: proto.OpShutdown})
 	buf := make([]byte, 256)
 	_, _ = conn.Read(buf)

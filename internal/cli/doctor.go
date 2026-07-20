@@ -40,7 +40,7 @@ func runDoctor() int {
 		fail("daemon not reachable: " + err.Error())
 	} else {
 		st, serr := c.Status()
-		c.Close()
+		_ = c.Close()
 		if serr != nil {
 			fail("daemon status failed: " + serr.Error())
 		} else {

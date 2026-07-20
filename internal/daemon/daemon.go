@@ -131,9 +131,9 @@ func Run(dir string, opts Options) error {
 	_ = os.Remove(config.SocketPath(dir))
 	ln, err := net.Listen("unix", config.SocketPath(dir))
 	if err != nil {
-		st.Close()
+		_ = st.Close()
 		if logFile != nil {
-			logFile.Close()
+			_ = logFile.Close()
 		}
 		// Linux caps unix socket paths at ~108 bytes; a deeply nested
 		// YORE_DIR is the usual culprit and deserves a plain diagnosis.
@@ -147,11 +147,11 @@ func Run(dir string, opts Options) error {
 	s.ln = ln
 
 	bail := func(e error) error {
-		ln.Close()
-		os.Remove(config.SocketPath(dir))
-		st.Close()
+		_ = ln.Close()
+		_ = os.Remove(config.SocketPath(dir))
+		_ = st.Close()
 		if logFile != nil {
-			logFile.Close()
+			_ = logFile.Close()
 		}
 		return e
 	}
@@ -180,11 +180,12 @@ func Run(dir string, opts Options) error {
 		s.logf("sync enabled")
 	}
 
-	return s.serve()
+	s.serve()
+	return nil
 }
 
 // serve owns the idle timer and blocks until shutdown is triggered.
-func (s *server) serve() error {
+func (s *server) serve() {
 	idle := time.NewTimer(s.idleTimeout)
 	defer idle.Stop()
 	for {
@@ -198,27 +199,30 @@ func (s *server) serve() error {
 			}
 			idle.Reset(s.idleTimeout)
 		case <-idle.C:
-			return s.shutdown()
+			s.shutdown()
+			return
 		case <-s.sigCh:
-			return s.shutdown()
+			s.shutdown()
+			return
 		case <-s.shutdownReq:
-			return s.shutdown()
+			s.shutdown()
+			return
 		}
 	}
 }
 
 // shutdown gracefully stops the daemon: stop accepting, unblock handlers,
 // wait for workers, remove the socket, close the store. Idempotent.
-func (s *server) shutdown() error {
+func (s *server) shutdown() {
 	s.shutdownOnce.Do(func() {
 		signal.Stop(s.sigCh)
 		close(s.done)
-		s.ln.Close()
+		_ = s.ln.Close()
 
 		s.mu.Lock()
 		s.closing = true
 		for c := range s.conns {
-			c.Close()
+			_ = c.Close()
 		}
 		s.mu.Unlock()
 
@@ -228,14 +232,13 @@ func (s *server) shutdown() error {
 		// after workers stop, so the corpus is quiescent.
 		s.snapshotNow()
 
-		os.Remove(config.SocketPath(s.dir))
-		s.store.Close()
+		_ = os.Remove(config.SocketPath(s.dir))
+		_ = s.store.Close()
 		s.logf("stopped pid=%d", os.Getpid())
 		if s.logFile != nil {
-			s.logFile.Close()
+			_ = s.logFile.Close()
 		}
 	})
-	return nil
 }
 
 // acceptLoop accepts connections until the listener is closed.
@@ -249,7 +252,7 @@ func (s *server) acceptLoop() {
 		s.mu.Lock()
 		if s.closing {
 			s.mu.Unlock()
-			conn.Close()
+			_ = conn.Close()
 			return
 		}
 		s.conns[conn] = struct{}{}
@@ -266,7 +269,7 @@ func (s *server) handle(conn net.Conn) {
 		s.mu.Lock()
 		delete(s.conns, conn)
 		s.mu.Unlock()
-		conn.Close()
+		_ = conn.Close()
 	}()
 
 	r := bufio.NewReader(conn)

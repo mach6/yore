@@ -25,7 +25,7 @@ type renderCase struct {
 // cases covers each shell × integration mode, with the alias toggle where it is
 // meaningful (capture mode emits no aliases regardless).
 var cases = func() []renderCase {
-	var cs []renderCase
+	cs := make([]renderCase, 0, 10)
 	for _, sh := range []string{"zsh", "bash"} {
 		for _, mode := range []string{"takeover", "coexist"} {
 			for _, al := range []bool{true, false} {

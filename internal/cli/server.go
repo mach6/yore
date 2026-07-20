@@ -44,7 +44,7 @@ func runServer(db, listen, token, pidfile string) int {
 	if err := os.WriteFile(pf, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
 		fmt.Fprintln(os.Stderr, "yore server: warning: cannot write pidfile:", err)
 	} else {
-		defer os.Remove(pf)
+		defer func() { _ = os.Remove(pf) }()
 	}
 
 	fmt.Fprintf(os.Stderr, "yore server listening on %s (db %s)\n", listen, db)

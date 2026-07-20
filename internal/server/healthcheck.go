@@ -12,7 +12,7 @@ import (
 // the transport error for a failed connection. It backs the container
 // HEALTHCHECK (the distroless image ships no curl) and the `yore healthcheck`
 // CLI, which prints detail so an interactive probe isn't silent.
-func HealthCheck(url string) (int, string) {
+func HealthCheck(url string) (code int, msg string) {
 	client := &http.Client{Timeout: 3 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
@@ -24,7 +24,7 @@ func HealthCheck(url string) (int, string) {
 		}
 		return 1, reason
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	detail := fmt.Sprintf("HTTP %d", resp.StatusCode)
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return 0, detail

@@ -17,12 +17,12 @@ import (
 // It returns the accepted command and true, or ("", false) on cancel. If
 // /dev/tty cannot be opened (the process is not attached to a terminal) it
 // returns an error immediately so the caller can fall back to headless search.
-func Run(q Querier, opts Options) (string, bool, error) {
+func Run(q Querier, opts Options) (command string, accepted bool, err error) {
 	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 	if err != nil {
 		return "", false, fmt.Errorf("search: open /dev/tty: %w", err)
 	}
-	defer tty.Close()
+	defer func() { _ = tty.Close() }()
 
 	// Bind a renderer to the tty so color-profile and dark-background detection
 	// use the real terminal, not os.Stdout (a pipe under command substitution).

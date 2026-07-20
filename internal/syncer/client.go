@@ -117,7 +117,7 @@ func ServerPin(baseURL string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	certs := conn.ConnectionState().PeerCertificates
 	if len(certs) == 0 {
 		return "", errors.New("no server certificate")
@@ -170,7 +170,7 @@ func (c *HTTPClient) do(ctx context.Context, method, path string, query url.Valu
 	if err != nil {
 		return fmt.Errorf("syncer: %s %s: %w", method, path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {

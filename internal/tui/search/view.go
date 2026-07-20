@@ -202,7 +202,7 @@ func (m Model) composeLine(segs []styledSeg, selected bool, w int) string {
 // squeezed out; match spans (byte offsets from q.Ranges over the original
 // command) are colored with theme.Match. It returns the runs and their total
 // display width.
-func (m Model) commandSegments(cmd string, q match.Query, maxCols int) ([]styledSeg, int) {
+func (m Model) commandSegments(cmd string, q match.Query, maxCols int) (segs []styledSeg, width int) {
 	if maxCols <= 0 || cmd == "" {
 		return nil, 0
 	}
@@ -283,7 +283,6 @@ func (m Model) commandSegments(cmd string, q match.Query, maxCols int) ([]styled
 	}
 
 	// Group consecutive same-kind runes into segments.
-	var segs []styledSeg
 	var run strings.Builder
 	curK := kept[0].k
 	flush := func() {

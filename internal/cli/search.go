@@ -20,7 +20,7 @@ func interactiveSearch(initialQuery, scope string) int {
 		fmt.Fprintln(os.Stderr, "yore: daemon unavailable:", err)
 		return 1
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	cwd, _ := os.Getwd()
 	cfg, _ := config.Load(stateDir())
@@ -52,7 +52,7 @@ func headlessSearch(q, scope, tag, sortMode string, fuzzy bool, limit int, showH
 		fmt.Fprintln(os.Stderr, "yore: daemon unavailable:", err)
 		return 1
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	req := proto.QueryReq{Q: q, Scope: scope, Tag: tag, Sort: sortMode, Fuzzy: fuzzy, Limit: limit, Dedupe: true}
 	switch scope {

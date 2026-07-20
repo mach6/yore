@@ -63,7 +63,7 @@ func runFilter(cwd string) int {
 func filterDecision(cfg config.Config, cmd, cwd string) bool {
 	// histignorespace: a leading space/tab opts a command out of history unless
 	// the user has explicitly turned that off. Checked on the raw text.
-	if !cfg.RecordSpacePrefixedOn() && len(cmd) > 0 && (cmd[0] == ' ' || cmd[0] == '\t') {
+	if !cfg.RecordSpacePrefixedOn() && cmd != "" && (cmd[0] == ' ' || cmd[0] == '\t') {
 		return false
 	}
 	filter, _ := redact.New(cfg.IgnorePatterns, cfg.IgnoreDirs)

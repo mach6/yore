@@ -76,7 +76,7 @@ func Classify(s string) []Kind {
 		tok := s[start:i]
 		kind := Normal
 		switch {
-		case len(tok) > 0 && tok[0] == '-':
+		case tok != "" && tok[0] == '-':
 			kind = Flag
 		case isAssignment(tok):
 			kind = Normal // VAR=value before the command; leave the value plain

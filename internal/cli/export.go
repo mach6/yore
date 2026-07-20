@@ -52,7 +52,7 @@ func runExport(shellFmt bool, format string, limit int) int {
 	if err != nil {
 		return 0 // best-effort: no daemon means nothing to seed
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	resp, err := c.Query(proto.QueryReq{Scope: proto.ScopeLocal, Limit: limit, Dedupe: false})
 	if err != nil {
@@ -63,13 +63,13 @@ func runExport(shellFmt bool, format string, limit int) int {
 	// oldest-first so the most recent command ends up last (highest event number).
 	bash := format == "bash"
 	w := bufio.NewWriter(os.Stdout)
-	defer w.Flush()
+	defer func() { _ = w.Flush() }()
 	for i := len(resp.Rows) - 1; i >= 0; i-- {
 		r := resp.Rows[i]
 		if bash {
-			fmt.Fprintln(w, bashHistoryLine(r.Cmd))
+			_, _ = fmt.Fprintln(w, bashHistoryLine(r.Cmd))
 		} else {
-			fmt.Fprintln(w, shellHistoryLine(r.StartMs, r.Cmd))
+			_, _ = fmt.Fprintln(w, shellHistoryLine(r.StartMs, r.Cmd))
 		}
 	}
 	return 0

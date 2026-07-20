@@ -29,7 +29,7 @@ func NewHistoryKey() ([32]byte, error) {
 //	ephemeralPub(32) ‖ nonce(24) ‖ ciphertext
 //
 // and reveals nothing about the sender.
-func WrapHK(hk [32]byte, recipientPub [32]byte) ([]byte, error) {
+func WrapHK(hk, recipientPub [32]byte) ([]byte, error) {
 	var ephPriv [32]byte
 	if _, err := rand.Read(ephPriv[:]); err != nil {
 		return nil, err

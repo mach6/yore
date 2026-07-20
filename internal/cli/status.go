@@ -19,7 +19,7 @@ func runSync() int {
 		fmt.Fprintln(os.Stderr, "yore sync:", err)
 		return 1
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if err := c.Sync(); err != nil {
 		fmt.Fprintln(os.Stderr, "yore sync:", err)
 		return 1
@@ -43,8 +43,8 @@ func runStatus() int {
 		fmt.Println("daemon    : not running (spawns on next recorded command)")
 		return 0
 	}
-	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
 	if err := proto.WriteMsg(conn, proto.Request{Op: proto.OpStatus}); err != nil {
 		fmt.Println("daemon    : unreachable:", err)
 		return 1

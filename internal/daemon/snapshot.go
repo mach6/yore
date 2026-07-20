@@ -32,14 +32,14 @@ func writeSnapshot(dir string, records []rec.Record, lastSeq uint64) error {
 		return err
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName) // no-op after a successful rename
+	defer func() { _ = os.Remove(tmpName) }() // no-op after a successful rename
 
 	if err := gob.NewEncoder(tmp).Encode(snapshot{LastSeq: lastSeq, Records: records}); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {
@@ -59,7 +59,7 @@ func readSnapshot(dir string) (snap snapshot, ok bool) {
 	if err != nil {
 		return snapshot{}, false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if err := gob.NewDecoder(f).Decode(&snap); err != nil {
 		return snapshot{}, false // corrupt/partial: fall back to full load
 	}

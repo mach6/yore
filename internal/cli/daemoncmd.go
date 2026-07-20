@@ -32,7 +32,7 @@ func daemonStop() int {
 		fmt.Println("daemon not running")
 		return 0
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if err := c.Shutdown(); err != nil {
 		fmt.Fprintln(os.Stderr, "yore daemon stop:", err)
 		return 1

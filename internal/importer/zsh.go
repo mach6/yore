@@ -77,7 +77,7 @@ func Zsh(r io.Reader, hostID string) ([]rec.Record, error) {
 }
 
 func endsWithBackslash(s string) bool {
-	return len(s) > 0 && s[len(s)-1] == '\\'
+	return s != "" && s[len(s)-1] == '\\'
 }
 
 // parseZshLine parses one logical history line. Extended lines have the form
@@ -98,7 +98,7 @@ func parseZshLine(line string) (startMs int64, dur *int64, cmd string) {
 // parseExtended recognises the strict ": <digits>:<[-]digits>;" prefix so that
 // ordinary commands beginning with ':' (e.g. ": > file") are not misparsed.
 func parseExtended(line string) (start, elapsed int64, cmd string, ok bool) {
-	if len(line) == 0 || line[0] != ':' {
+	if line == "" || line[0] != ':' {
 		return 0, 0, "", false
 	}
 	i := 1

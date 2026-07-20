@@ -199,7 +199,7 @@ func TestHostSelectionChangesScope(t *testing.T) {
 	require.Equalf(t, "beta", got.Host, "beta host req = %+v, want Scope=host Host=beta", got)
 
 	// Back up to "All hosts" => ScopeAll.
-	m, cmd = step(t, m, press("up"))
+	m, _ = step(t, m, press("up"))
 	m, cmd = step(t, m, press("up"))
 	if cmd != nil {
 		cmd()

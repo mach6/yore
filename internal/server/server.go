@@ -205,7 +205,7 @@ func New(opts Options) (*Server, error) {
 		return nil
 	})
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 	return &Server{db: db, token: opts.Token, nonces: newNonceCache()}, nil
@@ -238,7 +238,7 @@ func Run(opts Options, listen string) error {
 	if err != nil {
 		return err
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	srv := &http.Server{Addr: listen, Handler: s.Handler()}
 

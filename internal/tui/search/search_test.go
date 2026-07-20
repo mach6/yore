@@ -153,7 +153,7 @@ func TestScopeFieldsPopulated(t *testing.T) {
 	require.Equal(t, "l", f.last().Q)
 
 	// session -> cwd
-	m, cmd = step(t, m, key("ctrl+r")) // cwd
+	_, cmd = step(t, m, key("ctrl+r")) // cwd
 	cmd()
 	got = f.last()
 	require.Equalf(t, proto.ScopeCwd, got.Scope, "cwd scope req = %+v", got)
@@ -267,7 +267,7 @@ func TestEscCancels(t *testing.T) {
 func TestWindowingSlides(t *testing.T) {
 	f := &fakeQuerier{}
 	m := NewModel(f, Options{})
-	m, _ = step(t, m, tea.WindowSizeMsg{Width: 120, Height: 12}) // rowsVisible = 10
+	m, _ = step(t, m, tea.WindowSizeMsg{Width: 120, Height: 12}) // height 12 gives 10 visible rows
 
 	cmds := make([]string, 30)
 	for i := range cmds {
