@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"sync"
 	"syscall"
 	"time"
 
@@ -22,9 +23,12 @@ const (
 	spawnBudget = 2500 * time.Millisecond // total wait for a spawned daemon
 )
 
-// Client is a connection to a running daemon. One request/response per call
-// over a single persistent connection; it is not safe for concurrent use.
+// Client is a connection to a running daemon. Each call is one request/response
+// over a single persistent connection. Calls are serialized by an internal
+// mutex, so it is safe to share one Client across goroutines — notably the
+// Bubble Tea TUIs, which fan out Query/Hosts/stats commands concurrently.
 type Client struct {
+	mu   sync.Mutex
 	conn net.Conn
 	r    *bufio.Reader
 }
@@ -120,7 +124,7 @@ func (c *Client) Delete(id string) error {
 	return err
 }
 
-// Sync forces a push/pull cycle. It is a no-op until the sync layer lands.
+// Sync forces a synchronous push/pull cycle (no-op if sync isn't configured).
 func (c *Client) Sync() error {
 	_, err := c.ok(proto.Request{Op: proto.OpSync}, syncDeadline)
 	return err
@@ -147,8 +151,12 @@ func (c *Client) ok(req proto.Request, deadline time.Duration) (proto.Response, 
 	return resp, nil
 }
 
-// roundtrip writes one request and reads one response under a deadline.
+// roundtrip writes one request and reads one response under a deadline. It
+// holds the client mutex for the whole exchange so concurrent callers queue
+// rather than interleaving on the single connection.
 func (c *Client) roundtrip(req proto.Request, deadline time.Duration) (proto.Response, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if err := c.conn.SetDeadline(time.Now().Add(deadline)); err != nil {
 		return proto.Response{}, err
 	}

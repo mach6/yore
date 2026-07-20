@@ -1,0 +1,30 @@
+package cli
+
+import (
+	"fmt"
+	"os"
+
+	"yore/internal/daemon"
+	"yore/internal/tui/browse"
+)
+
+// cmdBrowse opens the full-screen history browser (the `h` alias target).
+func cmdBrowse(args []string) int {
+	c, err := daemon.EnsureRunning(stateDir())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "yore browse: daemon unavailable:", err)
+		return 1
+	}
+	defer c.Close()
+
+	cwd, _ := os.Getwd()
+	if err := browse.Run(c, browse.Options{
+		Version: Version,
+		Session: os.Getenv("YORE_SESSION"),
+		Cwd:     cwd,
+	}); err != nil {
+		fmt.Fprintln(os.Stderr, "yore browse:", err)
+		return 1
+	}
+	return 0
+}

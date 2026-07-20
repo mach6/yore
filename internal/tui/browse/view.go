@@ -34,7 +34,10 @@ func (m Model) View() string {
 		top = m.searchLine(w)
 		mid = m.renderPanes(w)
 	}
-	return strings.Join([]string{top, mid, m.statusBar(w), m.help.View(m.keys)}, "\n")
+	// bubbles/help can overrun its Width when even an ellipsis would not fit;
+	// clip as a final guarantee against horizontal overflow.
+	helpv := clipW(m.help.View(m.keys), w)
+	return strings.Join([]string{top, mid, m.statusBar(w), helpv}, "\n")
 }
 
 // searchLine draws the "❯ query" input row. It is never wider than w: the
