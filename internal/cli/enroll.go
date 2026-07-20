@@ -96,18 +96,26 @@ func buildSyncer(dir string) (*syncer.Syncer, *syncer.HTTPClient, error) {
 	return syncer.New(st, http, key, cfg.KeyEpochD()), http, nil
 }
 
-// runSetup enrolls this machine: it records the server URL + token, ensures a
-// device key, and either bootstraps a new history group (first machine) or
-// registers as pending for approval from an already-enrolled machine.
-func runSetup(server, token, name, integration string, pin bool) int {
+// runSetup enrolls this machine: it VALIDATES the server URL + token against the
+// server before persisting anything, then records them, ensures a device key,
+// and either bootstraps a new history group (first machine) or registers as
+// pending for approval from an already-enrolled machine. A failed setup never
+// touches config.json, so a wrong token or unreachable server can't wedge future
+// runs (resolveServer would otherwise reuse the bad token and keep 401-ing).
+func runSetup(server, token, name, integration string, pin, clearPin bool) int {
 	dir := stateDir()
+	if pin && clearPin {
+		fmt.Fprintln(os.Stderr, "yore setup: --pin and --clear-pin are mutually exclusive")
+		return 1
+	}
 	url, tok, err := resolveServer(dir, server, token)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "yore setup:", err)
 		return 1
 	}
 
-	// Persist server + token so the daemon can sync unattended.
+	// Assemble the config in memory; it is written only after the server accepts
+	// the token below (see the config.Save further down).
 	cfg, _ := config.Load(dir)
 	cfg.ServerURL, cfg.Token = url, tok
 
@@ -125,7 +133,8 @@ func runSetup(server, token, name, integration string, pin bool) int {
 		fmt.Fprintf(os.Stderr, "yore setup: unknown integration %q (want takeover|coexist|capture)\n", integration)
 		return 1
 	}
-	if pin {
+	switch {
+	case pin:
 		p, err := syncer.ServerPin(url)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "yore setup: cannot capture server certificate to pin:", err)
@@ -133,7 +142,30 @@ func runSetup(server, token, name, integration string, pin bool) int {
 		}
 		cfg.ServerPin = p
 		fmt.Printf("Pinned server certificate (SPKI %s…). Sync will refuse any other cert.\n", p[:12])
+	case clearPin:
+		cfg.ServerPin = "" // drop a previously pinned cert so the next Save removes it
 	}
+
+	// Validate BEFORE persisting: Health proves reachability, then the
+	// authenticated ListDevices proves the token is accepted. Either failure
+	// aborts WITHOUT a save — the invariant that a wrong token never lands in
+	// config.json. Build the client straight from the in-memory values (no device
+	// key needed just to check the token).
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	http := syncer.NewHTTPClient(url, tok, cfg.ServerPin)
+	if err := http.Health(ctx); err != nil {
+		fmt.Fprintln(os.Stderr, "yore setup: cannot reach server:", err)
+		return 1
+	}
+	devices, err := http.ListDevices(ctx)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "yore setup:", err)
+		return 1
+	}
+
+	// The server accepted the token: only now is it safe to persist and to mint a
+	// device key (so a failed setup also leaves no stray registration attempt).
 	if err := config.Save(dir, cfg); err != nil {
 		fmt.Fprintln(os.Stderr, "yore setup:", err)
 		return 1
@@ -144,16 +176,9 @@ func runSetup(server, token, name, integration string, pin bool) int {
 		return 1
 	}
 
-	sy, http, err := buildSyncer(dir)
+	sy, _, err := buildSyncer(dir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "yore setup:", err)
-		return 1
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := http.Health(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, "yore setup: cannot reach server:", err)
 		return 1
 	}
 
@@ -161,12 +186,7 @@ func runSetup(server, token, name, integration string, pin bool) int {
 		name, _ = os.Hostname()
 	}
 
-	devices, err := http.ListDevices(ctx)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "yore setup:", err)
-		return 1
-	}
-	// Already enrolled here?
+	// Reuse the device list already fetched during validation.
 	for _, d := range devices {
 		if d.ID == sy.DeviceID() && d.Status == wire.DeviceActive {
 			fmt.Println("This machine is already enrolled and active.")

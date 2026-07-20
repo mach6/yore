@@ -288,18 +288,20 @@ func newInitCmd() *cobra.Command {
 
 func newSetupCmd() *cobra.Command {
 	var server, token, name, integration string
-	var pin bool
+	var pin, clearPin bool
 	cmd := &cobra.Command{
 		Use:   "setup",
 		Short: "Enroll this machine with a sync server",
-		Long: "setup records the server URL and token, ensures a device key, and either\n" +
-			"bootstraps a new history group (first machine) or registers this machine as\n" +
-			"pending approval from one that's already enrolled.\n\n" +
+		Long: "setup validates the server URL and token against the server, then records\n" +
+			"them, ensures a device key, and either bootstraps a new history group (first\n" +
+			"machine) or registers this machine as pending approval from one that's already\n" +
+			"enrolled. If the server is unreachable or rejects the token, nothing is saved.\n\n" +
 			"--pin captures and pins the server's TLS certificate (do it on a trusted\n" +
 			"network): thereafter the client refuses any other cert, defeating a\n" +
-			"TLS-inspecting proxy — but it also won't sync through one.",
+			"TLS-inspecting proxy — but it also won't sync through one. --clear-pin removes\n" +
+			"a previously pinned certificate.",
 		RunE: func(*cobra.Command, []string) error {
-			return code(runSetup(server, token, name, integration, pin))
+			return code(runSetup(server, token, name, integration, pin, clearPin))
 		},
 	}
 	cmd.Flags().StringVar(&server, "server", "", "server URL")
@@ -307,6 +309,7 @@ func newSetupCmd() *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "device name (default: hostname)")
 	cmd.Flags().StringVar(&integration, "integration", "", "shell integration: takeover|coexist|capture (default: prompt/takeover)")
 	cmd.Flags().BoolVar(&pin, "pin", false, "pin the server's TLS certificate (capture it now)")
+	cmd.Flags().BoolVar(&clearPin, "clear-pin", false, "remove a previously pinned server certificate")
 	_ = cmd.RegisterFlagCompletionFunc("integration", fixedComp("takeover", "coexist", "capture"))
 	return cmd
 }
