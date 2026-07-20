@@ -13,10 +13,10 @@ import (
 	"yore/internal/syncer"
 )
 
-// cmdDoctor prints a health checklist: state dir, hooks, daemon, secrets
+// runDoctor prints a health checklist: state dir, hooks, daemon, secrets
 // filter, enrollment, and server reachability. Exit code is nonzero if any
 // check FAILs (WARNs don't fail).
-func cmdDoctor([]string) int {
+func runDoctor() int {
 	dir := stateDir()
 	failed := false
 	ok := func(msg string) { fmt.Printf("  \033[32mok\033[0m   %s\n", msg) }

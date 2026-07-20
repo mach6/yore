@@ -2,7 +2,6 @@ package cli
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"net"
 	"os"
@@ -16,24 +15,19 @@ import (
 	"yore/internal/store"
 )
 
-// cmdImport ingests existing shell history files. Usage:
+// runImport ingests existing shell history files. Usage:
 //
 //	yore import auto            # find and import ~/.zsh_history, ~/.bash_history, …
 //	yore import --format zsh FILE...
 //
-// Deterministic import ids make re-runs no-ops.
-func cmdImport(args []string) int {
-	fs := flag.NewFlagSet("import", flag.ExitOnError)
-	format := fs.String("format", "", "history format for explicit files: zsh|bash")
-	fs.Usage = func() {
+// Deterministic import ids make re-runs no-ops. rest holds the positional args
+// (either the single word "auto" or one-or-more file paths).
+func runImport(format string, rest []string) int {
+	usage := func() {
 		fmt.Fprintln(os.Stderr, "usage: yore import auto | yore import --format zsh|bash FILE...")
-	}
-	if err := fs.Parse(args); err != nil {
-		return 2
 	}
 
 	var sources []importer.Source
-	rest := fs.Args()
 	switch {
 	case len(rest) == 1 && rest[0] == "auto":
 		home, err := os.UserHomeDir()
@@ -46,12 +40,12 @@ func cmdImport(args []string) int {
 			fmt.Println("no history files found")
 			return 0
 		}
-	case len(rest) > 0 && (*format == "zsh" || *format == "bash"):
+	case len(rest) > 0 && (format == "zsh" || format == "bash"):
 		for _, p := range rest {
-			sources = append(sources, importer.Source{Path: p, Format: *format})
+			sources = append(sources, importer.Source{Path: p, Format: format})
 		}
 	default:
-		fs.Usage()
+		usage()
 		return 2
 	}
 

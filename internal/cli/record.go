@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"flag"
 	"io"
 	"net"
 	"os"
@@ -20,23 +19,12 @@ import (
 // stateDir resolves the single-footprint state directory once per process.
 func stateDir() string { return config.Dir() }
 
-// cmdRecord is the shell-hook fast path. Contract: NEVER block the shell,
+// runRecord is the shell-hook fast path. Contract: NEVER block the shell,
 // NEVER print, ALWAYS exit 0. The command text arrives on stdin; metadata
 // via flags. All it does is one fsync'd spool append plus a best-effort
-// daemon poke.
-func cmdRecord(args []string) int {
-	fs := flag.NewFlagSet("record", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	exit := fs.Int("exit", -1, "exit status of the command (-1 = unknown)")
-	durMs := fs.Int64("duration-ms", -1, "wall time in milliseconds (-1 = unknown)")
-	session := fs.String("session", "", "shell session id")
-	cwd := fs.String("cwd", "", "working directory the command ran in")
-	startMs := fs.Int64("start-ms", 0, "start time unix millis (0 = derive from now-duration)")
-	tag := fs.String("tag", "", "executor tag (default: auto-detect agent, else interactive)")
-	if fs.Parse(args) != nil {
-		return 0
-	}
-
+// daemon poke. Bad flags are swallowed by the cobra command (exit 0) before
+// this runs, keeping the shell unbreakable.
+func runRecord(exit int, durMs, startMs int64, session, cwd, tag string) int {
 	raw, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20)) // sanity cap: 1MiB of command text
 	if err != nil {
 		return 0
@@ -56,34 +44,34 @@ func cmdRecord(args []string) int {
 		return 0
 	}
 	filter, _ := redact.New(cfg.IgnorePatterns, cfg.IgnoreDirs)
-	if filter.SkipDir(*cwd) || filter.Sensitive(cmd) {
+	if filter.SkipDir(cwd) || filter.Sensitive(cmd) {
 		return 0
 	}
 
-	start := *startMs
+	start := startMs
 	if start == 0 {
 		start = time.Now().UnixMilli()
-		if *durMs > 0 {
-			start -= *durMs
+		if durMs > 0 {
+			start -= durMs
 		}
 	}
-	tagVal := *tag
+	tagVal := tag
 	if tagVal == "" {
 		tagVal = executorTag()
 	}
 	r := rec.Record{
 		ID:      rec.NewID(),
-		Session: *session,
+		Session: session,
 		Cmd:     cmd,
-		Cwd:     *cwd,
+		Cwd:     cwd,
 		StartMs: start,
 		Tag:     tagVal,
 	}
-	if *exit >= 0 {
-		r.Exit = rec.IntPtr(*exit)
+	if exit >= 0 {
+		r.Exit = rec.IntPtr(exit)
 	}
-	if *durMs >= 0 {
-		r.DurMs = rec.Int64Ptr(*durMs)
+	if durMs >= 0 {
+		r.DurMs = rec.Int64Ptr(durMs)
 	}
 
 	if spool.Append(config.SpoolDir(dir), r) == nil {

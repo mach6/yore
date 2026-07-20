@@ -82,6 +82,26 @@ That installs:
 
 Pass `yore init zsh --no-aliases` if you don't want `h`/`hs`.
 
+### Shell completions
+
+The CLI is built with cobra, so it ships completions for every command, flag, and
+even dynamic values (device ids, hostnames). Install them once:
+
+```bash
+# zsh — write to a directory on your $fpath, e.g.
+yore completion zsh > "${fpath[1]}/_yore"
+
+# bash
+yore completion bash | sudo tee /etc/bash_completion.d/yore >/dev/null
+
+# fish
+yore completion fish > ~/.config/fish/completions/yore.fish
+```
+
+`yore completion --help` prints per-shell instructions. Completions cover flag
+values (`--scope`, `--sort`, `--format`), shell names for `init`, and live
+device ids for `yore devices approve|revoke`.
+
 ### What gets recorded
 
 Everything except what looks sensitive. `yore` never records:

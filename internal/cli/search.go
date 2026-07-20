@@ -1,43 +1,14 @@
 package cli
 
 import (
-	"flag"
 	"fmt"
 	"os"
-	"strings"
 
 	"yore/internal/config"
 	"yore/internal/daemon"
 	"yore/internal/proto"
 	"yore/internal/tui/search"
 )
-
-// cmdSearch searches history. Interactive TUI by default (drawn on /dev/tty,
-// selection printed to stdout — the Ctrl-R widget contract); --headless
-// prints matching commands as plain lines for scripts and `hs | grep`-style
-// piping. The query is --query or the joined positional args.
-func cmdSearch(args []string) int {
-	fs := flag.NewFlagSet("search", flag.ExitOnError)
-	query := fs.String("query", "", "initial query")
-	headless := fs.Bool("headless", false, "print matches to stdout instead of the TUI")
-	limit := fs.Int("limit", 0, "headless: max results (default 200)")
-	scope := fs.String("scope", proto.ScopeLocal, "headless: local|all|session|cwd")
-	tag := fs.String("tag", "", "filter by executor tag (e.g. claude-code)")
-	sortMode := fs.String("sort", "", "sort: recency (default) or frecency")
-	fuzzy := fs.Bool("fuzzy", false, "subsequence (fzf-style) matching")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	q := *query
-	if q == "" {
-		q = strings.Join(fs.Args(), " ")
-	}
-
-	if *headless {
-		return headlessSearch(q, *scope, *tag, *sortMode, *fuzzy, *limit)
-	}
-	return interactiveSearch(q)
-}
 
 // interactiveSearch runs the inline TUI. Contract with the shell widgets:
 // the accepted command is the ONLY thing printed to stdout (exit 0); cancel

@@ -12,8 +12,8 @@ import (
 	"yore/internal/proto"
 )
 
-// cmdSync forces an immediate push/pull cycle and prints the result.
-func cmdSync([]string) int {
+// runSync forces an immediate push/pull cycle and prints the result.
+func runSync() int {
 	c, err := daemon.EnsureRunning(stateDir())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "yore sync:", err)
@@ -33,8 +33,8 @@ func cmdSync([]string) int {
 	return 0
 }
 
-// cmdStatus reports on the daemon and state directory.
-func cmdStatus([]string) int {
+// runStatus reports on the daemon and state directory.
+func runStatus() int {
 	dir := stateDir()
 	fmt.Printf("state dir : %s\n", dir)
 

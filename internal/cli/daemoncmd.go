@@ -1,37 +1,19 @@
 package cli
 
 import (
-	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"yore/internal/daemon"
 )
 
-// cmdDaemon runs or controls the background daemon:
-//
-//	yore daemon          run in the foreground (normally auto-spawned)
-//	yore daemon stop     ask a running daemon to exit gracefully
-//	yore daemon status   show daemon status (alias of `yore status`)
-func cmdDaemon(args []string) int {
-	if len(args) > 0 {
-		switch args[0] {
-		case "stop":
-			return daemonStop()
-		case "status":
-			return cmdStatus(nil)
-		case "run":
-			args = args[1:] // explicit run verb; fall through to foreground
-		}
-	}
-
-	fs := flag.NewFlagSet("daemon", flag.ExitOnError)
-	idle := fs.Duration("idle", 0, "idle timeout before exiting (default from config, 30m)")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
+// runDaemon runs the background daemon in the foreground (normally
+// auto-spawned via `yore daemon`). idle is the idle timeout before exit; 0
+// means take the default from config (30m).
+func runDaemon(idle time.Duration) int {
 	err := daemon.Run(stateDir(), daemon.Options{
-		IdleTimeout: *idle,
+		IdleTimeout: idle,
 		Version:     Version,
 	})
 	if err != nil {

@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -97,19 +96,10 @@ func buildSyncer(dir string) (*syncer.Syncer, *syncer.HTTPClient, error) {
 	return syncer.New(st, http, key, cfg.KeyEpochD()), http, nil
 }
 
-// cmdSetup enrolls this machine: it records the server URL + token, ensures a
+// runSetup enrolls this machine: it records the server URL + token, ensures a
 // device key, and either bootstraps a new history group (first machine) or
 // registers as pending for approval from an already-enrolled machine.
-func cmdSetup(args []string) int {
-	server, token, name := "", "", ""
-	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
-	fs.StringVar(&server, "server", "", "server URL")
-	fs.StringVar(&token, "token", "", "auth token")
-	fs.StringVar(&name, "name", "", "device name (default: hostname)")
-	if fs.Parse(args) != nil {
-		return 2
-	}
-
+func runSetup(server, token, name string) int {
 	dir := stateDir()
 	url, tok, err := resolveServer(dir, server, token)
 	if err != nil {
@@ -184,8 +174,8 @@ func cmdSetup(args []string) int {
 	return 0
 }
 
-// cmdDevices lists devices and approves/revokes them.
-func cmdDevices(args []string) int {
+// runDevicesList lists the enrolled devices (bare `yore devices`).
+func runDevicesList() int {
 	dir := stateDir()
 	sy, http, err := buildSyncer(dir)
 	if err != nil {
@@ -194,32 +184,38 @@ func cmdDevices(args []string) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	return listDevices(ctx, http, sy.DeviceID())
+}
 
-	if len(args) == 0 {
-		return listDevices(ctx, http, sy.DeviceID())
+// runDevicesApprove approves a pending device by id (`yore devices approve`).
+func runDevicesApprove(id string) int {
+	dir := stateDir()
+	sy, _, err := buildSyncer(dir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "yore devices:", err)
+		return 1
 	}
-	switch args[0] {
-	case "approve":
-		if len(args) != 2 {
-			fmt.Fprintln(os.Stderr, "usage: yore devices approve <id>")
-			return 2
-		}
-		return approveDevice(ctx, sy, args[1])
-	case "revoke":
-		if len(args) != 2 {
-			fmt.Fprintln(os.Stderr, "usage: yore devices revoke <id>")
-			return 2
-		}
-		if err := sy.Revoke(ctx, args[1]); err != nil {
-			fmt.Fprintln(os.Stderr, "yore devices revoke:", err)
-			return 1
-		}
-		fmt.Println("Revoked and rotated keys. The removed machine can no longer decrypt new history.")
-		return 0
-	default:
-		fmt.Fprintln(os.Stderr, "usage: yore devices [approve|revoke <id>]")
-		return 2
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return approveDevice(ctx, sy, id)
+}
+
+// runDevicesRevoke revokes a device by id and rotates keys (`yore devices revoke`).
+func runDevicesRevoke(id string) int {
+	dir := stateDir()
+	sy, _, err := buildSyncer(dir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "yore devices:", err)
+		return 1
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := sy.Revoke(ctx, id); err != nil {
+		fmt.Fprintln(os.Stderr, "yore devices revoke:", err)
+		return 1
+	}
+	fmt.Println("Revoked and rotated keys. The removed machine can no longer decrypt new history.")
+	return 0
 }
 
 func listDevices(ctx context.Context, http *syncer.HTTPClient, selfID string) int {

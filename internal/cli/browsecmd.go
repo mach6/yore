@@ -9,8 +9,8 @@ import (
 	"yore/internal/tui/browse"
 )
 
-// cmdBrowse opens the full-screen history browser (the `h` alias target).
-func cmdBrowse(args []string) int {
+// runBrowse opens the full-screen history browser (the `h` alias target).
+func runBrowse() int {
 	c, err := daemon.EnsureRunning(stateDir())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "yore browse: daemon unavailable:", err)
