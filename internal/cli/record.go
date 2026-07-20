@@ -32,6 +32,7 @@ func cmdRecord(args []string) int {
 	session := fs.String("session", "", "shell session id")
 	cwd := fs.String("cwd", "", "working directory the command ran in")
 	startMs := fs.Int64("start-ms", 0, "start time unix millis (0 = derive from now-duration)")
+	tag := fs.String("tag", "", "executor tag (default: auto-detect agent, else interactive)")
 	if fs.Parse(args) != nil {
 		return 0
 	}
@@ -66,12 +67,17 @@ func cmdRecord(args []string) int {
 			start -= *durMs
 		}
 	}
+	tagVal := *tag
+	if tagVal == "" {
+		tagVal = executorTag()
+	}
 	r := rec.Record{
 		ID:      rec.NewID(),
 		Session: *session,
 		Cmd:     cmd,
 		Cwd:     *cwd,
 		StartMs: start,
+		Tag:     tagVal,
 	}
 	if *exit >= 0 {
 		r.Exit = rec.IntPtr(*exit)

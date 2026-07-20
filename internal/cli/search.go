@@ -21,6 +21,7 @@ func cmdSearch(args []string) int {
 	headless := fs.Bool("headless", false, "print matches to stdout instead of the TUI")
 	limit := fs.Int("limit", 0, "headless: max results (default 200)")
 	scope := fs.String("scope", proto.ScopeLocal, "headless: local|all|session|cwd")
+	tag := fs.String("tag", "", "filter by executor tag (e.g. claude-code)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -30,7 +31,7 @@ func cmdSearch(args []string) int {
 	}
 
 	if *headless {
-		return headlessSearch(q, *scope, *limit)
+		return headlessSearch(q, *scope, *tag, *limit)
 	}
 	return interactiveSearch(q)
 }
@@ -56,7 +57,7 @@ func interactiveSearch(initialQuery string) int {
 	if err != nil {
 		// No /dev/tty (or the TUI failed): behave like headless so pipes
 		// and odd environments still get results.
-		return headlessSearch(initialQuery, proto.ScopeLocal, 0)
+		return headlessSearch(initialQuery, proto.ScopeLocal, "", 0)
 	}
 	if !ok {
 		return 1
@@ -65,7 +66,7 @@ func interactiveSearch(initialQuery string) int {
 	return 0
 }
 
-func headlessSearch(q, scope string, limit int) int {
+func headlessSearch(q, scope, tag string, limit int) int {
 	c, err := daemon.EnsureRunning(stateDir())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "yore: daemon unavailable:", err)
@@ -73,7 +74,7 @@ func headlessSearch(q, scope string, limit int) int {
 	}
 	defer c.Close()
 
-	req := proto.QueryReq{Q: q, Scope: scope, Limit: limit, Dedupe: true}
+	req := proto.QueryReq{Q: q, Scope: scope, Tag: tag, Limit: limit, Dedupe: true}
 	switch scope {
 	case proto.ScopeSession:
 		req.Session = os.Getenv("YORE_SESSION")

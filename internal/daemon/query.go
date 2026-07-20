@@ -68,6 +68,17 @@ func (s *server) runQuery(f *match.Filter, q proto.QueryReq) proto.QueryResp {
 		rows = append(rows, s.remote.search(q.Q, host)...)
 	}
 
+	// Executor filter (cross-cutting; e.g. only agent-run commands).
+	if q.Tag != "" {
+		kept := rows[:0]
+		for _, r := range rows {
+			if r.Tag == q.Tag {
+				kept = append(kept, r)
+			}
+		}
+		rows = kept
+	}
+
 	// Newest-first: descending StartMs, ties broken by descending Seq. (Seq
 	// order alone is not StartMs order — imported rows arrive out of time.)
 	sort.Slice(rows, func(a, b int) bool {

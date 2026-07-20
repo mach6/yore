@@ -97,6 +97,7 @@ type payload struct {
 	Exit     *int   `json:"exit,omitempty"`
 	DurMs    *int64 `json:"dur_ms,omitempty"`
 	StartMs  int64  `json:"start_ms,omitempty"`
+	Tag      string `json:"tag,omitempty"`
 	Type     string `json:"type,omitempty"`
 	TargetID string `json:"target_id,omitempty"`
 }
@@ -114,6 +115,7 @@ func marshalPayload(r rec.Record) ([]byte, error) {
 		Exit:     r.Exit,
 		DurMs:    r.DurMs,
 		StartMs:  r.StartMs,
+		Tag:      r.Tag,
 		Type:     r.Type,
 		TargetID: r.TargetID,
 	})
@@ -140,6 +142,7 @@ func recordFromPayload(pt []byte, hostID string, seq uint64, keyID string) (rec.
 		Exit:     p.Exit,
 		DurMs:    p.DurMs,
 		StartMs:  p.StartMs,
+		Tag:      p.Tag,
 		KeyID:    keyID,
 	}, nil
 }

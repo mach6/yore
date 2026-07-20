@@ -38,6 +38,7 @@ type Record struct {
 	Exit    *int   `json:"exit,omitempty"`   // nil = unknown (e.g. imported)
 	DurMs   *int64 `json:"dur_ms,omitempty"` // nil = unknown
 	StartMs int64  `json:"start_ms,omitempty"`
+	Tag     string `json:"tag,omitempty"` // executor: agent/tool that ran it (e.g. "claude-code"), "" = interactive
 
 	DeletedMs int64  `json:"deleted_ms,omitempty"` // tombstone applied locally
 	KeyID     string `json:"key_id,omitempty"`     // DEK that sealed this record in transit

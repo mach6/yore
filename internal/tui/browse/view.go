@@ -339,6 +339,9 @@ func (m *Model) syncDetail() {
 	meta("cwd", dash(r.Cwd))
 	meta("host", dash(r.Hostname))
 	meta("session", dash(r.Session))
+	if r.Tag != "" {
+		meta("ran by", r.Tag)
+	}
 	meta("time", time.UnixMilli(r.StartMs).Local().Format("2006-01-02 15:04:05"))
 	dur := "—"
 	if r.DurMs != nil {

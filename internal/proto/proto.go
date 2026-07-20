@@ -54,6 +54,7 @@ type QueryReq struct {
 	Host    string `json:"host,omitempty"`    // hostname filter for ScopeHost
 	Session string `json:"session,omitempty"` // session id for ScopeSession
 	Cwd     string `json:"cwd,omitempty"`     // directory for ScopeCwd
+	Tag     string `json:"tag,omitempty"`     // executor filter, e.g. "claude-code"; "" = any
 	Limit   int    `json:"limit,omitempty"`   // 0 = server default (200)
 	Offset  int    `json:"offset,omitempty"`
 	Dedupe  bool   `json:"dedupe,omitempty"` // collapse identical commands, newest wins
