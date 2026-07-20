@@ -30,6 +30,14 @@ importer, **and** the sync server. No agents, no runtime deps, CGO-free.
 - **Built for years of history.** Every hot path — search, decrypt, enrolling a
   device — is O(1) in how much history you've accumulated. It doesn't rot as the
   archive grows.
+- **One source of truth.** By default yore *replaces* your shell's native
+  history: no second, unredacted `~/.zsh_history` on disk, and `!N` still works —
+  against yore's redacted history. (Atuin leaves native history recording
+  alongside its own store.)
+- **A captured token can't tamper.** Every mutating sync request is signed with
+  the device's key, so a leaked bearer token (e.g. from a TLS-inspecting
+  corporate proxy) can't push garbage or revoke your devices — only the device's
+  own private key can.
 
 If you don't need those properties, Atuin is excellent and more mature. If you
 do, that's exactly what `yore` is for.
@@ -68,19 +76,42 @@ eval "$(yore init zsh)"
 eval "$(yore init bash)"
 ```
 
-That installs:
+Both install **capture hooks** (recording each command with its exit code,
+duration, working directory, host, and session — a single backgrounded write,
+so effectively zero prompt latency) and, depending on the **integration mode**,
+rebind your history keys.
 
-- **capture hooks** that record each command with its exit code, duration,
-  working directory, host, and session — adding effectively zero latency to your
-  prompt (a single backgrounded write);
-- **`Ctrl-R`** → the inline search TUI, with whatever you'd started typing as the
-  initial query; the command you pick is inserted at your prompt (it does **not**
-  auto-run — review, then Enter);
-- **`h`** → the full-screen history browser;
-- **`hs <query>`** → search from the command line; in a pipe it prints plain
-  matching lines (`hs docker | grep build`).
+### Integration modes
 
-Pass `yore init zsh --no-aliases` if you don't want `h`/`hs`.
+Pick a mode at `yore setup` (`--integration`), or `yore init --mode <mode>`; it
+is stored in `config.integration` (default **takeover**):
+
+- **takeover** (default) — *yore is the single source of truth.* Your shell's
+  own persistent history is turned off (no unredacted `~/.zsh_history` on disk),
+  its in-memory list is seeded from yore, and new commands are gated through
+  yore's redaction. So **`!N`, `!!`, and Up work against yore's history, and it's
+  secret-free**. `Ctrl-R` and Up open the search TUI; `h`/`hs` are added.
+- **coexist** — record *alongside* your untouched native history. `Ctrl-R` is
+  rebound to yore and `h`/`hs` are added; native `!N` keeps working against
+  native history. (This is how Atuin behaves by default.)
+- **capture** — record only; no keybinding or alias changes.
+
+zsh gets the exact takeover experience via `zshaddhistory`; bash's history hooks
+are coarser, so its in-memory gate is best-effort. Source `yore init` **after**
+your own `HISTFILE`/`SAVEHIST` settings so takeover wins.
+
+### The keys
+
+- **`Ctrl-R`** → the inline search TUI, seeded with whatever you'd started typing;
+  the command you pick is inserted at your prompt — review, then Enter (set
+  `enter_executes: true` to run on Enter instead).
+- **Up arrow** → yore search (takeover), or native scroll (coexist, unless you
+  set `bind_up_arrow`).
+- **`!N` / `!!` / `!$`** → native shell history expansion — still works, against
+  yore's history in takeover and native history in coexist.
+- **`h`** → the full-screen browser; **`hs <query>`** → CLI search (plain
+  matching lines when piped, e.g. `hs docker | grep build`). Omit both with
+  `yore init zsh --no-aliases`.
 
 ### Shell completions
 
@@ -133,11 +164,15 @@ It reports how many secret-bearing lines it skipped.
 
 | You want to… | Do this |
 |---|---|
-| Search and recall a command | `Ctrl-R`, type, `Enter` to insert |
-| Cycle search scope (this host / all / session / dir) | `Ctrl-R` again inside the search |
-| Browse, filter, inspect, get stats | `h` |
+| Search and recall a command | `Ctrl-R` (or Up, in takeover), type, `Enter` to insert |
+| Re-run an event by number | `!N`, `!!`, `!$` — native, works against yore's history |
+| Cycle search scope (host / all / session / dir / repo) | `Ctrl-R` again inside the search |
+| Rank by frequency×recency, or fuzzy match | `Alt-f` / `Alt-z` inside the search |
+| Browse, filter, inspect, get stats, manage devices | `h` (then `D` for devices) |
+| See only what an agent ran | `yore search --tag claude-code` |
 | Grep history in a script | `hs <query>` \| … or `yore search --headless <query>` |
-| See daemon / sync status | `yore status` |
+| See daemon / sync status, or diagnose | `yore status` / `yore doctor` |
+| Stop the background daemon / server | `yore stop` / `yore server stop` |
 
 The background daemon starts itself on first use and idles out when unused. It
 holds the searchable corpus in RAM (loaded from a warm snapshot for an instant
@@ -167,8 +202,9 @@ give it a hostname; the health endpoint is `GET /v1/health`.
 ### 2. Enroll your first machine
 
 ```bash
-yore setup            # asks for the server URL + token; generates this
-                      # machine's keypair and bootstraps the History Key
+yore setup            # asks for the server URL + token and your integration
+                      # mode; generates this machine's keypair and bootstraps
+                      # the History Key. Add --pin to pin the server's TLS cert.
 ```
 
 ### 3. Enroll another machine
@@ -209,9 +245,15 @@ each wrapped once under the History Key. Reading is a single asymmetric unwrap
 wrap; revoking is a key re-wrap — **records are never re-encrypted**, so cost is
 independent of how much history you keep. Every sealed record is bound by
 authenticated data to its exact position in its host's stream, so a compromised
-server can't reorder, replay, or substitute blobs. The local database and the
+server can't reorder, replay, or substitute blobs. On top of the bearer token,
+every *mutating* request is **signed with the device's Ed25519 key** (with a
+nonce + timestamp anti-replay), so a captured token can't push or revoke —
+useful against TLS-inspecting proxies, which see ciphertext + the token but not
+any private key. `yore setup --pin` additionally pins the server's TLS
+certificate (fail-closed against interception). The local database and the
 device key file are `0600`; treat full disk access to any one machine as access
-to that machine's readable history, the same as `~/.zsh_history` today.
+to that machine's readable history, the same as `~/.zsh_history` today. Full
+endpoint and crypto details are in [`docs/protocol.md`](docs/protocol.md).
 
 ---
 
@@ -223,6 +265,11 @@ to that machine's readable history, the same as `~/.zsh_history` today.
 {
   "server_url": "https://yore.example.com",
   "token": "…",
+  "server_pin": "…",
+  "integration": "takeover",
+  "keymap": "emacs",
+  "enter_executes": false,
+  "bind_up_arrow": false,
   "key_epoch": "24h",
   "daemon_idle": "30m",
   "sync_interval": "5m",
@@ -231,6 +278,12 @@ to that machine's readable history, the same as `~/.zsh_history` today.
   "record_space_prefixed": false
 }
 ```
+
+- `integration` — `takeover` (default) / `coexist` / `capture` (see Shell setup).
+- `server_pin` — base64 SHA-256 of the server's TLS cert; set by `setup --pin`.
+- `keymap` — `emacs` (default) or `vim` for the TUIs.
+- `enter_executes` — run the picked command on Enter instead of inserting it.
+- `bind_up_arrow` — in coexist mode, also bind Up to search.
 
 The auth token may also come from `$YORE_TOKEN` or `$YORE_TOKEN_FILE` (the
 server reads `$YORE_TOKEN_FILE` for Swarm secrets). Override the whole state
@@ -255,13 +308,17 @@ Uninstall = remove that directory.
 ## Development
 
 ```bash
-make test           # unit + integration tests
+make test           # unit + integration tests (testify; go test ./...)
 make vet
 make bench          # store/matcher/crypto benchmarks
 ```
 
 The codebase is a micro-package layout under `internal/`: `rec`/`proto`/`wire`
 (shared contracts), `store`+`spool` (local bbolt + crash-safe capture),
-`daemon` (RAM corpus + unix-socket server), `match`/`tui` (search + browse),
-`cryptobox` (E2E core), `server`+`syncer` (sync), `redact` (secrets gate),
-`importer`, `shell` (hook scripts). See [`docs/`](docs/) for architecture notes.
+`daemon` (RAM corpus + unix-socket server), `match`/`tui` (search + browse, with
+`tui/hl` syntax highlighting), `cryptobox` (E2E core), `reqsign` (request
+signing), `server`+`syncer` (sync), `redact` (secrets gate), `importer`, `shell`
+(hook scripts), `cli` (cobra tree). Tests use testify (`require`, table-driven).
+
+See [`docs/architecture.md`](docs/architecture.md) for the design and
+[`docs/protocol.md`](docs/protocol.md) for the full sync API.

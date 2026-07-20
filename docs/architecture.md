@@ -51,10 +51,13 @@ recording survives the daemon being down (the spool is drained at next start).
   browser (hosts / table / detail / stats / devices panes).
 
 **Security & sync:**
-- **cryptobox** — the E2E core (device X25519 keypairs, History Key, epoch data
-  keys, record AEAD). See "Key hierarchy" below.
+- **cryptobox** — the E2E core (device X25519 + Ed25519 keypairs, History Key,
+  epoch data keys, record AEAD). See "Key hierarchy" below.
+- **reqsign** — the shared request-signing contract: the canonical string a
+  device's Ed25519 key signs on every mutating sync request (so a captured token
+  can't push or revoke). Used identically by client and server.
 - **redact** — the recording gate: never spool/store/sync a command that carries
-  a secret. Runs on live capture *and* on import.
+  a secret. Runs on live capture, on import, and on the shell-history gate.
 - **server** — the sync server; stores only ciphertext + device public keys.
 - **syncer** — the client engine: encrypt+push local records, pull+decrypt
   remote ones, and the device enroll / approve / revoke+rotate primitives.
@@ -115,6 +118,27 @@ is tagged with its **executor** (auto-detected agent env like `CLAUDECODE`, or
 `$YORE_TAG`/`--tag`), so history can be filtered by "what I typed" vs "what an
 agent ran".
 
+## Shell integration modes
+
+`config.integration` (default `takeover`) controls how deeply the emitted hooks
+take over the shell's history, all via `yore init`:
+
+- **takeover** — yore is the single source of truth. The shell's persistent
+  history is disabled (no unredacted `~/.zsh_history`); its in-memory list is
+  seeded from yore (`yore export --shell`, one `fc -R` / `history -r` at startup)
+  and gated by yore's redaction (`yore filter` from zsh's `zshaddhistory`, or a
+  `history -d` in bash), so `!N` / up-arrow work against yore-consistent,
+  secret-free history. zsh is exact; bash's gate is best-effort.
+- **coexist** — record alongside the untouched native history; rebind Ctrl-R,
+  add `h`/`hs`. Native `!N` works against native history.
+- **capture** — record only; no keybinding/alias changes.
+
+Two subcommands support takeover: `yore filter` (the redaction gate — reads a
+command on stdin, exits 1 to drop) and `yore export --shell [--format zsh|bash]`
+(the history seed). Neither is on the prompt fast path; `filter` runs
+synchronously from `zshaddhistory` (single-digit ms) and `export` once per shell
+start.
+
 ## Key hierarchy (cryptobox)
 
 ```
@@ -149,10 +173,10 @@ documented in **[`protocol.md`](protocol.md)**.
 
 ## Config (`~/.config/yore/config.json`)
 
-`server_url`, `token` / `token_file`, `server_pin`, `key_epoch` (24h),
-`daemon_idle` (30m), `sync_interval` (5m), `auto_deepen`, `enter_executes`,
-`bind_up_arrow`, `keymap` (emacs|vim), `ignore_patterns`, `ignore_dirs`,
-`record_space_prefixed`.
+`server_url`, `token` / `token_file`, `server_pin`, `integration`
+(takeover|coexist|capture), `key_epoch` (24h), `daemon_idle` (30m),
+`sync_interval` (5m), `auto_deepen`, `enter_executes`, `bind_up_arrow`, `keymap`
+(emacs|vim), `ignore_patterns`, `ignore_dirs`, `record_space_prefixed`.
 
 ## Invariants
 
