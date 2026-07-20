@@ -124,6 +124,33 @@ func (c *Client) Delete(id string) error {
 	return err
 }
 
+// Devices lists enrolled devices (via the daemon's syncer).
+func (c *Client) Devices() (proto.DevicesInfo, error) {
+	resp, err := c.roundtrip(proto.Request{Op: proto.OpDevices}, syncDeadline)
+	if err != nil {
+		return proto.DevicesInfo{}, err
+	}
+	if !resp.OK {
+		return proto.DevicesInfo{}, respErr(resp)
+	}
+	if resp.Devices == nil {
+		return proto.DevicesInfo{}, errors.New("daemon: devices response missing body")
+	}
+	return *resp.Devices, nil
+}
+
+// Approve admits a pending device (wraps the History Key for it).
+func (c *Client) Approve(id string) error {
+	_, err := c.ok(proto.Request{Op: proto.OpApprove, DeviceID: id}, syncDeadline)
+	return err
+}
+
+// Revoke revokes a device and rotates keys.
+func (c *Client) Revoke(id string) error {
+	_, err := c.ok(proto.Request{Op: proto.OpRevoke, DeviceID: id}, syncDeadline)
+	return err
+}
+
 // Sync forces a synchronous push/pull cycle (no-op if sync isn't configured).
 func (c *Client) Sync() error {
 	_, err := c.ok(proto.Request{Op: proto.OpSync}, syncDeadline)

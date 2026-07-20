@@ -13,6 +13,7 @@ import (
 	"yore/internal/match"
 	"yore/internal/proto"
 	"yore/internal/rec"
+	"yore/internal/tui/hl"
 	"yore/internal/tui/theme"
 )
 
@@ -456,10 +457,11 @@ func composeSegs(segs []styledSeg, selected bool, w int, th *theme.Theme) string
 	return b.String()
 }
 
+// Normal runs carry an hl.Kind directly (0..N); kindMatch/kindMarker sit above.
 const (
-	kindNorm = iota
-	kindMatch
-	kindMarker
+	kindNorm   = int(hl.Normal) // 0
+	kindMatch  = 100
+	kindMarker = 101
 )
 
 // commandSegments turns a command into highlighted, single-line, width-limited
@@ -470,6 +472,7 @@ func commandSegments(th *theme.Theme, cmd string, q match.Query, maxCols int) ([
 		return nil, 0
 	}
 	ranges := q.Ranges(cmd)
+	syn := hl.Classify(cmd)
 
 	type rk struct {
 		r rune
@@ -498,7 +501,7 @@ func commandSegments(th *theme.Theme, cmd string, q match.Query, maxCols int) ([
 		case skipWS && (r == ' ' || r == '\t'):
 		default:
 			skipWS = false
-			k := kindNorm
+			k := int(syn[i]) // hl.Kind for this byte (syntax coloring)
 			if inRange(i) {
 				k = kindMatch
 			}
@@ -565,7 +568,7 @@ func styleForKind(th *theme.Theme, k int) lipgloss.Style {
 	case kindMarker:
 		return th.Dim
 	default:
-		return th.Norm
+		return th.Syntax(hl.Kind(k)) // k is an hl.Kind for normal runs
 	}
 }
 

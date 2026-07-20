@@ -387,6 +387,65 @@ func TestRemoteOffHint(t *testing.T) {
 	}
 }
 
+func TestVimSearchEscToNormal(t *testing.T) {
+	f := &fakeQuerier{}
+	m := NewModel(f, Options{Keymap: "vim"})
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("cmd-a", "cmd-b", "cmd-c"))})
+	if !m.vim {
+		t.Fatal("vim mode should be enabled from Options.Keymap")
+	}
+
+	// First Esc enters the normal sub-mode instead of cancelling.
+	m, _ = step(t, m, key("esc"))
+	if m.cancel || m.done {
+		t.Fatalf("first esc cancelled: cancel=%v done=%v, want false/false", m.cancel, m.done)
+	}
+	if !m.normal {
+		t.Fatal("first esc did not enter the normal sub-mode")
+	}
+
+	// j/k navigate results while in normal mode.
+	m, _ = step(t, m, key("j"))
+	if m.sel != 1 {
+		t.Fatalf("j: sel = %d, want 1", m.sel)
+	}
+	m, _ = step(t, m, key("j"))
+	m, _ = step(t, m, key("k"))
+	if m.sel != 1 {
+		t.Fatalf("j,j,k: sel = %d, want 1", m.sel)
+	}
+
+	// An unmapped key in normal mode must NOT edit the filter text.
+	m, _ = step(t, m, key("z"))
+	if m.ti.Value() != "" {
+		t.Fatalf("normal-mode 'z' edited the filter: %q", m.ti.Value())
+	}
+
+	// `i` returns to insert/filter mode; typing edits again.
+	m, _ = step(t, m, key("i"))
+	if m.normal {
+		t.Fatal("`i` did not return to insert mode")
+	}
+	m = typeStr(t, m, "x")
+	if m.ti.Value() != "x" {
+		t.Fatalf("filter after returning to insert = %q, want \"x\"", m.ti.Value())
+	}
+
+	// Esc back to normal, then a second Esc cancels.
+	m, _ = step(t, m, key("esc"))
+	if !m.normal {
+		t.Fatal("esc did not re-enter normal mode")
+	}
+	tm, cmd := m.Update(key("esc"))
+	res := tm.(Model)
+	if !res.cancel || !res.done {
+		t.Fatalf("second esc: cancel=%v done=%v, want true/true", res.cancel, res.done)
+	}
+	if cmd == nil {
+		t.Fatal("second esc should return tea.Quit")
+	}
+}
+
 func TestConcurrentQueryCommands(t *testing.T) {
 	f := &fakeQuerier{resp: mkResp(mkRows("ls"))}
 	m := NewModel(f, Options{})

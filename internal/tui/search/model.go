@@ -23,6 +23,7 @@ type Options struct {
 	Session      string // current shell session id ($YORE_SESSION), for scope cycling
 	Cwd          string // current directory, for scope cycling
 	Version      string
+	Keymap       string // "vim" enables an insert/normal sub-mode; "" / "emacs" = default
 }
 
 // Panel geometry.
@@ -56,6 +57,9 @@ type Model struct {
 	dedupe   bool
 	frecency bool // alt+f: rank by frequency×recency instead of recency
 	fuzzy    bool // alt+z: subsequence matching instead of substring
+
+	vim    bool // vim keymap: Esc toggles an insert/normal sub-mode
+	normal bool // vim only: true while in the normal (navigation) sub-mode
 
 	rows      []rec.Record
 	total     int
@@ -99,6 +103,7 @@ func NewModel(q Querier, opts Options) Model {
 		ti:          ti,
 		scope:       proto.ScopeLocal,
 		dedupe:      true,
+		vim:         opts.Keymap == "vim",
 		width:       80,
 		rowsVisible: maxRows,
 	}
@@ -159,8 +164,25 @@ func (m Model) applyResult(msg queryResultMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Vim normal sub-mode swallows input with its own tiny binding set.
+	if m.vim && m.normal {
+		return m.handleNormalKey(msg)
+	}
+
 	switch msg.String() {
-	case "ctrl+c", "esc", "ctrl+g":
+	case "esc":
+		// Vim: the first Esc leaves insert/filter for the normal sub-mode; a
+		// second Esc (handled in handleNormalKey) cancels. Emacs: cancel now.
+		if m.vim {
+			m.normal = true
+			m.ti.Blur()
+			return m, nil
+		}
+		m.cancel = true
+		m.done = true
+		return m, tea.Quit
+
+	case "ctrl+c", "ctrl+g":
 		m.cancel = true
 		m.done = true
 		return m, tea.Quit
@@ -214,6 +236,60 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmd, qcmd)
 	}
 	return m, cmd
+}
+
+// handleNormalKey services the vim normal sub-mode. It is deliberately minimal:
+// j/k (and ctrl+n/ctrl+p) navigate results, g/G jump, i/a// return to filtering,
+// Enter accepts, and Esc/ctrl+c cancels. Unmapped keys are ignored so the
+// filter text is never edited while in normal mode.
+func (m Model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "ctrl+c", "ctrl+g":
+		m.cancel = true
+		m.done = true
+		return m, tea.Quit
+
+	case "enter":
+		if len(m.rows) > 0 {
+			m.accepted = m.rows[m.sel].Cmd
+		} else {
+			m.accepted = m.ti.Value()
+		}
+		m.accept = true
+		m.done = true
+		return m, tea.Quit
+
+	case "i", "a", "/":
+		m.normal = false
+		m.ti.Focus()
+		return m, nil
+
+	case "j", "down", "ctrl+n":
+		m.moveSel(1)
+		return m, nil
+
+	case "k", "up", "ctrl+p":
+		m.moveSel(-1)
+		return m, nil
+
+	case "g":
+		m.sel, m.top = 0, 0
+		m.clampWindow()
+		return m, nil
+
+	case "G":
+		if len(m.rows) > 0 {
+			m.sel = len(m.rows) - 1
+		}
+		m.clampWindow()
+		return m, nil
+
+	case "ctrl+r":
+		m.scope = nextScope(m.scope)
+		m.applyLayout()
+		return m.issueQuery()
+	}
+	return m, nil
 }
 
 // issueQuery bumps the sequence counter and returns a command that runs the

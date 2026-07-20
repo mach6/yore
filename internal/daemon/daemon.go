@@ -328,6 +328,25 @@ func (s *server) dispatch(req *proto.Request, f *match.Filter) (proto.Response, 
 		}
 		return proto.Response{OK: true}, false
 
+	case proto.OpDevices:
+		di, err := s.listDevices()
+		if err != nil {
+			return proto.Response{Err: "devices: " + err.Error()}, false
+		}
+		return proto.Response{OK: true, Devices: &di}, false
+
+	case proto.OpApprove:
+		if err := s.deviceOp(req.DeviceID, true); err != nil {
+			return proto.Response{Err: "approve: " + err.Error()}, false
+		}
+		return proto.Response{OK: true}, false
+
+	case proto.OpRevoke:
+		if err := s.deviceOp(req.DeviceID, false); err != nil {
+			return proto.Response{Err: "revoke: " + err.Error()}, false
+		}
+		return proto.Response{OK: true}, false
+
 	case proto.OpStatus:
 		st := s.status()
 		return proto.Response{OK: true, Status: &st}, false

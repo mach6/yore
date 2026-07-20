@@ -88,6 +88,8 @@ func press(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyEsc}
 	case "ctrl+d":
 		return tea.KeyMsg{Type: tea.KeyCtrlD}
+	case "ctrl+u":
+		return tea.KeyMsg{Type: tea.KeyCtrlU}
 	case "ctrl+c":
 		return tea.KeyMsg{Type: tea.KeyCtrlC}
 	default:
@@ -445,6 +447,104 @@ func TestOSC52RoundTrip(t *testing.T) {
 	}
 	if string(got) != payload {
 		t.Errorf("round-trip = %q, want %q", got, payload)
+	}
+}
+
+// readyVim is ready() but with the vim keymap enabled.
+func readyVim(t *testing.T, f *fakeBackend, w, h int) Model {
+	t.Helper()
+	m := NewModel(f, Options{Version: "v1", Now: now, Keymap: "vim"})
+	m, _ = step(t, m, tea.WindowSizeMsg{Width: w, Height: h})
+	if len(f.hosts.Hosts) > 0 {
+		m, _ = step(t, m, hostsResultMsg{info: f.hosts})
+	}
+	return m
+}
+
+func TestVimBrowseNavigation(t *testing.T) {
+	f := &fakeBackend{}
+	m := readyVim(t, f, 120, 40)
+	// Plenty of rows so a half-page jump is not clamped by the row count.
+	cmds := make([]string, 40)
+	for i := range cmds {
+		cmds[i] = "cmd-" + strconv.Itoa(i)
+	}
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows(cmds...))})
+	if !m.vim {
+		t.Fatal("vim mode should be enabled from Options.Keymap")
+	}
+
+	// j/k navigate the table (these also work in emacs, but must in vim).
+	m, _ = step(t, m, press("j"))
+	m, _ = step(t, m, press("j"))
+	if m.sel != 2 {
+		t.Fatalf("after two j: sel = %d, want 2", m.sel)
+	}
+	m, _ = step(t, m, press("k"))
+	if m.sel != 1 {
+		t.Fatalf("after k: sel = %d, want 1", m.sel)
+	}
+
+	// g/G jump to top/bottom.
+	m, _ = step(t, m, press("G"))
+	if m.sel != len(cmds)-1 {
+		t.Fatalf("G: sel = %d, want %d (last row)", m.sel, len(cmds)-1)
+	}
+	m, _ = step(t, m, press("g"))
+	if m.sel != 0 {
+		t.Fatalf("g: sel = %d, want 0", m.sel)
+	}
+
+	// h/l move focus between panes (default focus is the table).
+	if m.focus != focusTable {
+		t.Fatalf("default focus = %v, want focusTable", m.focus)
+	}
+	m, _ = step(t, m, press("l"))
+	if m.focus != focusDetail {
+		t.Fatalf("l: focus = %v, want focusDetail", m.focus)
+	}
+	m, _ = step(t, m, press("h"))
+	m, _ = step(t, m, press("h"))
+	if m.focus != focusHosts {
+		t.Fatalf("h twice from table: focus = %v, want focusHosts", m.focus)
+	}
+
+	// ctrl+d is a half-page scroll in vim, NOT delete.
+	m.focus = focusTable
+	m.sel = 0
+	m, _ = step(t, m, press("ctrl+d"))
+	if m.confirmDelete {
+		t.Fatal("ctrl+d in vim mode wrongly armed delete confirmation")
+	}
+	if m.sel == 0 {
+		t.Fatal("ctrl+d in vim mode did not scroll the selection down")
+	}
+	half := m.halfPage()
+	if m.sel != half {
+		t.Fatalf("ctrl+d: sel = %d, want %d (half-page)", m.sel, half)
+	}
+	m, _ = step(t, m, press("ctrl+u"))
+	if m.sel != 0 {
+		t.Fatalf("ctrl+u: sel = %d, want back to 0", m.sel)
+	}
+
+	// `d` still deletes (single-key, with confirm) in vim mode.
+	m, _ = step(t, m, press("d"))
+	if !m.confirmDelete {
+		t.Fatal("`d` should still arm delete in vim mode")
+	}
+}
+
+func TestEmacsCtrlDStillDeletes(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 30) // default (emacs) keymap
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("a", "b"))})
+	if m.vim {
+		t.Fatal("default keymap should not be vim")
+	}
+	m, _ = step(t, m, press("ctrl+d"))
+	if !m.confirmDelete {
+		t.Fatal("ctrl+d in emacs mode should still arm delete")
 	}
 }
 

@@ -86,6 +86,11 @@ func (s *Syncer) PendingDevices(ctx context.Context) ([]wire.Device, error) {
 	return pending, nil
 }
 
+// Devices returns every enrolled device, any status (for display).
+func (s *Syncer) Devices(ctx context.Context) ([]wire.Device, error) {
+	return s.http.ListDevices(ctx)
+}
+
 // Approve admits a pending device: this (active) device wraps the group's HK
 // for the target's public key and activates it. The target can then resolve the
 // same HK. The caller should first confirm the target's VerificationCode

@@ -19,6 +19,9 @@ const (
 	OpQuery    = "query"    // search
 	OpHosts    = "hosts"    // per-host record counts (browse TUI sidebar)
 	OpDelete   = "delete"   // tombstone one record by id
+	OpDevices  = "devices"  // list enrolled devices
+	OpApprove  = "approve"  // approve a pending device (DeviceID)
+	OpRevoke   = "revoke"   // revoke a device and rotate keys (DeviceID)
 	OpStatus   = "status"   // daemon status
 	OpSync     = "sync"     // force a push/pull cycle now
 	OpShutdown = "shutdown" // graceful exit
@@ -47,6 +50,7 @@ type Request struct {
 	Record   *rec.Record `json:"record,omitempty"`
 	Query    *QueryReq   `json:"query,omitempty"`
 	DeleteID string      `json:"delete_id,omitempty"` // OpDelete target
+	DeviceID string      `json:"device_id,omitempty"` // OpApprove / OpRevoke target
 }
 
 type QueryReq struct {
@@ -104,12 +108,27 @@ type HostsInfo struct {
 	Remote RemoteInfo  `json:"remote"`
 }
 
+// DeviceInfo is one enrolled device, as shown in the browse devices pane.
+type DeviceInfo struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"`         // pending | active | revoked
+	Code   string `json:"code,omitempty"` // verification code (pending devices only)
+	Self   bool   `json:"self,omitempty"` // this machine
+}
+
+// DevicesInfo answers OpDevices.
+type DevicesInfo struct {
+	Devices []DeviceInfo `json:"devices"`
+}
+
 type Response struct {
-	OK     bool        `json:"ok"`
-	Err    string      `json:"err,omitempty"`
-	Query  *QueryResp  `json:"query,omitempty"`
-	Hosts  *HostsInfo  `json:"hosts,omitempty"`
-	Status *StatusResp `json:"status,omitempty"`
+	OK      bool         `json:"ok"`
+	Err     string       `json:"err,omitempty"`
+	Query   *QueryResp   `json:"query,omitempty"`
+	Hosts   *HostsInfo   `json:"hosts,omitempty"`
+	Devices *DevicesInfo `json:"devices,omitempty"`
+	Status  *StatusResp  `json:"status,omitempty"`
 }
 
 // WriteMsg writes v as one JSON line.

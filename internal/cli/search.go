@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"yore/internal/config"
 	"yore/internal/daemon"
 	"yore/internal/proto"
 	"yore/internal/tui/search"
@@ -50,11 +51,13 @@ func interactiveSearch(initialQuery string) int {
 	defer c.Close()
 
 	cwd, _ := os.Getwd()
+	cfg, _ := config.Load(stateDir())
 	cmd, ok, err := search.Run(c, search.Options{
 		InitialQuery: initialQuery,
 		Session:      os.Getenv("YORE_SESSION"),
 		Cwd:          cwd,
 		Version:      Version,
+		Keymap:       cfg.Keymap,
 	})
 	if err != nil {
 		// No /dev/tty (or the TUI failed): behave like headless so pipes

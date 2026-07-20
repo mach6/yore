@@ -13,6 +13,7 @@ import (
 	"yore/internal/match"
 	"yore/internal/proto"
 	"yore/internal/rec"
+	"yore/internal/tui/hl"
 	"yore/internal/tui/theme"
 )
 
@@ -26,11 +27,12 @@ const (
 	prefixW = relW + 1 + hostW + 1 + exitW + 1
 )
 
-// command-cell run kinds.
+// command-cell run kinds. Normal runs carry an hl.Kind directly (values 0..N),
+// so kindMatch/kindMarker are offset well above the hl.Kind range.
 const (
-	kindNorm = iota
-	kindMatch
-	kindMarker
+	kindNorm   = int(hl.Normal) // 0
+	kindMatch  = 100
+	kindMarker = 101
 )
 
 // styledSeg is one run of text with an associated style. raw runs (padding,
@@ -199,6 +201,7 @@ func (m Model) commandSegments(cmd string, q match.Query, maxCols int) ([]styled
 		return nil, 0
 	}
 	ranges := q.Ranges(cmd)
+	syn := hl.Classify(cmd)
 
 	type rk struct {
 		r rune
@@ -231,7 +234,7 @@ func (m Model) commandSegments(cmd string, q match.Query, maxCols int) ([]styled
 			// squeeze indentation on continuation lines
 		default:
 			skipWS = false
-			k := kindNorm
+			k := int(syn[i]) // hl.Kind for this byte (syntax coloring)
 			if inRange(i) {
 				k = kindMatch
 			}
@@ -301,7 +304,7 @@ func (m Model) styleForKind(k int) lipgloss.Style {
 	case kindMarker:
 		return m.th.Dim
 	default:
-		return m.th.Norm
+		return m.th.Syntax(hl.Kind(k)) // k is an hl.Kind for normal runs
 	}
 }
 

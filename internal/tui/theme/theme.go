@@ -8,6 +8,8 @@ import (
 	"hash/fnv"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"yore/internal/tui/hl"
 )
 
 // Theme is the immutable set of styles shared across the TUI. Build it once
@@ -27,6 +29,15 @@ type Theme struct {
 	Title   lipgloss.Style // pane / section titles
 	Help    lipgloss.Style // the key-hints help line
 
+	// Syntax styles for command rows (layered under Match). Restrained so the
+	// match highlight and exit/host colors still read clearly.
+	SynCommand  lipgloss.Style
+	SynFlag     lipgloss.Style
+	SynString   lipgloss.Style
+	SynPath     lipgloss.Style
+	SynOperator lipgloss.Style
+	SynVariable lipgloss.Style
+
 	// hostStyles are the pre-built per-host hue styles selected by Host.
 	hostStyles []lipgloss.Style
 }
@@ -43,6 +54,15 @@ var (
 	cErr    = lipgloss.AdaptiveColor{Light: "#c02020", Dark: "#ff6b6b"} // red
 	cBorder = lipgloss.AdaptiveColor{Light: "#c6c6c6", Dark: "#3a3a3a"}
 	cStatBg = lipgloss.AdaptiveColor{Light: "#eeeeee", Dark: "#1c1c1c"}
+
+	// Syntax hues — muted so they read as texture, not decoration, and never
+	// out-shout the amber match highlight. Red/green avoided (exit-status).
+	cSynCmd = lipgloss.AdaptiveColor{Light: "#0055aa", Dark: "#87afd7"} // command: soft blue
+	cSynFlg = lipgloss.AdaptiveColor{Light: "#8a6d00", Dark: "#c5b070"} // flags: muted gold
+	cSynStr = lipgloss.AdaptiveColor{Light: "#0a7a5a", Dark: "#8fcfaf"} // strings: soft teal-green
+	cSynPth = lipgloss.AdaptiveColor{Light: "#7a3fb0", Dark: "#b79fd7"} // paths: soft purple
+	cSynOp  = lipgloss.AdaptiveColor{Light: "#a01e78", Dark: "#d79fc7"} // operators: soft magenta
+	cSynVar = lipgloss.AdaptiveColor{Light: "#0a6ea0", Dark: "#7fc7df"} // variables: soft cyan
 )
 
 // hostPalette is 8 distinguishable hues (on both light and dark) for
@@ -76,12 +96,39 @@ func New() *Theme {
 		Border:  base.Foreground(cBorder).BorderForeground(cBorder).Border(lipgloss.RoundedBorder()),
 		Title:   base.Foreground(cAccent).Bold(true),
 		Help:    base.Foreground(cDim),
+
+		SynCommand:  base.Foreground(cSynCmd),
+		SynFlag:     base.Foreground(cSynFlg),
+		SynString:   base.Foreground(cSynStr),
+		SynPath:     base.Foreground(cSynPth),
+		SynOperator: base.Foreground(cSynOp),
+		SynVariable: base.Foreground(cSynVar),
 	}
 	t.hostStyles = make([]lipgloss.Style, len(hostPalette))
 	for i, c := range hostPalette {
 		t.hostStyles[i] = base.Foreground(c)
 	}
 	return t
+}
+
+// Syntax returns the style for a syntax kind, or Norm for plain text.
+func (t *Theme) Syntax(k hl.Kind) lipgloss.Style {
+	switch k {
+	case hl.Command:
+		return t.SynCommand
+	case hl.Flag:
+		return t.SynFlag
+	case hl.String:
+		return t.SynString
+	case hl.Path:
+		return t.SynPath
+	case hl.Operator:
+		return t.SynOperator
+	case hl.Variable:
+		return t.SynVariable
+	default:
+		return t.Norm
+	}
 }
 
 // Host returns a deterministic style for a hostname. The name is hashed with

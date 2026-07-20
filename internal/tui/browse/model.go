@@ -31,6 +31,7 @@ type Options struct {
 	Session string // current shell session id ($YORE_SESSION)
 	Cwd     string // current directory
 	Now     int64  // injectable clock in unix ms; 0 => time.Now
+	Keymap  string // "vim" enables vi-style navigation; "" / "emacs" = default
 }
 
 // Tunables.
@@ -132,6 +133,7 @@ type Model struct {
 	// interaction state
 	view          viewMode
 	focus         focus
+	vim           bool // vi-style navigation (from Options.Keymap == "vim")
 	searching     bool
 	confirmDelete bool
 	showHelp      bool
@@ -160,6 +162,7 @@ type Model struct {
 // NewModel builds the browser Model, constructing the Theme exactly once.
 func NewModel(b Backend, opts Options) Model {
 	th := theme.New()
+	vim := opts.Keymap == "vim"
 
 	ti := textinput.New()
 	ti.Prompt = ""
@@ -183,7 +186,8 @@ func NewModel(b Backend, opts Options) Model {
 		b:      b,
 		opts:   opts,
 		th:     th,
-		keys:   defaultKeyMap(),
+		keys:   defaultKeyMap(vim),
+		vim:    vim,
 		ti:     ti,
 		detail: vp,
 		help:   h,
@@ -426,6 +430,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Vim: h/l (and left/right) move focus between panes.
+	if m.vim {
+		switch s {
+		case "h", "left":
+			m.cycleFocus(-1)
+			return m, nil
+		case "l", "right":
+			m.cycleFocus(1)
+			return m, nil
+		}
+	}
+
 	switch m.focus {
 	case focusHosts:
 		switch s {
@@ -448,6 +464,20 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "pgdown":
 			m.moveSel(m.tableRows)
 			m.syncDetail()
+		case "ctrl+u":
+			// vim half-page up; a no-op in emacs mode (ctrl+u is unbound there).
+			if m.vim {
+				m.moveSel(-m.halfPage())
+				m.syncDetail()
+			}
+		case "ctrl+d":
+			// vim: half-page down. emacs: delete alias (unchanged).
+			if m.vim {
+				m.moveSel(m.halfPage())
+				m.syncDetail()
+			} else if len(m.rows) > 0 {
+				m.confirmDelete = true
+			}
 		case "g", "home":
 			m.sel, m.top = 0, 0
 			m.syncDetail()
@@ -459,7 +489,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.syncDetail()
 		case "enter":
 			return m.copySelected()
-		case "d", "ctrl+d":
+		case "d":
+			// Delete stays a single-key action (with y/n confirm) in both
+			// keymaps; vim's "dd" is intentionally NOT implemented.
 			if len(m.rows) > 0 {
 				m.confirmDelete = true
 			}
@@ -557,6 +589,15 @@ func flashTick(id int) tea.Cmd {
 }
 
 // --- selection / window helpers -----------------------------------------
+
+// halfPage is the vim ctrl+d/ctrl+u scroll distance: half the visible table.
+func (m Model) halfPage() int {
+	h := m.tableRows / 2
+	if h < 1 {
+		h = 1
+	}
+	return h
+}
 
 func (m *Model) moveSel(d int) {
 	if len(m.rows) == 0 {

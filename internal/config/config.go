@@ -52,6 +52,12 @@ type Config struct {
 	// very muscle-memoried key. Read by the emitted shell integration.
 	BindUpArrow *bool `json:"bind_up_arrow,omitempty"` // default false
 
+	// Keymap selects the interactive key style for the TUIs (Atuin keymap_mode
+	// parity): "emacs" (default, also the empty value) or "vim". Vim mode adds
+	// vi-style navigation to `yore browse` and an insert/normal sub-mode to the
+	// Ctrl-R search widget. The CLI passes this through to each TUI's Options.
+	Keymap string `json:"keymap,omitempty"` // default "emacs"
+
 	// Recording filters (see internal/redact). Commands matching a built-in
 	// secret pattern or any of these user regexes are never recorded; commands
 	// run under an ignored directory are never recorded; a leading space skips
@@ -71,6 +77,10 @@ func (c Config) RecordSpacePrefixedOn() bool {
 func (c Config) EnterExecutesOn() bool {
 	return c.EnterExecutes != nil && *c.EnterExecutes
 }
+
+// KeymapVim reports whether the vim keymap is selected (Atuin keymap_mode=vim
+// parity). The empty value and "emacs" both keep the default emacs bindings.
+func (c Config) KeymapVim() bool { return c.Keymap == "vim" }
 
 func (c Config) KeyEpochD() time.Duration     { return durOr(c.KeyEpoch, 24*time.Hour) }
 func (c Config) DaemonIdleD() time.Duration   { return durOr(c.DaemonIdle, 30*time.Minute) }

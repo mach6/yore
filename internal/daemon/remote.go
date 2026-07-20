@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"os"
 	"sync"
 	"time"
@@ -13,7 +14,53 @@ import (
 	"yore/internal/rec"
 	"yore/internal/store"
 	"yore/internal/syncer"
+	"yore/internal/wire"
 )
+
+// errSyncOff is returned by device operations when sync isn't configured.
+var errSyncOff = errors.New("sync not configured (run `yore setup`)")
+
+// listDevices returns the enrolled devices with per-device verification codes
+// for pending ones (computed here so proto stays independent of wire/cryptobox).
+func (s *server) listDevices() (proto.DevicesInfo, error) {
+	if !s.remote.enabled() {
+		return proto.DevicesInfo{}, errSyncOff
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	devs, err := s.remote.sy.Devices(ctx)
+	if err != nil {
+		return proto.DevicesInfo{}, err
+	}
+	self := s.remote.sy.DeviceID()
+	out := make([]proto.DeviceInfo, 0, len(devs))
+	for _, d := range devs {
+		di := proto.DeviceInfo{ID: d.ID, Name: d.Name, Status: d.Status, Self: d.ID == self}
+		if d.Status == wire.DevicePending {
+			if pub, perr := cryptobox.PublicFromBytes(d.PubKey); perr == nil {
+				di.Code = syncer.VerificationCode(pub)
+			}
+		}
+		out = append(out, di)
+	}
+	return proto.DevicesInfo{Devices: out}, nil
+}
+
+// deviceOp approves (approve=true) or revokes+rotates (approve=false) a device.
+func (s *server) deviceOp(id string, approve bool) error {
+	if !s.remote.enabled() {
+		return errSyncOff
+	}
+	if id == "" {
+		return errors.New("empty device id")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if approve {
+		return s.remote.sy.Approve(ctx, id)
+	}
+	return s.remote.sy.Revoke(ctx, id)
+}
 
 // remoteCache holds other hosts' history, decrypted, in RAM ONLY — it is never
 // written to disk (a hard requirement). It is populated by pulling ciphertext
