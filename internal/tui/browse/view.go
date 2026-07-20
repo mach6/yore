@@ -40,8 +40,9 @@ func (m Model) View() string {
 		mid = m.renderPanes(w)
 	}
 	// bubbles/help can overrun its Width when even an ellipsis would not fit;
-	// clip as a final guarantee against horizontal overflow.
-	helpv := clipW(m.help.View(m.keys), w)
+	// clip as a final guarantee against horizontal overflow. The keymap is
+	// contextual: browse, stats, and devices each advertise their own keys.
+	helpv := clipW(m.help.View(m.helpKeys()), w)
 	return strings.Join([]string{top, mid, m.statusBar(w), helpv}, "\n")
 }
 

@@ -97,6 +97,9 @@ type statsResultMsg struct {
 
 type flashExpireMsg struct{ id int }
 
+// hostsTickMsg fires the bounded init-time warm loop (see onHostsTick).
+type hostsTickMsg struct{}
+
 // Model is the Bubble Tea model backing the browser. Exported so tests can
 // drive Update directly.
 type Model struct {
@@ -155,6 +158,15 @@ type Model struct {
 	// query sequencing
 	seq        uint64
 	appliedSeq uint64
+
+	// remote-cache convergence: hostsRemote is the remote host count the sidebar
+	// currently reflects; a query result reporting a different count triggers a
+	// host refetch. hostsTicks/ticking drive a BOUNDED init-time warm loop that
+	// re-fetches while the cache is still warming, so a cold daemon converges
+	// without a keystroke. Both are capped so they can never spin forever.
+	hostsRemote int
+	hostsTicks  int
+	ticking     bool
 
 	// geometry
 	width, height int
@@ -228,7 +240,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case initMsg:
 		mm, qcmd := m.issueQuery()
-		return mm, tea.Batch(qcmd, mm.hostsCmd())
+		mm.ticking = true // start the single bounded warm-loop chain
+		return mm, tea.Batch(qcmd, mm.hostsCmd(), hostsTick())
+
+	case hostsTickMsg:
+		return m.onHostsTick()
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -289,6 +305,13 @@ func (m Model) applyResult(msg queryResultMsg) (tea.Model, tea.Cmd) {
 	m.top = 0
 	m.clampWindow()
 	m.syncDetail()
+	// If this response reports a remote host count the sidebar hasn't caught up
+	// to (e.g. a deep pull just warmed the cache), refetch the host list. This
+	// converges: applyHosts sets hostsRemote to match, so once the sidebar
+	// reflects the current count no further refetch fires.
+	if msg.resp.Remote.Hosts != m.hostsRemote {
+		return m, m.hostsCmd()
+	}
 	return m, nil
 }
 
@@ -311,6 +334,13 @@ func (m Model) applyHosts(msg hostsResultMsg) (tea.Model, tea.Cmd) {
 	m.hosts = items
 	if m.hostSel >= len(m.hosts) {
 		m.hostSel = len(m.hosts) - 1
+	}
+	m.hostsRemote = msg.info.Remote.Hosts
+	// Stats' per-host list and totals derive from the sidebar, so a changed host
+	// list needs a fresh aggregation to match.
+	if m.view == viewStats {
+		m.statsSeq++
+		return m, m.statsCmd(m.statsSeq)
 	}
 	return m, nil
 }
@@ -617,6 +647,46 @@ func flashTick(id int) tea.Cmd {
 	})
 }
 
+// hostsTickInterval/hostsTickMax bound the init-time warm loop: at most
+// hostsTickMax ticks, one per hostsTickInterval.
+const (
+	hostsTickInterval = time.Second
+	hostsTickMax      = 15
+)
+
+func hostsTick() tea.Cmd {
+	return tea.Tick(hostsTickInterval, func(time.Time) tea.Msg { return hostsTickMsg{} })
+}
+
+// onHostsTick drives the bounded init-time warm loop. While the remote cache is
+// enabled but not yet OK, it re-issues the table query and the host fetch so a
+// cold daemon converges without a keystroke, then reschedules itself. It STOPS
+// — and never reschedules — once the cache is OK (one final fetch), the remote
+// is Off (disabled), or a hard tick cap is reached, so it can never spin
+// forever. A single in-flight chain is enforced by m.ticking: any tick arriving
+// after the chain has stopped is dropped.
+func (m Model) onHostsTick() (tea.Model, tea.Cmd) {
+	if !m.ticking {
+		return m, nil // stale tick from a superseded/stopped chain
+	}
+	m.hostsTicks++
+	switch {
+	case m.remote.State == proto.RemoteOK:
+		m.ticking = false
+		return m, m.hostsCmd() // one final refresh now the cache is warm
+	case m.remote.State == proto.RemoteOff:
+		m.ticking = false
+		return m, nil // remote disabled: nothing to warm
+	case m.hostsTicks >= hostsTickMax:
+		m.ticking = false
+		return m, nil // hard cap: give up rather than poll forever
+	}
+	// Still syncing / unavailable (or state not yet known): re-issue both and
+	// reschedule the single chain.
+	mm, qcmd := m.issueQuery()
+	return mm, tea.Batch(qcmd, mm.hostsCmd(), hostsTick())
+}
+
 // --- selection / window helpers -----------------------------------------
 
 // halfPage is the vim ctrl+d/ctrl+u scroll distance: half the visible table.
@@ -693,7 +763,7 @@ func (m *Model) applyLayout() {
 	}
 
 	m.help.Width = w
-	helpH := lipgloss.Height(m.help.View(m.keys))
+	helpH := lipgloss.Height(m.help.View(m.helpKeys()))
 
 	// search line (1) + status line (1) + help.
 	mid := h - 2 - helpH

@@ -19,15 +19,16 @@ import (
 // --- test doubles & helpers ---------------------------------------------
 
 type fakeBackend struct {
-	mu       sync.Mutex
-	reqs     []proto.QueryReq
-	resp     proto.QueryResp
-	hosts    proto.HostsInfo
-	deleted  []string
-	delErr   error
-	devices  proto.DevicesInfo
-	approved []string
-	revoked  []string
+	mu         sync.Mutex
+	reqs       []proto.QueryReq
+	resp       proto.QueryResp
+	hosts      proto.HostsInfo
+	hostsCalls int // Hosts() invocations; the sidebar may re-fetch repeatedly
+	deleted    []string
+	delErr     error
+	devices    proto.DevicesInfo
+	approved   []string
+	revoked    []string
 }
 
 func (f *fakeBackend) Query(req proto.QueryReq) (proto.QueryResp, error) {
@@ -40,7 +41,14 @@ func (f *fakeBackend) Query(req proto.QueryReq) (proto.QueryResp, error) {
 func (f *fakeBackend) Hosts() (proto.HostsInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.hostsCalls++
 	return f.hosts, nil
+}
+
+func (f *fakeBackend) hostsCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.hostsCalls
 }
 
 func (f *fakeBackend) Delete(id string) error {
@@ -469,6 +477,84 @@ func TestEmacsCtrlDStillDeletes(t *testing.T) {
 	require.False(t, m.vim, "default keymap should not be vim")
 	m, _ = step(t, m, press("ctrl+d"))
 	require.True(t, m.confirmDelete, "ctrl+d in emacs mode should still arm delete")
+}
+
+func TestRemoteWarmTriggersHostsRefresh(t *testing.T) {
+	f := &fakeBackend{
+		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "local-box", Count: 3}}},
+		resp:  mkResp(mkRows("ls")),
+	}
+	m := ready(t, f, 120, 30) // ready() feeds a synthetic hosts result, no backend call yet
+	require.Equal(t, 0, m.hostsRemote)
+	require.Equal(t, 0, f.hostsCallCount())
+
+	// A deep query result reports the remote cache just warmed with 2 hosts —
+	// a count the sidebar hasn't seen — so the model must refetch the host list.
+	resp := mkResp(mkRows("ls"))
+	resp.Remote = proto.RemoteInfo{State: proto.RemoteOK, Hosts: 2}
+	m, cmd := step(t, m, queryResultMsg{seq: 10, resp: resp})
+	require.NotNil(t, cmd, "a newly-known remote host count should refresh the sidebar")
+	msg := cmd()
+	_, ok := msg.(hostsResultMsg)
+	require.Truef(t, ok, "refresh command yielded %T, want hostsResultMsg", msg)
+	require.Equal(t, 1, f.hostsCallCount(), "the refresh should have called Hosts()")
+
+	// Applying a hosts result carrying that same remote count converges the model.
+	f.hosts.Remote = proto.RemoteInfo{State: proto.RemoteOK, Hosts: 2}
+	m, _ = step(t, m, hostsResultMsg{info: f.hosts})
+	require.Equal(t, 2, m.hostsRemote)
+
+	// A subsequent query result with the SAME remote count triggers no refetch.
+	m, cmd = step(t, m, queryResultMsg{seq: 11, resp: resp})
+	require.Nil(t, cmd, "matching remote count should not refetch the sidebar")
+}
+
+func TestInitStartsBoundedWarmLoop(t *testing.T) {
+	f := &fakeBackend{resp: func() proto.QueryResp {
+		r := mkResp(mkRows("ls"))
+		r.Remote = proto.RemoteInfo{State: proto.RemoteOff}
+		return r
+	}()}
+	m := NewModel(f, Options{Now: now})
+	m, _ = step(t, m, tea.WindowSizeMsg{Width: 120, Height: 30})
+
+	// Init starts a single warm-loop tick chain (plus the query + hosts fetch).
+	m, cmd := step(t, m, initMsg{})
+	require.True(t, m.ticking, "init should start the warm loop")
+	require.NotNil(t, cmd, "init should batch query/hosts/tick commands")
+
+	// The query result reports remote Off (sync not configured).
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: f.resp})
+
+	// A tick with remote Off stops the loop and does NOT reschedule.
+	m, tcmd := step(t, m, hostsTickMsg{})
+	require.False(t, m.ticking, "warm loop must stop once remote is Off")
+	require.Nil(t, tcmd, "no reschedule after remote Off")
+
+	// A stale tick from a stopped chain is a no-op.
+	_, tcmd = step(t, m, hostsTickMsg{})
+	require.Nil(t, tcmd, "a tick after the chain stopped must be dropped")
+}
+
+func TestWarmLoopStopsAtHardCap(t *testing.T) {
+	// Remote stays "syncing" forever; the loop must still terminate at the cap.
+	f := &fakeBackend{resp: func() proto.QueryResp {
+		r := mkResp(mkRows("ls"))
+		r.Remote = proto.RemoteInfo{State: proto.RemoteSyncing}
+		return r
+	}()}
+	m := NewModel(f, Options{Now: now})
+	m, _ = step(t, m, tea.WindowSizeMsg{Width: 120, Height: 30})
+	m, _ = step(t, m, initMsg{})
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: f.resp})
+
+	var tcmd tea.Cmd
+	for i := 0; i < hostsTickMax; i++ {
+		require.Truef(t, m.ticking, "should still be ticking before cap (i=%d)", i)
+		m, tcmd = step(t, m, hostsTickMsg{})
+	}
+	require.False(t, m.ticking, "warm loop must stop at the hard cap")
+	require.Nil(t, tcmd, "no reschedule once the cap is hit")
 }
 
 // compile-time assurance the interface matches what daemon.Client provides.

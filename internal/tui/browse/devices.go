@@ -106,9 +106,9 @@ func (m Model) handleDevicesKey(s string) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) devicesTitle(w int) string {
-	t := m.th.Title.Render("Devices")
-	hint := m.th.Dim.Render("  a approve · x revoke · r refresh · j/k move · esc back")
-	return clipW(t+hint, w)
+	// The key hints live in the contextual footer (see helpKeys); the title is
+	// just the pane name.
+	return clipW(m.th.Title.Render("Devices"), w)
 }
 
 // renderDevices draws the enrolled-device list, padded to h lines.

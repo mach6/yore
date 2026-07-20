@@ -502,8 +502,11 @@ func (s *server) snapshotLoop() {
 	}
 }
 
-// hosts aggregates live-record counts per host from the RAM corpus. Local
-// host first; remote hosts (once the sync cache exists) follow by count.
+// hosts aggregates live-record counts per host from BOTH the local RAM corpus
+// and the RAM remote cache. Local host first (consumers assume index 0 is the
+// local host); every other host — remote included — follows by descending
+// count. Like runQuery's deep path, it warms a cold remote cache in the
+// background so opening browse pulls other hosts' history.
 func (s *server) hosts() proto.HostsInfo {
 	type agg struct {
 		hostID string
@@ -524,21 +527,52 @@ func (s *server) hosts() proto.HostsInfo {
 	}
 	s.mu.RUnlock()
 
-	local := s.store.Hostname()
-	hi := proto.HostsInfo{Remote: s.remote.info()}
-	if a, ok := counts[local]; ok {
-		hi.Hosts = append(hi.Hosts, proto.HostCount{Hostname: local, HostID: a.hostID, Count: a.count})
-	}
-	rest := make([]proto.HostCount, 0, len(order))
+	localCounts := make([]proto.HostCount, 0, len(order))
 	for _, h := range order {
-		if h == local {
-			continue
-		}
-		rest = append(rest, proto.HostCount{Hostname: h, HostID: counts[h].hostID, Count: counts[h].count})
+		localCounts = append(localCounts, proto.HostCount{Hostname: h, HostID: counts[h].hostID, Count: counts[h].count})
 	}
-	sort.Slice(rest, func(i, j int) bool { return rest[i].Count > rest[j].Count })
-	hi.Hosts = append(hi.Hosts, rest...)
-	return hi
+
+	// Warm a cold cache so the next open is richer; the call itself never blocks.
+	if s.remote.enabled() {
+		nudge(s.syncWake)
+	}
+
+	return proto.HostsInfo{
+		Hosts:  mergeHostCounts(s.store.Hostname(), localCounts, s.remote.hostCounts()),
+		Remote: s.remote.info(),
+	}
+}
+
+// mergeHostCounts orders the browse HOSTS list: the local host leads (proto and
+// the TUI assume index 0 is local), then every other host — local leftovers and
+// remote alike — by descending count. A remote entry that duplicates the local
+// hostname is dropped (we never pull our own stream, but don't double-count if
+// it ever happens). Pure: no locks, no server state, so it is unit-testable.
+func mergeHostCounts(local string, localCounts, remoteCounts []proto.HostCount) []proto.HostCount {
+	out := make([]proto.HostCount, 0, len(localCounts)+len(remoteCounts))
+
+	// Local host first, if it has any records.
+	for _, hc := range localCounts {
+		if hc.Hostname == local {
+			out = append(out, hc)
+			break
+		}
+	}
+
+	rest := make([]proto.HostCount, 0, len(localCounts)+len(remoteCounts))
+	for _, hc := range localCounts {
+		if hc.Hostname != local {
+			rest = append(rest, hc)
+		}
+	}
+	for _, hc := range remoteCounts {
+		if hc.Hostname != local { // defensive: never double-count the local host
+			rest = append(rest, hc)
+		}
+	}
+	sort.SliceStable(rest, func(i, j int) bool { return rest[i].Count > rest[j].Count })
+
+	return append(out, rest...)
 }
 
 // deleteRecord appends a tombstone (so the deletion syncs) and rebuilds the

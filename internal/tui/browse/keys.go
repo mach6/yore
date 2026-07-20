@@ -1,6 +1,9 @@
 package browse
 
-import "github.com/charmbracelet/bubbles/key"
+import (
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/key"
+)
 
 // keyMap is the browser's full binding set. Behavior is dispatched from
 // handleKey via msg.String() (so tests can synthesize keys directly); these
@@ -66,3 +69,48 @@ func (k keyMap) FullHelp() [][]key.Binding {
 		{k.Stats, k.Help, k.Quit},
 	}
 }
+
+// helpKeys returns the footer hint set for the active view, so the bottom line
+// advertises only the keys that actually do something here (handled in handleKey
+// and handleDevicesKey). The browse view keeps the full keyMap.
+func (m Model) helpKeys() help.KeyMap {
+	switch m.view {
+	case viewStats:
+		return statsKeys{}
+	case viewDevices:
+		return devicesKeys{}
+	default:
+		return m.keys
+	}
+}
+
+// statsKeys is the footer hint set for the stats view: s or esc returns to
+// browse, q quits (see handleKey's global keys and its viewStats branch).
+type statsKeys struct{}
+
+func (statsKeys) ShortHelp() []key.Binding {
+	return []key.Binding{
+		key.NewBinding(key.WithKeys("s", "esc"), key.WithHelp("s/esc", "back")),
+		key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
+	}
+}
+
+func (k statsKeys) FullHelp() [][]key.Binding { return [][]key.Binding{k.ShortHelp()} }
+
+// devicesKeys is the footer hint set for the devices view (see handleDevicesKey:
+// a/x act, r refetches, j/k move; esc/q/D return to browse, ctrl+c quits — q
+// does NOT quit here, so the hint must not claim it does).
+type devicesKeys struct{}
+
+func (devicesKeys) ShortHelp() []key.Binding {
+	return []key.Binding{
+		key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "approve")),
+		key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "revoke")),
+		key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
+		key.NewBinding(key.WithKeys("j", "k"), key.WithHelp("j/k", "move")),
+		key.NewBinding(key.WithKeys("esc", "q"), key.WithHelp("esc/q", "back")),
+		key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("^c", "quit")),
+	}
+}
+
+func (k devicesKeys) FullHelp() [][]key.Binding { return [][]key.Binding{k.ShortHelp()} }

@@ -168,6 +168,44 @@ func (rc *remoteCache) search(q, hostname string) []rec.Record {
 	return out
 }
 
+// hostCounts aggregates the cache's records into per-host counts (carrying each
+// host's HostID), for the browse HOSTS sidebar and Stats. Unlike search() it
+// does NOT require enabled(), so a bare &remoteCache{records: …} answers without
+// a syncer; the cache is already live-only (foldRemote drops tombstones), so it
+// follows search()'s convention and does not re-filter Deleted() here. Returns
+// nil when the cache is nil or empty.
+func (rc *remoteCache) hostCounts() []proto.HostCount {
+	if rc == nil {
+		return nil
+	}
+	rc.mu.RLock()
+	defer rc.mu.RUnlock()
+	if len(rc.records) == 0 {
+		return nil
+	}
+	type agg struct {
+		hostID string
+		count  int
+	}
+	counts := make(map[string]*agg)
+	order := make([]string, 0, 4)
+	for i := range rc.records {
+		h := rc.records[i].Hostname
+		a, ok := counts[h]
+		if !ok {
+			a = &agg{hostID: rc.records[i].HostID}
+			counts[h] = a
+			order = append(order, h)
+		}
+		a.count++
+	}
+	out := make([]proto.HostCount, 0, len(order))
+	for _, h := range order {
+		out = append(out, proto.HostCount{Hostname: h, HostID: counts[h].hostID, Count: counts[h].count})
+	}
+	return out
+}
+
 func (rc *remoteCache) setState(state string) {
 	rc.mu.Lock()
 	rc.state = state
