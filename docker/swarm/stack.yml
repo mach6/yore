@@ -1,10 +1,18 @@
 # Docker Swarm stack for the yore sync server.
 #
-#   docker stack deploy -c docker/stack.yml yore
+#   docker build -f docker/Dockerfile -t yore:latest .
+#   docker stack deploy -c docker/swarm/stack.yml yore
+#
+# This is a Swarm stack, not a compose file — deploy it with `docker stack
+# deploy`, not `docker compose up` (compose ignores `deploy:` and can't read the
+# external Swarm secret/network below). For a local, non-Swarm playground use
+# docker/sandbox/ instead.
 #
 # The server stores only ciphertext + device public keys; TLS terminates at
 # your existing reverse proxy (attach this service to its network and add
-# your proxy's labels/config under deploy.labels).
+# your proxy's labels/config under deploy.labels). The `proxy` network below is
+# your reverse proxy's existing overlay network — create it (or rename this to
+# match) before deploying:  docker network create --driver overlay proxy
 #
 # Create the auth token secret once:
 #   openssl rand -base64 32 | docker secret create yore_token -

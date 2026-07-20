@@ -193,11 +193,13 @@ your existing reverse proxy).
 # create the auth token secret
 openssl rand -base64 32 | docker secret create yore_token -
 docker build -f docker/Dockerfile -t yore:latest .
-docker stack deploy -c docker/stack.yml yore
+docker stack deploy -c docker/swarm/stack.yml yore
 ```
 
-See [`docker/stack.yml`](docker/stack.yml). Point your proxy at the service and
-give it a hostname; the health endpoint is `GET /v1/health`.
+See [`docker/swarm/stack.yml`](docker/swarm/stack.yml). Point your proxy at the
+service and give it a hostname; the health endpoint is `GET /v1/health`. For a
+local, non-Swarm playground (server + a zsh and a bash client, all in
+containers) see [`docker/sandbox/`](docker/sandbox/).
 
 ### 2. Enroll your first machine
 
