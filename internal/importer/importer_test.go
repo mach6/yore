@@ -3,10 +3,11 @@ package importer
 import (
 	"os"
 	"path/filepath"
-	"reflect"
-	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"yore/internal/rec"
 )
@@ -20,53 +21,32 @@ type want struct {
 	cmd     string
 }
 
+// check compares got against wants field by field. It uses assert (rather
+// than require) for the per-record checks so that a mismatch on one field or
+// one record doesn't hide mismatches on the others in the same run — but the
+// length check stays a require since indexing got[i] below depends on it.
 func check(t *testing.T, got []rec.Record, host string, wants []want) {
 	t.Helper()
-	if len(got) != len(wants) {
-		t.Fatalf("got %d records, want %d: %+v", len(got), len(wants), got)
-	}
+	require.Len(t, got, len(wants), "got %d records, want %d: %+v", len(got), len(wants), got)
 	for i, w := range wants {
 		r := got[i]
-		if r.Cmd != w.cmd {
-			t.Errorf("record %d cmd = %q, want %q", i, r.Cmd, w.cmd)
-		}
-		if r.StartMs != w.startMs {
-			t.Errorf("record %d startMs = %d, want %d", i, r.StartMs, w.startMs)
-		}
-		if !reflect.DeepEqual(r.DurMs, w.dur) {
-			t.Errorf("record %d dur = %v, want %v", i, ptr(r.DurMs), ptr(w.dur))
-		}
-		if r.Session != "import" {
-			t.Errorf("record %d session = %q, want %q", i, r.Session, "import")
-		}
-		if r.Exit != nil {
-			t.Errorf("record %d exit = %v, want nil", i, *r.Exit)
-		}
-		if r.Cwd != "" || r.HostID != "" || r.Hostname != "" {
-			t.Errorf("record %d expected empty cwd/host fields, got %+v", i, r)
-		}
-		if r.ID != rec.ImportID(host, w.startMs, w.cmd) {
-			t.Errorf("record %d id = %q, not deterministic ImportID", i, r.ID)
-		}
+		assert.Equal(t, w.cmd, r.Cmd, "record %d cmd", i)
+		assert.Equal(t, w.startMs, r.StartMs, "record %d startMs", i)
+		assert.Equal(t, w.dur, r.DurMs, "record %d dur", i)
+		assert.Equal(t, "import", r.Session, "record %d session", i)
+		assert.Nil(t, r.Exit, "record %d exit", i)
+		assert.Empty(t, r.Cwd, "record %d cwd", i)
+		assert.Empty(t, r.HostID, "record %d hostID", i)
+		assert.Empty(t, r.Hostname, "record %d hostname", i)
+		assert.Equal(t, rec.ImportID(host, w.startMs, w.cmd), r.ID, "record %d id not deterministic ImportID", i)
 	}
-}
-
-func ptr(p *int64) string {
-	if p == nil {
-		return "nil"
-	}
-	return strconv.FormatInt(*p, 10)
 }
 
 func TestZsh(t *testing.T) {
 	b, err := os.ReadFile("testdata/zsh_history")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	got, err := Zsh(strings.NewReader(string(b)), testHost)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	check(t, got, testHost, []want{
 		{startMs: 1600000000000, dur: rec.Int64Ptr(5000), cmd: "echo hello"},
 		{startMs: 1600000100000, dur: rec.Int64Ptr(0), cmd: "git status"},
@@ -128,9 +108,7 @@ func TestZshUnit(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := Zsh(strings.NewReader(tc.in), testHost)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			check(t, got, testHost, tc.wants)
 		})
 	}
@@ -144,9 +122,7 @@ func TestZshMetafied(t *testing.T) {
 	line = append(line, '\n')
 
 	got, err := Zsh(strings.NewReader(string(line)), testHost)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	check(t, got, testHost, []want{
 		{startMs: 1600000000000, dur: rec.Int64Ptr(0), cmd: s},
 	})
@@ -168,13 +144,9 @@ func metafy(b []byte) []byte {
 
 func TestBash(t *testing.T) {
 	b, err := os.ReadFile("testdata/bash_history")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	got, err := Bash(strings.NewReader(string(b)), testHost)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	check(t, got, testHost, []want{
 		{startMs: 1600000000000, cmd: "echo first"},
 		{startMs: 0, cmd: "echo no timestamp"},
@@ -215,9 +187,7 @@ func TestBashUnit(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := Bash(strings.NewReader(tc.in), testHost)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			check(t, got, testHost, tc.wants)
 		})
 	}
@@ -226,23 +196,16 @@ func TestBashUnit(t *testing.T) {
 // TestDeterminism verifies re-import is stable and host-scoped.
 func TestDeterminism(t *testing.T) {
 	b, err := os.ReadFile("testdata/zsh_history")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	a1, _ := Zsh(strings.NewReader(string(b)), testHost)
 	a2, _ := Zsh(strings.NewReader(string(b)), testHost)
-	if len(a1) != len(a2) || len(a1) == 0 {
-		t.Fatalf("unexpected lengths %d, %d", len(a1), len(a2))
-	}
+	require.Equal(t, len(a1), len(a2))
+	require.NotEmpty(t, a1)
 	other := "01ZZZZZZZZZZZZZZZZZZZZZZZZZ"
 	a3, _ := Zsh(strings.NewReader(string(b)), other)
 	for i := range a1 {
-		if a1[i].ID != a2[i].ID {
-			t.Errorf("record %d: same host produced different ids %q vs %q", i, a1[i].ID, a2[i].ID)
-		}
-		if a1[i].ID == a3[i].ID {
-			t.Errorf("record %d: different hosts produced same id %q", i, a1[i].ID)
-		}
+		assert.Equal(t, a1[i].ID, a2[i].ID, "record %d: same host produced different ids", i)
+		assert.NotEqual(t, a1[i].ID, a3[i].ID, "record %d: different hosts produced same id", i)
 	}
 }
 
@@ -255,9 +218,7 @@ func TestAuto(t *testing.T) {
 	mustWrite(t, filepath.Join(home, ".bash_history"), "echo c\n")
 	mustWrite(t, filepath.Join(home, "unrelated"), "x\n")
 	// A directory named like a candidate must be ignored (not a regular file).
-	if err := os.Mkdir(filepath.Join(home, ".zhistory"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Mkdir(filepath.Join(home, ".zhistory"), 0o755))
 
 	got := Auto(home)
 	want := []Source{
@@ -265,17 +226,11 @@ func TestAuto(t *testing.T) {
 		{Path: filepath.Join(home, ".config", "zsh", ".zsh_history"), Format: "zsh"},
 		{Path: filepath.Join(home, ".bash_history"), Format: "bash"},
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("Auto() = %+v, want %+v", got, want)
-	}
+	require.Equal(t, want, got)
 }
 
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 }

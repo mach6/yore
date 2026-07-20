@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"yore/internal/config"
 	"yore/internal/proto"
 	"yore/internal/rec"
@@ -28,6 +31,9 @@ func startDaemon(t *testing.T, dir string, idle time.Duration) (*Client, *daemon
 	t.Helper()
 	h := &daemonHandle{done: make(chan struct{})}
 	go func() {
+		// No test assertions in this goroutine: the outcome is stashed in h.err
+		// and only read on the main goroutine after <-h.done (which provides the
+		// happens-before). testify's FailNow is illegal off the main goroutine.
 		h.err = Run(dir, Options{IdleTimeout: idle, Version: "test-ver"})
 		close(h.done)
 	}()
@@ -47,7 +53,7 @@ func startDaemon(t *testing.T, dir string, idle time.Duration) (*Client, *daemon
 		select {
 		case <-h.done:
 		case <-time.After(2 * time.Second):
-			t.Error("daemon did not shut down in cleanup")
+			assert.Fail(t, "daemon did not shut down in cleanup")
 		}
 		c.Close()
 	})
@@ -63,7 +69,7 @@ func dialRetry(t *testing.T, dir string, within time.Duration) *Client {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("could not dial daemon in %s", within)
+	require.FailNowf(t, "could not dial daemon", "within %s", within)
 	return nil
 }
 
@@ -72,31 +78,24 @@ func dialRetry(t *testing.T, dir string, within time.Duration) *Client {
 func rawRequest(t *testing.T, dir string, req proto.Request) proto.Response {
 	t.Helper()
 	conn, err := net.DialTimeout("unix", config.SocketPath(dir), 500*time.Millisecond)
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
+	require.NoError(t, err, "dial")
 	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(2 * time.Second))
-	if err := proto.WriteMsg(conn, req); err != nil {
-		t.Fatalf("write: %v", err)
-	}
+	require.NoError(t, proto.WriteMsg(conn, req), "write")
 	var resp proto.Response
-	if err := proto.ReadMsg(bufio.NewReader(conn), &resp); err != nil {
-		t.Fatalf("read: %v", err)
-	}
+	require.NoError(t, proto.ReadMsg(bufio.NewReader(conn), &resp), "read")
 	return resp
 }
 
-// queryUntil polls Query(q) on c until it returns >= want rows or timeout.
+// queryUntil polls Query(q) on c until it returns >= want rows or timeout. It
+// runs entirely on the caller's (main) goroutine, so require is safe here.
 func queryUntil(t *testing.T, c *Client, q proto.QueryReq, want int, within time.Duration) proto.QueryResp {
 	t.Helper()
 	deadline := time.Now().Add(within)
 	var last proto.QueryResp
 	for time.Now().Before(deadline) {
 		resp, err := c.Query(q)
-		if err != nil {
-			t.Fatalf("query: %v", err)
-		}
+		require.NoError(t, err, "query")
 		last = resp
 		if len(resp.Rows) >= want {
 			return resp
@@ -109,9 +108,7 @@ func queryUntil(t *testing.T, c *Client, q proto.QueryReq, want int, within time
 func spoolFiles(t *testing.T, dir string) []string {
 	t.Helper()
 	m, err := filepath.Glob(filepath.Join(config.SpoolDir(dir), "*.jsonl"))
-	if err != nil {
-		t.Fatalf("glob: %v", err)
-	}
+	require.NoError(t, err, "glob")
 	return m
 }
 
@@ -120,15 +117,10 @@ func spoolFiles(t *testing.T, dir string) []string {
 func seed(t *testing.T, dir string, rows []rec.Record) {
 	t.Helper()
 	s, err := store.Open(dir)
-	if err != nil {
-		t.Fatalf("store.Open: %v", err)
-	}
-	if _, err := s.AppendBatch(rows); err != nil {
-		t.Fatalf("AppendBatch: %v", err)
-	}
-	if err := s.Close(); err != nil {
-		t.Fatalf("store.Close: %v", err)
-	}
+	require.NoError(t, err, "store.Open")
+	_, err = s.AppendBatch(rows)
+	require.NoError(t, err, "AppendBatch")
+	require.NoError(t, s.Close(), "store.Close")
 }
 
 func TestEnsureRunningDialSuccess(t *testing.T) {
@@ -138,13 +130,9 @@ func TestEnsureRunningDialSuccess(t *testing.T) {
 	// The daemon is already up, so EnsureRunning takes the dial-success path
 	// and never spawns (which, under test, would re-exec the test binary).
 	c, err := EnsureRunning(dir)
-	if err != nil {
-		t.Fatalf("EnsureRunning: %v", err)
-	}
+	require.NoError(t, err, "EnsureRunning")
 	defer c.Close()
-	if err := c.Ping(); err != nil {
-		t.Fatalf("Ping: %v", err)
-	}
+	require.NoError(t, c.Ping(), "Ping")
 	_ = h
 }
 
@@ -157,21 +145,11 @@ func TestStatus(t *testing.T) {
 	c, _ := startDaemon(t, dir, 30*time.Second)
 
 	st, err := c.Status()
-	if err != nil {
-		t.Fatalf("Status: %v", err)
-	}
-	if st.PID <= 0 {
-		t.Errorf("PID = %d, want > 0", st.PID)
-	}
-	if st.LocalRows != 2 {
-		t.Errorf("LocalRows = %d, want 2", st.LocalRows)
-	}
-	if st.Version != "test-ver" {
-		t.Errorf("Version = %q, want test-ver", st.Version)
-	}
-	if st.Remote.State != proto.RemoteOff {
-		t.Errorf("Remote.State = %q, want %q", st.Remote.State, proto.RemoteOff)
-	}
+	require.NoError(t, err, "Status")
+	assert.Positive(t, st.PID, "PID")
+	assert.Equal(t, 2, st.LocalRows, "LocalRows")
+	assert.Equal(t, "test-ver", st.Version, "Version")
+	assert.Equal(t, proto.RemoteOff, st.Remote.State, "Remote.State")
 }
 
 func TestRecordDurableAndIngested(t *testing.T) {
@@ -182,19 +160,14 @@ func TestRecordDurableAndIngested(t *testing.T) {
 		Op:     proto.OpRecord,
 		Record: &rec.Record{ID: "r1", Cmd: "echo durable", StartMs: 1000},
 	})
-	if !resp.OK {
-		t.Fatalf("OpRecord resp not ok: %+v", resp)
-	}
+	require.Truef(t, resp.OK, "OpRecord resp not ok: %+v", resp)
 
 	got := queryUntil(t, c, proto.QueryReq{Q: "durable"}, 1, time.Second)
-	if len(got.Rows) != 1 || got.Rows[0].Cmd != "echo durable" {
-		t.Fatalf("record not queryable after debounce: %+v", got.Rows)
-	}
+	require.Lenf(t, got.Rows, 1, "record not queryable after debounce: %+v", got.Rows)
+	require.Equal(t, "echo durable", got.Rows[0].Cmd)
 
 	// After ingest the spool must be drained (records live durably in the store).
-	if f := spoolFiles(t, dir); len(f) != 0 {
-		t.Errorf("spool not drained: %v", f)
-	}
+	assert.Empty(t, spoolFiles(t, dir), "spool not drained")
 }
 
 func TestPokeIngest(t *testing.T) {
@@ -202,17 +175,12 @@ func TestPokeIngest(t *testing.T) {
 	c, _ := startDaemon(t, dir, 30*time.Second)
 
 	// Simulate the CLI: fsync a record into the spool directly, then poke.
-	if err := spoolAppendDirect(dir, rec.Record{ID: "p1", Cmd: "poked command", StartMs: 5}); err != nil {
-		t.Fatalf("spool append: %v", err)
-	}
-	if err := c.Ping(); err != nil {
-		t.Fatalf("Ping: %v", err)
-	}
+	require.NoError(t, spoolAppendDirect(dir, rec.Record{ID: "p1", Cmd: "poked command", StartMs: 5}), "spool append")
+	require.NoError(t, c.Ping(), "Ping")
 
 	got := queryUntil(t, c, proto.QueryReq{Q: "poked"}, 1, time.Second)
-	if len(got.Rows) != 1 || got.Rows[0].Cmd != "poked command" {
-		t.Fatalf("poked record not queryable: %+v", got.Rows)
-	}
+	require.Lenf(t, got.Rows, 1, "poked record not queryable: %+v", got.Rows)
+	require.Equal(t, "poked command", got.Rows[0].Cmd)
 }
 
 func TestQuerySemantics(t *testing.T) {
@@ -228,60 +196,37 @@ func TestQuerySemantics(t *testing.T) {
 	})
 	c, _ := startDaemon(t, dir, 30*time.Second)
 
-	// Match + newest-first ordering (local scope).
+	// Match + newest-first ordering (local scope). Independent field checks are
+	// accumulated with assert.
 	resp, err := c.Query(proto.QueryReq{Q: "git"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.Total != 4 {
-		t.Errorf("Total = %d, want 4", resp.Total)
-	}
-	if resp.Scope != proto.ScopeLocal {
-		t.Errorf("Scope = %q, want local", resp.Scope)
-	}
-	gotIDs := ids(resp.Rows)
-	if want := []string{"r5", "r3", "r2", "r1"}; !eq(gotIDs, want) {
-		t.Errorf("order = %v, want %v", gotIDs, want)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, 4, resp.Total, "Total")
+	assert.Equal(t, proto.ScopeLocal, resp.Scope, "Scope")
+	assert.Equal(t, []string{"r5", "r3", "r2", "r1"}, ids(resp.Rows), "order")
 
 	// Dedupe collapses "git status" (r1/r3) to the newest (r3).
 	resp, _ = c.Query(proto.QueryReq{Q: "git", Dedupe: true})
-	if resp.Total != 3 {
-		t.Errorf("dedupe Total = %d, want 3", resp.Total)
-	}
-	if want := []string{"r5", "r3", "r2"}; !eq(ids(resp.Rows), want) {
-		t.Errorf("dedupe order = %v, want %v", ids(resp.Rows), want)
-	}
+	assert.Equal(t, 3, resp.Total, "dedupe Total")
+	assert.Equal(t, []string{"r5", "r3", "r2"}, ids(resp.Rows), "dedupe order")
 
 	// Session scope keeps only s1.
 	resp, _ = c.Query(proto.QueryReq{Q: "git", Scope: proto.ScopeSession, Session: "s1"})
-	if want := []string{"r5", "r2", "r1"}; !eq(ids(resp.Rows), want) {
-		t.Errorf("session scope = %v, want %v", ids(resp.Rows), want)
-	}
+	assert.Equal(t, []string{"r5", "r2", "r1"}, ids(resp.Rows), "session scope")
 
 	// Cwd scope keeps only /a.
 	resp, _ = c.Query(proto.QueryReq{Q: "git", Scope: proto.ScopeCwd, Cwd: "/a"})
-	if want := []string{"r5", "r3", "r1"}; !eq(ids(resp.Rows), want) {
-		t.Errorf("cwd scope = %v, want %v", ids(resp.Rows), want)
-	}
+	assert.Equal(t, []string{"r5", "r3", "r1"}, ids(resp.Rows), "cwd scope")
 
 	// Offset/limit window applies after dedupe; Total is unwindowed.
 	resp, _ = c.Query(proto.QueryReq{Q: "git", Limit: 2, Offset: 1})
-	if resp.Total != 4 {
-		t.Errorf("windowed Total = %d, want 4", resp.Total)
-	}
-	if want := []string{"r3", "r2"}; !eq(ids(resp.Rows), want) {
-		t.Errorf("window = %v, want %v", ids(resp.Rows), want)
-	}
+	assert.Equal(t, 4, resp.Total, "windowed Total")
+	assert.Equal(t, []string{"r3", "r2"}, ids(resp.Rows), "window")
 
 	// "all"/"host" behave like local but report Remote off.
 	resp, _ = c.Query(proto.QueryReq{Q: "git", Scope: proto.ScopeAll})
-	if resp.Total != 4 || resp.Remote.State != proto.RemoteOff {
-		t.Errorf("scope all: Total=%d Remote=%q, want 4/off", resp.Total, resp.Remote.State)
-	}
-	if resp.Scope != proto.ScopeAll {
-		t.Errorf("scope all: effective scope = %q, want all", resp.Scope)
-	}
+	assert.Equal(t, 4, resp.Total, "scope all Total")
+	assert.Equal(t, proto.RemoteOff, resp.Remote.State, "scope all Remote")
+	assert.Equal(t, proto.ScopeAll, resp.Scope, "scope all effective scope")
 }
 
 func TestIncrementalQueriesConsistent(t *testing.T) {
@@ -296,9 +241,8 @@ func TestIncrementalQueriesConsistent(t *testing.T) {
 
 	// Type "g" -> "gi" -> "git" down one connection (incremental Filter path).
 	for _, q := range []string{"g", "gi", "git"} {
-		if _, err := c.Query(proto.QueryReq{Q: q}); err != nil {
-			t.Fatalf("incremental query %q: %v", q, err)
-		}
+		_, err := c.Query(proto.QueryReq{Q: q})
+		require.NoErrorf(t, err, "incremental query %q", q)
 	}
 	inc, _ := c.Query(proto.QueryReq{Q: "git"})
 
@@ -307,38 +251,27 @@ func TestIncrementalQueriesConsistent(t *testing.T) {
 	full, _ := fresh.Query(proto.QueryReq{Q: "git"})
 	fresh.Close()
 
-	if !eq(ids(inc.Rows), ids(full.Rows)) {
-		t.Errorf("incremental %v != full %v", ids(inc.Rows), ids(full.Rows))
-	}
-	if want := []string{"r4", "r2", "r1"}; !eq(ids(inc.Rows), want) {
-		t.Errorf("git rows = %v, want %v", ids(inc.Rows), want)
-	}
+	assert.Equal(t, ids(full.Rows), ids(inc.Rows), "incremental != full")
+	assert.Equal(t, []string{"r4", "r2", "r1"}, ids(inc.Rows), "git rows")
 }
 
 func TestIdleExit(t *testing.T) {
 	dir := t.TempDir()
 	c, h := startDaemon(t, dir, 300*time.Millisecond)
 
-	if err := c.Ping(); err != nil {
-		t.Fatalf("Ping: %v", err)
-	}
+	require.NoError(t, c.Ping(), "Ping")
 	start := time.Now()
 
 	select {
 	case <-h.done:
-		if h.err != nil {
-			t.Fatalf("Run returned error: %v", h.err)
-		}
-		if d := time.Since(start); d > 1500*time.Millisecond {
-			t.Errorf("idle exit took %s, want < 1.5s", d)
-		}
+		require.NoError(t, h.err, "Run returned error")
+		assert.LessOrEqual(t, time.Since(start), 1500*time.Millisecond, "idle exit took too long, want < 1.5s")
 	case <-time.After(1500 * time.Millisecond):
-		t.Fatal("Run did not return after idle timeout")
+		require.FailNow(t, "Run did not return after idle timeout")
 	}
 
-	if _, err := os.Stat(config.SocketPath(dir)); !os.IsNotExist(err) {
-		t.Errorf("socket still present after idle exit: %v", err)
-	}
+	_, err := os.Stat(config.SocketPath(dir))
+	assert.Truef(t, os.IsNotExist(err), "socket still present after idle exit: %v", err)
 }
 
 func TestSecondRunLockedLosesQuietly(t *testing.T) {
@@ -347,47 +280,34 @@ func TestSecondRunLockedLosesQuietly(t *testing.T) {
 
 	start := time.Now()
 	err := Run(dir, Options{IdleTimeout: 30 * time.Second, Version: "loser"})
-	if err != nil {
-		t.Fatalf("second Run = %v, want nil (ErrLocked loser)", err)
-	}
-	if d := time.Since(start); d > time.Second {
-		t.Errorf("second Run took %s, want fast", d)
-	}
+	require.NoError(t, err, "second Run should be nil (ErrLocked loser)")
+	assert.LessOrEqual(t, time.Since(start), time.Second, "second Run took too long, want fast")
 
 	// The first daemon must still be serving (the loser did not disturb it).
 	c := dialRetry(t, dir, time.Second)
 	defer c.Close()
-	if err := c.Ping(); err != nil {
-		t.Errorf("first daemon not serving after loser: %v", err)
-	}
+	assert.NoError(t, c.Ping(), "first daemon not serving after loser")
 }
 
 func TestShutdownOp(t *testing.T) {
 	dir := t.TempDir()
 	c, h := startDaemon(t, dir, 30*time.Second)
 
-	if err := c.Shutdown(); err != nil {
-		t.Fatalf("Shutdown: %v", err)
-	}
+	require.NoError(t, c.Shutdown(), "Shutdown")
 	select {
 	case <-h.done:
-		if h.err != nil {
-			t.Fatalf("Run returned error: %v", h.err)
-		}
+		require.NoError(t, h.err, "Run returned error")
 	case <-time.After(2 * time.Second):
-		t.Fatal("Run did not return after OpShutdown")
+		require.FailNow(t, "Run did not return after OpShutdown")
 	}
-	if _, err := os.Stat(config.SocketPath(dir)); !os.IsNotExist(err) {
-		t.Errorf("socket still present after shutdown: %v", err)
-	}
+	_, err := os.Stat(config.SocketPath(dir))
+	assert.Truef(t, os.IsNotExist(err), "socket still present after shutdown: %v", err)
 }
 
 func TestSyncNoOp(t *testing.T) {
 	dir := t.TempDir()
 	c, _ := startDaemon(t, dir, 30*time.Second)
-	if err := c.Sync(); err != nil {
-		t.Fatalf("Sync: %v", err)
-	}
+	require.NoError(t, c.Sync(), "Sync")
 }
 
 // --- helpers ---
@@ -409,16 +329,4 @@ func ids(rows []rec.Record) []string {
 		out[i] = r.ID
 	}
 	return out
-}
-
-func eq(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }

@@ -2,8 +2,9 @@ package match
 
 import (
 	"math/rand"
-	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestMatchSemantics(t *testing.T) {
@@ -36,42 +37,46 @@ func TestMatchSemantics(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := Parse(tc.query).Match(tc.text); got != tc.want {
-				t.Fatalf("Parse(%q).Match(%q) = %v, want %v", tc.query, tc.text, got, tc.want)
-			}
+			require.Equal(t, tc.want, Parse(tc.query).Match(tc.text))
 		})
 	}
 }
 
 func TestEmpty(t *testing.T) {
-	if !Parse("").Empty() {
-		t.Fatal(`Parse("").Empty() = false, want true`)
+	tests := []struct {
+		name  string
+		query string
+		want  bool
+	}{
+		{"empty string", "", true},
+		{"whitespace only", "   ", true},
+		{"non-empty query", "x", false},
 	}
-	if !Parse("   ").Empty() {
-		t.Fatal(`Parse("   ").Empty() = false, want true`)
-	}
-	if Parse("x").Empty() {
-		t.Fatal(`Parse("x").Empty() = true, want false`)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, Parse(tc.query).Empty())
+		})
 	}
 }
 
 func TestMatchUTF8(t *testing.T) {
 	// Case-insensitive non-ASCII term against a UTF-8 haystack.
 	tests := []struct {
+		name        string
 		query, text string
 		want        bool
 	}{
-		{"éclair", "commande café ÉCLAIR maison", true},
-		{"éclair", "commande café eclair maison", false}, // missing accent
-		{"straße", "die STRASSE", false},                 // ß != ss under simple fold
-		{"café", "un CAFÉ noir", true},
-		{"日本", "テスト 日本 語", true},
-		{"ελλάδα", "ΕΛΛΆΔΑ και άλλα", true},
+		{"accented term matches accented haystack", "éclair", "commande café ÉCLAIR maison", true},
+		{"missing accent does not match", "éclair", "commande café eclair maison", false},
+		{"ß != ss under simple fold", "straße", "die STRASSE", false},
+		{"café matches CAFÉ", "café", "un CAFÉ noir", true},
+		{"CJK exact match", "日本", "テスト 日本 語", true},
+		{"greek case fold", "ελλάδα", "ΕΛΛΆΔΑ και άλλα", true},
 	}
 	for _, tc := range tests {
-		if got := Parse(tc.query).Match(tc.text); got != tc.want {
-			t.Errorf("Match(%q, %q) = %v, want %v", tc.query, tc.text, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, Parse(tc.query).Match(tc.text))
+		})
 	}
 }
 
@@ -125,9 +130,7 @@ func TestRanges(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got := Parse(tc.query).Ranges(tc.text)
-			if !reflect.DeepEqual(got, tc.want) {
-				t.Fatalf("Ranges(%q, %q) = %v, want %v", tc.query, tc.text, got, tc.want)
-			}
+			require.Equal(t, tc.want, got)
 		})
 	}
 }
@@ -141,13 +144,9 @@ func TestRangesUTF8Offsets(t *testing.T) {
 	// "café " = c(1)a(1)f(1)é(2)space(1) = 6 bytes; ÉCLAIR spans [6, 6+7)=[6,13)
 	// É is 2 bytes, CLAIR is 5 bytes -> 7 bytes total.
 	want := [][2]int{{6, 13}}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("Ranges = %v, want %v", got, want)
-	}
+	require.Equal(t, want, got)
 	// Sanity: the reported span, sliced out of the original text, is ÉCLAIR.
-	if s := text[got[0][0]:got[0][1]]; s != "ÉCLAIR" {
-		t.Fatalf("sliced span = %q, want %q", s, "ÉCLAIR")
-	}
+	require.Equal(t, "ÉCLAIR", text[got[0][0]:got[0][1]])
 }
 
 // naiveScan is the oracle: a full linear scan using Query.Match.
@@ -201,9 +200,7 @@ func TestFilterMatchesNaive(t *testing.T) {
 		if got == nil {
 			got = []int{}
 		}
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("step %d query=%q:\n got=%v\nwant=%v", step, q, got, want)
-		}
+		require.Equalf(t, want, got, "step %d query=%q", step, q)
 	}
 }
 
@@ -240,9 +237,7 @@ func TestFilterAppends(t *testing.T) {
 		if got == nil {
 			got = []int{}
 		}
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("step %d n=%d query=%q:\n got=%v\nwant=%v", step, n, q, got, want)
-		}
+		require.Equalf(t, want, got, "step %d n=%d query=%q", step, n, q)
 	}
 }
 
@@ -254,9 +249,7 @@ func TestFilterReset(t *testing.T) {
 	// After Reset the next Apply must full-scan correctly.
 	got := f.Apply("docker", corpus)
 	want := []int{1}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("after Reset Apply = %v, want %v", got, want)
-	}
+	require.Equal(t, want, got, "after Reset")
 }
 
 // TestFilterReturnedSliceIndependent verifies the returned slice does not
@@ -272,7 +265,5 @@ func TestFilterReturnedSliceIndependent(t *testing.T) {
 		first[i] = -1
 	}
 	second := f.Apply("git ", corpus)
-	if !reflect.DeepEqual(second, firstCopy) {
-		t.Fatalf("second Apply = %v, want %v (caller mutation leaked into Filter)", second, firstCopy)
-	}
+	require.Equal(t, firstCopy, second, "caller mutation leaked into Filter")
 }

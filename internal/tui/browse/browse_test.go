@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/stretchr/testify/require"
 
 	"yore/internal/proto"
 	"yore/internal/rec"
@@ -85,9 +86,7 @@ func step(t *testing.T, m Model, msg tea.Msg) (Model, tea.Cmd) {
 	t.Helper()
 	tm, cmd := m.Update(msg)
 	nm, ok := tm.(Model)
-	if !ok {
-		t.Fatalf("Update returned %T, want browse.Model", tm)
-	}
+	require.Truef(t, ok, "Update returned %T, want browse.Model", tm)
 	return nm, cmd
 }
 
@@ -170,27 +169,25 @@ func TestHostSelectionChangesScope(t *testing.T) {
 
 	// Focus the host sidebar (shift+tab from the table lands on hosts).
 	m, _ = step(t, m, press("shift+tab"))
-	if m.focus != focusHosts {
-		t.Fatalf("focus = %v, want focusHosts", m.focus)
-	}
+	require.Equal(t, focusHosts, m.focus)
 
 	// Down -> local host (index 1) => ScopeLocal, no Host filter.
 	m, cmd := step(t, m, press("down"))
 	if cmd != nil {
 		cmd()
 	}
-	if got := f.lastReq(); got.Scope != proto.ScopeLocal || got.Host != "" {
-		t.Errorf("local host req = %+v, want Scope=local Host=empty", got)
-	}
+	got := f.lastReq()
+	require.Equalf(t, proto.ScopeLocal, got.Scope, "local host req = %+v, want Scope=local Host=empty", got)
+	require.Emptyf(t, got.Host, "local host req = %+v, want Scope=local Host=empty", got)
 
 	// Down again -> "beta" (index 2) => ScopeHost with that hostname.
 	m, cmd = step(t, m, press("down"))
 	if cmd != nil {
 		cmd()
 	}
-	if got := f.lastReq(); got.Scope != proto.ScopeHost || got.Host != "beta" {
-		t.Errorf("beta host req = %+v, want Scope=host Host=beta", got)
-	}
+	got = f.lastReq()
+	require.Equalf(t, proto.ScopeHost, got.Scope, "beta host req = %+v, want Scope=host Host=beta", got)
+	require.Equalf(t, "beta", got.Host, "beta host req = %+v, want Scope=host Host=beta", got)
 
 	// Back up to "All hosts" => ScopeAll.
 	m, cmd = step(t, m, press("up"))
@@ -198,9 +195,7 @@ func TestHostSelectionChangesScope(t *testing.T) {
 	if cmd != nil {
 		cmd()
 	}
-	if got := f.lastReq(); got.Scope != proto.ScopeAll {
-		t.Errorf("all-hosts req scope = %q, want all", got.Scope)
-	}
+	require.Equal(t, proto.ScopeAll, f.lastReq().Scope)
 }
 
 func TestSearchSendsTaggedQueries(t *testing.T) {
@@ -208,9 +203,8 @@ func TestSearchSendsTaggedQueries(t *testing.T) {
 	m := ready(t, f, 100, 24)
 
 	m, _ = step(t, m, press("/"))
-	if !m.searching {
-		t.Fatal("`/` did not focus search")
-	}
+	require.True(t, m.searching, "`/` did not focus search")
+
 	var lastCmd tea.Cmd
 	for _, r := range "grep" {
 		var c tea.Cmd
@@ -219,27 +213,16 @@ func TestSearchSendsTaggedQueries(t *testing.T) {
 			lastCmd = c
 		}
 	}
-	if lastCmd == nil {
-		t.Fatal("typing produced no query command")
-	}
-	if _, ok := lastCmd().(queryResultMsg); !ok {
-		t.Fatal("typing command did not yield a queryResultMsg")
-	}
-	if got := f.lastReq(); got.Q != "grep" {
-		t.Errorf("query Q = %q, want grep", got.Q)
-	}
-	if m.seq < 2 {
-		t.Errorf("seq = %d, want it to advance per keystroke", m.seq)
-	}
+	require.NotNil(t, lastCmd, "typing produced no query command")
+	_, ok := lastCmd().(queryResultMsg)
+	require.True(t, ok, "typing command did not yield a queryResultMsg")
+	require.Equal(t, "grep", f.lastReq().Q)
+	require.GreaterOrEqualf(t, m.seq, uint64(2), "seq = %d, want it to advance per keystroke", m.seq)
 
 	// Esc leaves search focus but keeps the filter text.
 	m, _ = step(t, m, press("esc"))
-	if m.searching {
-		t.Error("esc did not leave search focus")
-	}
-	if m.ti.Value() != "grep" {
-		t.Errorf("filter lost after esc: %q", m.ti.Value())
-	}
+	require.False(t, m.searching, "esc did not leave search focus")
+	require.Equal(t, "grep", m.ti.Value())
 }
 
 func TestStaleResponseDropped(t *testing.T) {
@@ -249,16 +232,11 @@ func TestStaleResponseDropped(t *testing.T) {
 	m, _ = step(t, m, queryResultMsg{seq: 2, resp: mkResp(mkRows("keep-two"))})
 	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("stale-one"))})
 
-	if len(m.rows) != 1 || m.rows[0].Cmd != "keep-two" {
-		t.Fatalf("rows = %+v, want keep-two (seq 2)", m.rows)
-	}
+	require.Lenf(t, m.rows, 1, "rows = %+v, want keep-two (seq 2)", m.rows)
+	require.Equalf(t, "keep-two", m.rows[0].Cmd, "rows = %+v, want keep-two (seq 2)", m.rows)
 	out := strip(m.View())
-	if !strings.Contains(out, "keep-two") {
-		t.Errorf("view missing keep-two:\n%s", out)
-	}
-	if strings.Contains(out, "stale-one") {
-		t.Errorf("view shows dropped stale-one:\n%s", out)
-	}
+	require.Containsf(t, out, "keep-two", "view missing keep-two:\n%s", out)
+	require.NotContainsf(t, out, "stale-one", "view shows dropped stale-one:\n%s", out)
 }
 
 func TestTableNavUpdatesDetail(t *testing.T) {
@@ -268,23 +246,17 @@ func TestTableNavUpdatesDetail(t *testing.T) {
 
 	// Row 0 selected first.
 	out := strip(m.View())
-	if !strings.Contains(out, "/work/0") || !strings.Contains(out, "sess-0") {
-		t.Errorf("detail should show row 0 cwd/session:\n%s", out)
-	}
+	require.Containsf(t, out, "/work/0", "detail should show row 0 cwd/session:\n%s", out)
+	require.Containsf(t, out, "sess-0", "detail should show row 0 cwd/session:\n%s", out)
 
 	// Move down twice: detail must reflect row 2.
 	m, _ = step(t, m, press("down"))
 	m, _ = step(t, m, press("j"))
-	if m.sel != 2 {
-		t.Fatalf("sel = %d, want 2", m.sel)
-	}
+	require.Equal(t, 2, m.sel)
 	out = strip(m.View())
-	if !strings.Contains(out, "/work/2") || !strings.Contains(out, "sess-2") {
-		t.Errorf("detail should show row 2 cwd/session:\n%s", out)
-	}
-	if strings.Contains(out, "sess-0") {
-		t.Errorf("detail still shows row 0 after navigation:\n%s", out)
-	}
+	require.Containsf(t, out, "/work/2", "detail should show row 2 cwd/session:\n%s", out)
+	require.Containsf(t, out, "sess-2", "detail should show row 2 cwd/session:\n%s", out)
+	require.NotContainsf(t, out, "sess-0", "detail still shows row 0 after navigation:\n%s", out)
 }
 
 func TestDeleteConfirmYes(t *testing.T) {
@@ -294,24 +266,14 @@ func TestDeleteConfirmYes(t *testing.T) {
 	m, _ = step(t, m, press("down")) // select drop-b (id "1")
 
 	m, _ = step(t, m, press("d"))
-	if !m.confirmDelete {
-		t.Fatal("`d` did not arm the delete confirmation")
-	}
-	if !strings.Contains(strip(m.View()), "delete this command?") {
-		t.Error("confirmation prompt not shown in status bar")
-	}
+	require.True(t, m.confirmDelete, "`d` did not arm the delete confirmation")
+	require.Contains(t, strip(m.View()), "delete this command?")
 
 	m, _ = step(t, m, press("y"))
-	if len(f.deleted) != 1 || f.deleted[0] != "1" {
-		t.Fatalf("Delete calls = %v, want [\"1\"]", f.deleted)
-	}
-	if len(m.rows) != 2 {
-		t.Fatalf("rows after delete = %d, want 2", len(m.rows))
-	}
+	require.Equal(t, []string{"1"}, f.deleted)
+	require.Len(t, m.rows, 2)
 	for _, r := range m.rows {
-		if r.Cmd == "drop-b" {
-			t.Errorf("deleted row still present: %+v", m.rows)
-		}
+		require.NotEqualf(t, "drop-b", r.Cmd, "deleted row still present: %+v", m.rows)
 	}
 }
 
@@ -322,15 +284,9 @@ func TestDeleteConfirmNo(t *testing.T) {
 
 	m, _ = step(t, m, press("d"))
 	m, _ = step(t, m, press("n"))
-	if m.confirmDelete {
-		t.Error("`n` did not dismiss the confirmation")
-	}
-	if len(f.deleted) != 0 {
-		t.Errorf("Delete should not be called on `n`: %v", f.deleted)
-	}
-	if len(m.rows) != 2 {
-		t.Errorf("rows changed after cancel: %d", len(m.rows))
-	}
+	require.False(t, m.confirmDelete, "`n` did not dismiss the confirmation")
+	require.Empty(t, f.deleted, "Delete should not be called on `n`")
+	require.Len(t, m.rows, 2)
 }
 
 func TestCopyFlash(t *testing.T) {
@@ -339,9 +295,7 @@ func TestCopyFlash(t *testing.T) {
 	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("echo hi"))})
 
 	m, cmd := step(t, m, press("enter"))
-	if !strings.Contains(strip(m.View()), "copied") {
-		t.Errorf("status bar should flash 'copied':\n%s", strip(m.View()))
-	}
+	require.Contains(t, strip(m.View()), "copied")
 	if cmd != nil {
 		cmd() // out is nil under test: the OSC 52 write is a silent no-op
 	}
@@ -358,41 +312,27 @@ func TestStatsViewRenders(t *testing.T) {
 	m := ready(t, f, 120, 40)
 
 	m, cmd := step(t, m, press("s"))
-	if m.view != viewStats {
-		t.Fatal("`s` did not switch to stats view")
-	}
-	if cmd == nil {
-		t.Fatal("toggling stats issued no aggregation query")
-	}
+	require.Equal(t, viewStats, m.view, "`s` did not switch to stats view")
+	require.NotNil(t, cmd, "toggling stats issued no aggregation query")
 	msg := cmd()
 	sr, ok := msg.(statsResultMsg)
-	if !ok {
-		t.Fatalf("stats command yielded %T, want statsResultMsg", msg)
-	}
+	require.Truef(t, ok, "stats command yielded %T, want statsResultMsg", msg)
 	m, _ = step(t, m, sr)
 
 	out := strip(m.View())
-	if !strings.Contains(out, "Top commands") {
-		t.Errorf("stats missing top-commands section:\n%s", out)
-	}
-	if !strings.Contains(out, "git") {
-		t.Errorf("stats missing top command 'git':\n%s", out)
-	}
-	if !strings.Contains(out, "Commands per day") {
-		t.Errorf("stats missing sparkline section:\n%s", out)
-	}
-	if !strings.Contains(out, "█") { // all rows share one day -> that bucket peaks
-		t.Errorf("stats sparkline missing a full block glyph:\n%s", out)
-	}
-	if m.stats == nil || len(m.stats.topCmds) == 0 || m.stats.topCmds[0].name != "git" || m.stats.topCmds[0].n != 3 {
-		t.Errorf("top command aggregate = %+v, want git=3 first", m.stats)
-	}
+	require.Containsf(t, out, "Top commands", "stats missing top-commands section:\n%s", out)
+	require.Containsf(t, out, "git", "stats missing top command 'git':\n%s", out)
+	require.Containsf(t, out, "Commands per day", "stats missing sparkline section:\n%s", out)
+	require.Containsf(t, out, "█", "stats sparkline missing a full block glyph:\n%s", out) // all rows share one day -> that bucket peaks
+
+	require.NotNilf(t, m.stats, "top command aggregate = %+v, want git=3 first", m.stats)
+	require.NotEmptyf(t, m.stats.topCmds, "top command aggregate = %+v, want git=3 first", m.stats)
+	require.Equalf(t, "git", m.stats.topCmds[0].name, "top command aggregate = %+v, want git=3 first", m.stats)
+	require.Equalf(t, 3, m.stats.topCmds[0].n, "top command aggregate = %+v, want git=3 first", m.stats)
 
 	// `s` again returns to the browse view.
 	m, _ = step(t, m, press("s"))
-	if m.view != viewBrowse {
-		t.Error("second `s` did not return to browse")
-	}
+	require.Equal(t, viewBrowse, m.view, "second `s` did not return to browse")
 }
 
 func TestResizeStaysWithinWidth(t *testing.T) {
@@ -403,21 +343,23 @@ func TestResizeStaysWithinWidth(t *testing.T) {
 	m := ready(t, f, 100, 30)
 	m, _ = step(t, m, queryResultMsg{seq: 1, resp: f.resp})
 
-	for _, wh := range [][2]int{{200, 50}, {120, 40}, {80, 24}, {60, 20}, {40, 15}, {24, 10}} {
-		m, _ = step(t, m, tea.WindowSizeMsg{Width: wh[0], Height: wh[1]})
-		for _, mode := range []viewMode{viewBrowse, viewStats} {
-			m.view = mode
-			if mode == viewStats {
-				m.stats = computeStats(f.resp.Rows, m.hosts, now)
-			}
-			for _, line := range strings.Split(m.View(), "\n") {
-				if got := lipgloss.Width(line); got > wh[0] {
-					t.Errorf("w=%d h=%d mode=%d: line width %d > %d: %q",
+	sizes := [][2]int{{200, 50}, {120, 40}, {80, 24}, {60, 20}, {40, 15}, {24, 10}}
+	for _, wh := range sizes {
+		t.Run(strconv.Itoa(wh[0])+"x"+strconv.Itoa(wh[1]), func(t *testing.T) {
+			m, _ = step(t, m, tea.WindowSizeMsg{Width: wh[0], Height: wh[1]})
+			for _, mode := range []viewMode{viewBrowse, viewStats} {
+				m.view = mode
+				if mode == viewStats {
+					m.stats = computeStats(f.resp.Rows, m.hosts, now)
+				}
+				for _, line := range strings.Split(m.View(), "\n") {
+					got := lipgloss.Width(line)
+					require.LessOrEqualf(t, got, wh[0], "w=%d h=%d mode=%d: line width %d > %d: %q",
 						wh[0], wh[1], mode, got, wh[0], strip(line))
 				}
 			}
-		}
-		m.view = viewBrowse
+			m.view = viewBrowse
+		})
 	}
 }
 
@@ -431,17 +373,13 @@ func TestFocusCyclesAndRemoteHint(t *testing.T) {
 	m, _ = step(t, m, queryResultMsg{seq: 1, resp: f.resp})
 
 	// Default scope is All hosts; RemoteOff should surface the hint.
-	if !strings.Contains(strip(m.View()), "remote sync not configured") {
-		t.Errorf("expected remote-off hint in All-hosts scope:\n%s", strip(m.View()))
-	}
+	require.Contains(t, strip(m.View()), "remote sync not configured")
 
 	// Tab cycles hosts -> table -> detail.
 	order := []focus{focusDetail, focusHosts, focusTable}
 	for _, want := range order {
 		m, _ = step(t, m, press("tab"))
-		if m.focus != want {
-			t.Fatalf("focus = %v, want %v", m.focus, want)
-		}
+		require.Equal(t, want, m.focus)
 	}
 }
 
@@ -449,28 +387,20 @@ func TestQuit(t *testing.T) {
 	f := &fakeBackend{}
 	m := ready(t, f, 80, 24)
 	_, cmd := step(t, m, press("q"))
-	if cmd == nil {
-		t.Fatal("q produced no command")
-	}
-	if _, ok := cmd().(tea.QuitMsg); !ok {
-		t.Errorf("q should return tea.Quit")
-	}
+	require.NotNil(t, cmd, "q produced no command")
+	_, ok := cmd().(tea.QuitMsg)
+	require.True(t, ok, "q should return tea.Quit")
 }
 
 func TestOSC52RoundTrip(t *testing.T) {
 	payload := "git commit -m 'héllo wörld' && echo done"
 	seq := osc52(payload)
-	if !strings.HasPrefix(seq, "\x1b]52;c;") || !strings.HasSuffix(seq, "\x07") {
-		t.Fatalf("osc52 framing wrong: %q", seq)
-	}
+	require.Truef(t, strings.HasPrefix(seq, "\x1b]52;c;"), "osc52 framing wrong: %q", seq)
+	require.Truef(t, strings.HasSuffix(seq, "\x07"), "osc52 framing wrong: %q", seq)
 	b64 := strings.TrimSuffix(strings.TrimPrefix(seq, "\x1b]52;c;"), "\x07")
 	got, err := base64.StdEncoding.DecodeString(b64)
-	if err != nil {
-		t.Fatalf("payload is not valid base64: %v", err)
-	}
-	if string(got) != payload {
-		t.Errorf("round-trip = %q, want %q", got, payload)
-	}
+	require.NoError(t, err)
+	require.Equal(t, payload, string(got))
 }
 
 // readyVim is ready() but with the vim keymap enabled.
@@ -493,82 +423,52 @@ func TestVimBrowseNavigation(t *testing.T) {
 		cmds[i] = "cmd-" + strconv.Itoa(i)
 	}
 	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows(cmds...))})
-	if !m.vim {
-		t.Fatal("vim mode should be enabled from Options.Keymap")
-	}
+	require.True(t, m.vim, "vim mode should be enabled from Options.Keymap")
 
 	// j/k navigate the table (these also work in emacs, but must in vim).
 	m, _ = step(t, m, press("j"))
 	m, _ = step(t, m, press("j"))
-	if m.sel != 2 {
-		t.Fatalf("after two j: sel = %d, want 2", m.sel)
-	}
+	require.Equal(t, 2, m.sel)
 	m, _ = step(t, m, press("k"))
-	if m.sel != 1 {
-		t.Fatalf("after k: sel = %d, want 1", m.sel)
-	}
+	require.Equal(t, 1, m.sel)
 
 	// g/G jump to top/bottom.
 	m, _ = step(t, m, press("G"))
-	if m.sel != len(cmds)-1 {
-		t.Fatalf("G: sel = %d, want %d (last row)", m.sel, len(cmds)-1)
-	}
+	require.Equal(t, len(cmds)-1, m.sel)
 	m, _ = step(t, m, press("g"))
-	if m.sel != 0 {
-		t.Fatalf("g: sel = %d, want 0", m.sel)
-	}
+	require.Equal(t, 0, m.sel)
 
 	// h/l move focus between panes (default focus is the table).
-	if m.focus != focusTable {
-		t.Fatalf("default focus = %v, want focusTable", m.focus)
-	}
+	require.Equal(t, focusTable, m.focus, "default focus")
 	m, _ = step(t, m, press("l"))
-	if m.focus != focusDetail {
-		t.Fatalf("l: focus = %v, want focusDetail", m.focus)
-	}
+	require.Equal(t, focusDetail, m.focus)
 	m, _ = step(t, m, press("h"))
 	m, _ = step(t, m, press("h"))
-	if m.focus != focusHosts {
-		t.Fatalf("h twice from table: focus = %v, want focusHosts", m.focus)
-	}
+	require.Equal(t, focusHosts, m.focus, "h twice from table")
 
 	// ctrl+d is a half-page scroll in vim, NOT delete.
 	m.focus = focusTable
 	m.sel = 0
 	m, _ = step(t, m, press("ctrl+d"))
-	if m.confirmDelete {
-		t.Fatal("ctrl+d in vim mode wrongly armed delete confirmation")
-	}
-	if m.sel == 0 {
-		t.Fatal("ctrl+d in vim mode did not scroll the selection down")
-	}
+	require.False(t, m.confirmDelete, "ctrl+d in vim mode wrongly armed delete confirmation")
+	require.NotEqual(t, 0, m.sel, "ctrl+d in vim mode did not scroll the selection down")
 	half := m.halfPage()
-	if m.sel != half {
-		t.Fatalf("ctrl+d: sel = %d, want %d (half-page)", m.sel, half)
-	}
+	require.Equal(t, half, m.sel, "ctrl+d: want half-page")
 	m, _ = step(t, m, press("ctrl+u"))
-	if m.sel != 0 {
-		t.Fatalf("ctrl+u: sel = %d, want back to 0", m.sel)
-	}
+	require.Equal(t, 0, m.sel, "ctrl+u: want back to 0")
 
 	// `d` still deletes (single-key, with confirm) in vim mode.
 	m, _ = step(t, m, press("d"))
-	if !m.confirmDelete {
-		t.Fatal("`d` should still arm delete in vim mode")
-	}
+	require.True(t, m.confirmDelete, "`d` should still arm delete in vim mode")
 }
 
 func TestEmacsCtrlDStillDeletes(t *testing.T) {
 	f := &fakeBackend{}
 	m := ready(t, f, 120, 30) // default (emacs) keymap
 	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("a", "b"))})
-	if m.vim {
-		t.Fatal("default keymap should not be vim")
-	}
+	require.False(t, m.vim, "default keymap should not be vim")
 	m, _ = step(t, m, press("ctrl+d"))
-	if !m.confirmDelete {
-		t.Fatal("ctrl+d in emacs mode should still arm delete")
-	}
+	require.True(t, m.confirmDelete, "ctrl+d in emacs mode should still arm delete")
 }
 
 // compile-time assurance the interface matches what daemon.Client provides.
@@ -586,49 +486,30 @@ func TestDevicesPane(t *testing.T) {
 
 	// Enter the devices view; it fetches asynchronously.
 	m, cmd := step(t, m, press("D"))
-	if m.view != viewDevices {
-		t.Fatalf("view = %v, want viewDevices", m.view)
-	}
-	if cmd == nil {
-		t.Fatal("entering devices view did not fetch")
-	}
+	require.Equal(t, viewDevices, m.view)
+	require.NotNil(t, cmd, "entering devices view did not fetch")
 	m, _ = step(t, m, cmd())
-	if len(m.devices) != 2 {
-		t.Fatalf("devices = %d, want 2", len(m.devices))
-	}
+	require.Len(t, m.devices, 2)
 	out := strip(m.View())
-	if !strings.Contains(out, "laptop") || !strings.Contains(out, "AB12-CD34") {
-		t.Errorf("devices view missing device/code:\n%s", out)
-	}
+	require.Containsf(t, out, "laptop", "devices view missing device/code:\n%s", out)
+	require.Containsf(t, out, "AB12-CD34", "devices view missing device/code:\n%s", out)
 
 	// Move to the pending device and approve it.
 	m, _ = step(t, m, press("j"))
 	m, acmd := step(t, m, press("a"))
-	if acmd == nil {
-		t.Fatal("approve produced no command")
-	}
+	require.NotNil(t, acmd, "approve produced no command")
 	acmd()
-	if len(f.approved) != 1 || f.approved[0] != "01BBBBBBBBBBBBBBBBBBBBBBBB" {
-		t.Errorf("approved = %v, want the pending device id", f.approved)
-	}
+	require.Equal(t, []string{"01BBBBBBBBBBBBBBBBBBBBBBBB"}, f.approved)
 
 	// Revoke needs confirmation: x then y.
 	m, _ = step(t, m, press("x"))
-	if m.devConfirm == "" {
-		t.Fatal("x did not arm a revoke confirmation")
-	}
+	require.NotEmpty(t, m.devConfirm, "x did not arm a revoke confirmation")
 	m, rcmd := step(t, m, press("y"))
-	if rcmd == nil {
-		t.Fatal("y did not trigger revoke")
-	}
+	require.NotNil(t, rcmd, "y did not trigger revoke")
 	rcmd()
-	if len(f.revoked) != 1 {
-		t.Errorf("revoked = %v, want one", f.revoked)
-	}
+	require.Len(t, f.revoked, 1)
 
 	// Esc leaves the devices view.
 	m, _ = step(t, m, press("esc"))
-	if m.view != viewBrowse {
-		t.Errorf("esc did not leave devices view (view=%v)", m.view)
-	}
+	require.Equal(t, viewBrowse, m.view, "esc did not leave devices view")
 }

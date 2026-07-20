@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/stretchr/testify/require"
 
 	"yore/internal/proto"
 	"yore/internal/rec"
@@ -47,9 +48,7 @@ func step(t *testing.T, m Model, msg tea.Msg) (Model, tea.Cmd) {
 	t.Helper()
 	tm, cmd := m.Update(msg)
 	nm, ok := tm.(Model)
-	if !ok {
-		t.Fatalf("Update returned %T, want search.Model", tm)
-	}
+	require.Truef(t, ok, "Update returned %T, want search.Model", tm)
 	return nm, cmd
 }
 
@@ -123,28 +122,17 @@ func TestTypingSendsQuery(t *testing.T) {
 	m := NewModel(f, Options{Version: "v1"})
 
 	m, cmd := step(t, m, key("g"))
-	if cmd == nil {
-		t.Fatal("typing produced no command")
-	}
-	if _, ok := cmd().(queryResultMsg); !ok {
-		t.Fatalf("expected queryResultMsg from typing command")
-	}
+	require.NotNil(t, cmd, "typing produced no command")
+	_, ok := cmd().(queryResultMsg)
+	require.True(t, ok, "expected queryResultMsg from typing command")
+
 	got := f.last()
-	if got.Q != "g" {
-		t.Errorf("Q = %q, want %q", got.Q, "g")
-	}
-	if got.Scope != proto.ScopeLocal {
-		t.Errorf("Scope = %q, want %q", got.Scope, proto.ScopeLocal)
-	}
-	if !got.Dedupe {
-		t.Error("Dedupe = false, want true (default on)")
-	}
-	if got.Limit != queryLimit {
-		t.Errorf("Limit = %d, want %d", got.Limit, queryLimit)
-	}
-	if got.Session != "" || got.Cwd != "" {
-		t.Errorf("local scope should not populate Session/Cwd: %+v", got)
-	}
+	require.Equal(t, "g", got.Q)
+	require.Equal(t, proto.ScopeLocal, got.Scope)
+	require.True(t, got.Dedupe, "Dedupe = false, want true (default on)")
+	require.Equal(t, queryLimit, got.Limit)
+	require.Emptyf(t, got.Session, "local scope should not populate Session/Cwd: %+v", got)
+	require.Emptyf(t, got.Cwd, "local scope should not populate Session/Cwd: %+v", got)
 	_ = m
 }
 
@@ -158,19 +146,19 @@ func TestScopeFieldsPopulated(t *testing.T) {
 	var cmd tea.Cmd
 	m, cmd = step(t, m, key("ctrl+r")) // session
 	cmd()
-	if got := f.last(); got.Scope != proto.ScopeSession || got.Session != "S1" || got.Cwd != "" {
-		t.Errorf("session scope req = %+v, want Scope=session Session=S1 Cwd=empty", got)
-	}
-	if got := f.last(); got.Q != "l" {
-		t.Errorf("Q = %q, want %q", got.Q, "l")
-	}
+	got := f.last()
+	require.Equalf(t, proto.ScopeSession, got.Scope, "session scope req = %+v", got)
+	require.Equalf(t, "S1", got.Session, "session scope req = %+v", got)
+	require.Emptyf(t, got.Cwd, "session scope req = %+v", got)
+	require.Equal(t, "l", f.last().Q)
 
 	// session -> cwd
 	m, cmd = step(t, m, key("ctrl+r")) // cwd
 	cmd()
-	if got := f.last(); got.Scope != proto.ScopeCwd || got.Cwd != "/work" || got.Session != "" {
-		t.Errorf("cwd scope req = %+v, want Scope=cwd Cwd=/work Session=empty", got)
-	}
+	got = f.last()
+	require.Equalf(t, proto.ScopeCwd, got.Scope, "cwd scope req = %+v", got)
+	require.Equalf(t, "/work", got.Cwd, "cwd scope req = %+v", got)
+	require.Emptyf(t, got.Session, "cwd scope req = %+v", got)
 }
 
 func TestOutOfOrderResponseDiscarded(t *testing.T) {
@@ -180,16 +168,11 @@ func TestOutOfOrderResponseDiscarded(t *testing.T) {
 	m, _ = step(t, m, queryResultMsg{seq: 2, resp: mkResp(mkRows("keep-two"))})
 	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("stale-one"))})
 
-	if len(m.rows) != 1 || m.rows[0].Cmd != "keep-two" {
-		t.Fatalf("rows = %+v, want the seq-2 rows (keep-two)", m.rows)
-	}
+	require.Lenf(t, m.rows, 1, "rows = %+v, want the seq-2 rows (keep-two)", m.rows)
+	require.Equalf(t, "keep-two", m.rows[0].Cmd, "rows = %+v, want the seq-2 rows (keep-two)", m.rows)
 	out := strip(m.View())
-	if !strings.Contains(out, "keep-two") {
-		t.Errorf("view missing keep-two:\n%s", out)
-	}
-	if strings.Contains(out, "stale-one") {
-		t.Errorf("view contains discarded stale-one:\n%s", out)
-	}
+	require.Containsf(t, out, "keep-two", "view missing keep-two:\n%s", out)
+	require.NotContainsf(t, out, "stale-one", "view contains discarded stale-one:\n%s", out)
 }
 
 func TestCtrlRCyclesScopes(t *testing.T) {
@@ -197,48 +180,30 @@ func TestCtrlRCyclesScopes(t *testing.T) {
 	m := NewModel(f, Options{})
 
 	want := []string{proto.ScopeAll, proto.ScopeSession, proto.ScopeCwd, proto.ScopeWorkspace, proto.ScopeLocal}
-	if m.scope != proto.ScopeLocal {
-		t.Fatalf("start scope = %q, want local", m.scope)
-	}
+	require.Equalf(t, proto.ScopeLocal, m.scope, "start scope = %q, want local", m.scope)
 	for _, w := range want {
 		var cmd tea.Cmd
 		m, cmd = step(t, m, key("ctrl+r"))
-		if m.scope != w {
-			t.Fatalf("scope = %q, want %q", m.scope, w)
-		}
-		if cmd == nil {
-			t.Fatalf("ctrl+r at scope %q did not re-query", w)
-		}
+		require.Equal(t, w, m.scope)
+		require.NotNilf(t, cmd, "ctrl+r at scope %q did not re-query", w)
 	}
 }
 
 func TestAltDTogglesDedupe(t *testing.T) {
 	f := &fakeQuerier{resp: mkResp(mkRows("ls"))}
 	m := NewModel(f, Options{})
-	if !m.dedupe {
-		t.Fatal("dedupe default should be on")
-	}
+	require.True(t, m.dedupe, "dedupe default should be on")
 
 	m, cmd := step(t, m, key("alt+d"))
 	cmd()
-	if m.dedupe {
-		t.Error("alt+d did not turn dedupe off")
-	}
-	if f.last().Dedupe {
-		t.Error("re-query after toggle should have Dedupe=false")
-	}
-	if !strings.Contains(strip(m.View()), "dups shown") {
-		t.Error("status line should show 'dups shown' when dedupe is off")
-	}
+	require.False(t, m.dedupe, "alt+d did not turn dedupe off")
+	require.False(t, f.last().Dedupe, "re-query after toggle should have Dedupe=false")
+	require.Contains(t, strip(m.View()), "dups shown")
 
 	m, cmd = step(t, m, key("alt+d"))
 	cmd()
-	if !m.dedupe {
-		t.Error("second alt+d did not turn dedupe back on")
-	}
-	if !f.last().Dedupe {
-		t.Error("re-query after second toggle should have Dedupe=true")
-	}
+	require.True(t, m.dedupe, "second alt+d did not turn dedupe back on")
+	require.True(t, f.last().Dedupe, "re-query after second toggle should have Dedupe=true")
 }
 
 func TestEnterReturnsSelected(t *testing.T) {
@@ -247,21 +212,19 @@ func TestEnterReturnsSelected(t *testing.T) {
 	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("cmd-a", "cmd-b", "cmd-c"))})
 
 	// First row on plain Enter.
-	if tm, _ := m.Update(key("enter")); tm.(Model).accepted != "cmd-a" || !tm.(Model).accept {
-		t.Fatalf("enter on first row = %q accept=%v, want cmd-a true", tm.(Model).accepted, tm.(Model).accept)
-	}
+	tm, _ := m.Update(key("enter"))
+	res := tm.(Model)
+	require.Equalf(t, "cmd-a", res.accepted, "enter on first row = %q accept=%v, want cmd-a true", res.accepted, res.accept)
+	require.Truef(t, res.accept, "enter on first row = %q accept=%v, want cmd-a true", res.accepted, res.accept)
 
 	// Move down twice, then Enter picks the non-first selection.
 	m, _ = step(t, m, key("down"))
 	m, _ = step(t, m, key("ctrl+n"))
-	tm, _ := m.Update(key("enter"))
-	res := tm.(Model)
-	if !res.accept || res.accepted != "cmd-c" {
-		t.Fatalf("enter after two downs = %q accept=%v, want cmd-c true", res.accepted, res.accept)
-	}
-	if !res.done {
-		t.Error("accepting should mark the model done")
-	}
+	tm, _ = m.Update(key("enter"))
+	res = tm.(Model)
+	require.Truef(t, res.accept, "enter after two downs = %q accept=%v, want cmd-c true", res.accepted, res.accept)
+	require.Equalf(t, "cmd-c", res.accepted, "enter after two downs = %q accept=%v, want cmd-c true", res.accepted, res.accept)
+	require.True(t, res.done, "accepting should mark the model done")
 }
 
 func TestEscCancels(t *testing.T) {
@@ -271,13 +234,11 @@ func TestEscCancels(t *testing.T) {
 
 	tm, _ := m.Update(key("esc"))
 	res := tm.(Model)
-	if res.accept || !res.cancel || !res.done {
-		t.Fatalf("esc: accept=%v cancel=%v done=%v, want false true true", res.accept, res.cancel, res.done)
-	}
+	require.Falsef(t, res.accept, "esc: accept=%v cancel=%v done=%v, want false true true", res.accept, res.cancel, res.done)
+	require.Truef(t, res.cancel, "esc: accept=%v cancel=%v done=%v, want false true true", res.accept, res.cancel, res.done)
+	require.Truef(t, res.done, "esc: accept=%v cancel=%v done=%v, want false true true", res.accept, res.cancel, res.done)
 	// Done model renders nothing so the panel clears.
-	if res.View() != "" {
-		t.Errorf("done model View = %q, want empty", res.View())
-	}
+	require.Empty(t, res.View())
 }
 
 func TestWindowingSlides(t *testing.T) {
@@ -294,20 +255,14 @@ func TestWindowingSlides(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		m, _ = step(t, m, key("down"))
 	}
-	if m.sel != 20 {
-		t.Fatalf("sel = %d, want 20", m.sel)
-	}
+	require.Equal(t, 20, m.sel)
 
 	out := strip(m.View())
 	for _, want := range []string{"row-011", "row-020"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("view missing visible %s:\n%s", want, out)
-		}
+		require.Containsf(t, out, want, "view missing visible %s:\n%s", want, out)
 	}
 	for _, absent := range []string{"row-000", "row-010", "row-021", "row-029"} {
-		if strings.Contains(out, absent) {
-			t.Errorf("view shows out-of-window %s:\n%s", absent, out)
-		}
+		require.NotContainsf(t, out, absent, "view shows out-of-window %s:\n%s", absent, out)
 	}
 }
 
@@ -321,12 +276,8 @@ func TestHighlightRendered(t *testing.T) {
 	// profile, so lipgloss renders plain): assert the command and the matched
 	// term survive rendering, in order.
 	out := strip(m.View())
-	if !strings.Contains(out, "run foo now") {
-		t.Errorf("view missing highlighted command:\n%s", out)
-	}
-	if i := strings.Index(out, "foo"); i < 0 {
-		t.Errorf("matched term not present in rendered command:\n%s", out)
-	}
+	require.Containsf(t, out, "run foo now", "view missing highlighted command:\n%s", out)
+	require.GreaterOrEqualf(t, strings.Index(out, "foo"), 0, "matched term not present in rendered command:\n%s", out)
 }
 
 func TestTruncationRespectsWidth(t *testing.T) {
@@ -339,9 +290,7 @@ func TestTruncationRespectsWidth(t *testing.T) {
 	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows(long, long))})
 
 	for _, line := range strings.Split(m.View(), "\n") {
-		if got := lipgloss.Width(line); got > w {
-			t.Errorf("line width %d > %d: %q", got, w, strip(line))
-		}
+		require.LessOrEqualf(t, lipgloss.Width(line), w, "line width %d > %d: %q", lipgloss.Width(line), w, strip(line))
 	}
 }
 
@@ -352,12 +301,8 @@ func TestMultilineCommandCollapsed(t *testing.T) {
 	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("for i in 1 2\ndo\n  echo $i\ndone"))})
 
 	out := strip(m.View())
-	if !strings.Contains(out, "⏎") {
-		t.Errorf("multiline command should show a ⏎ marker:\n%s", out)
-	}
-	if strings.Contains(out, "\n  echo") {
-		t.Errorf("continuation indentation should be squeezed:\n%s", out)
-	}
+	require.Containsf(t, out, "⏎", "multiline command should show a ⏎ marker:\n%s", out)
+	require.NotContainsf(t, out, "\n  echo", "continuation indentation should be squeezed:\n%s", out)
 }
 
 func TestDaemonUnreachableKeepsRows(t *testing.T) {
@@ -366,12 +311,9 @@ func TestDaemonUnreachableKeepsRows(t *testing.T) {
 	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("cmd-a"))})
 	m, _ = step(t, m, queryResultMsg{seq: 2, err: errors.New("dial: connection refused")})
 
-	if len(m.rows) != 1 || m.rows[0].Cmd != "cmd-a" {
-		t.Fatalf("rows lost after error: %+v", m.rows)
-	}
-	if !strings.Contains(strip(m.View()), "daemon unreachable") {
-		t.Errorf("status should show daemon unreachable:\n%s", strip(m.View()))
-	}
+	require.Lenf(t, m.rows, 1, "rows lost after error: %+v", m.rows)
+	require.Equalf(t, "cmd-a", m.rows[0].Cmd, "rows lost after error: %+v", m.rows)
+	require.Containsf(t, strip(m.View()), "daemon unreachable", "status should show daemon unreachable:\n%s", strip(m.View()))
 }
 
 func TestRemoteOffHint(t *testing.T) {
@@ -382,68 +324,46 @@ func TestRemoteOffHint(t *testing.T) {
 	resp.Remote = proto.RemoteInfo{State: proto.RemoteOff}
 	m, _ = step(t, m, queryResultMsg{seq: 5, resp: resp})
 
-	if !strings.Contains(strip(m.View()), "sync not configured") {
-		t.Errorf("all-scope + RemoteOff should hint sync not configured:\n%s", strip(m.View()))
-	}
+	require.Containsf(t, strip(m.View()), "sync not configured", "all-scope + RemoteOff should hint sync not configured:\n%s", strip(m.View()))
 }
 
 func TestVimSearchEscToNormal(t *testing.T) {
 	f := &fakeQuerier{}
 	m := NewModel(f, Options{Keymap: "vim"})
 	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("cmd-a", "cmd-b", "cmd-c"))})
-	if !m.vim {
-		t.Fatal("vim mode should be enabled from Options.Keymap")
-	}
+	require.True(t, m.vim, "vim mode should be enabled from Options.Keymap")
 
 	// First Esc enters the normal sub-mode instead of cancelling.
 	m, _ = step(t, m, key("esc"))
-	if m.cancel || m.done {
-		t.Fatalf("first esc cancelled: cancel=%v done=%v, want false/false", m.cancel, m.done)
-	}
-	if !m.normal {
-		t.Fatal("first esc did not enter the normal sub-mode")
-	}
+	require.Falsef(t, m.cancel, "first esc cancelled: cancel=%v done=%v, want false/false", m.cancel, m.done)
+	require.Falsef(t, m.done, "first esc cancelled: cancel=%v done=%v, want false/false", m.cancel, m.done)
+	require.True(t, m.normal, "first esc did not enter the normal sub-mode")
 
 	// j/k navigate results while in normal mode.
 	m, _ = step(t, m, key("j"))
-	if m.sel != 1 {
-		t.Fatalf("j: sel = %d, want 1", m.sel)
-	}
+	require.Equal(t, 1, m.sel)
 	m, _ = step(t, m, key("j"))
 	m, _ = step(t, m, key("k"))
-	if m.sel != 1 {
-		t.Fatalf("j,j,k: sel = %d, want 1", m.sel)
-	}
+	require.Equal(t, 1, m.sel)
 
 	// An unmapped key in normal mode must NOT edit the filter text.
 	m, _ = step(t, m, key("z"))
-	if m.ti.Value() != "" {
-		t.Fatalf("normal-mode 'z' edited the filter: %q", m.ti.Value())
-	}
+	require.Emptyf(t, m.ti.Value(), "normal-mode 'z' edited the filter: %q", m.ti.Value())
 
 	// `i` returns to insert/filter mode; typing edits again.
 	m, _ = step(t, m, key("i"))
-	if m.normal {
-		t.Fatal("`i` did not return to insert mode")
-	}
+	require.False(t, m.normal, "`i` did not return to insert mode")
 	m = typeStr(t, m, "x")
-	if m.ti.Value() != "x" {
-		t.Fatalf("filter after returning to insert = %q, want \"x\"", m.ti.Value())
-	}
+	require.Equal(t, "x", m.ti.Value())
 
 	// Esc back to normal, then a second Esc cancels.
 	m, _ = step(t, m, key("esc"))
-	if !m.normal {
-		t.Fatal("esc did not re-enter normal mode")
-	}
+	require.True(t, m.normal, "esc did not re-enter normal mode")
 	tm, cmd := m.Update(key("esc"))
 	res := tm.(Model)
-	if !res.cancel || !res.done {
-		t.Fatalf("second esc: cancel=%v done=%v, want true/true", res.cancel, res.done)
-	}
-	if cmd == nil {
-		t.Fatal("second esc should return tea.Quit")
-	}
+	require.Truef(t, res.cancel, "second esc: cancel=%v done=%v, want true/true", res.cancel, res.done)
+	require.Truef(t, res.done, "second esc: cancel=%v done=%v, want true/true", res.cancel, res.done)
+	require.NotNil(t, cmd, "second esc should return tea.Quit")
 }
 
 func TestConcurrentQueryCommands(t *testing.T) {
@@ -468,7 +388,5 @@ func TestConcurrentQueryCommands(t *testing.T) {
 		}(c)
 	}
 	wg.Wait()
-	if f.calls != len(cmds) {
-		t.Errorf("fake got %d calls, want %d", f.calls, len(cmds))
-	}
+	require.Equal(t, len(cmds), f.calls)
 }

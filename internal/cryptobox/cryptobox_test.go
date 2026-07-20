@@ -2,11 +2,12 @@ package cryptobox
 
 import (
 	"bytes"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // --- fixtures -------------------------------------------------------------
@@ -14,9 +15,7 @@ import (
 func mustDevice(t *testing.T) DeviceKey {
 	t.Helper()
 	k, err := GenerateDeviceKey()
-	if err != nil {
-		t.Fatalf("GenerateDeviceKey: %v", err)
-	}
+	require.NoError(t, err)
 	return k
 }
 
@@ -29,15 +28,11 @@ type openFn func(blob []byte) error
 // requires each mutation to fail to open. A pristine blob must still open.
 func assertRejectsTampering(t *testing.T, blob []byte, open openFn) {
 	t.Helper()
-	if err := open(blob); err != nil {
-		t.Fatalf("pristine blob failed to open: %v", err)
-	}
+	require.NoError(t, open(blob), "pristine blob failed to open")
 	for i := range blob {
 		mangled := bytes.Clone(blob)
 		mangled[i] ^= 0x01
-		if err := open(mangled); err == nil {
-			t.Fatalf("flipping byte %d did not fail to open", i)
-		}
+		require.Error(t, open(mangled), "flipping byte %d did not fail to open", i)
 	}
 }
 
@@ -46,16 +41,11 @@ func assertRejectsTampering(t *testing.T, blob []byte, open openFn) {
 func assertRejectsTruncation(t *testing.T, blob []byte, open openFn) {
 	t.Helper()
 	for n := 0; n < len(blob); n++ {
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					t.Fatalf("open panicked on truncation to %d bytes: %v", n, r)
-				}
-			}()
-			if err := open(blob[:n:n]); err == nil {
-				t.Fatalf("truncation to %d bytes did not fail to open", n)
-			}
-		}()
+		var err error
+		require.NotPanics(t, func() {
+			err = open(blob[:n:n])
+		}, "open panicked on truncation to %d bytes", n)
+		require.Error(t, err, "truncation to %d bytes did not fail to open", n)
 	}
 }
 
@@ -64,80 +54,52 @@ func assertRejectsTruncation(t *testing.T, blob []byte, open openFn) {
 func TestDeviceKeySaveLoadRoundTrip(t *testing.T) {
 	k := mustDevice(t)
 	path := filepath.Join(t.TempDir(), "device.key")
-	if err := k.Save(path); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
+	require.NoError(t, k.Save(path))
 
 	fi, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("Stat: %v", err)
-	}
-	if got := fi.Mode().Perm(); got != 0o600 {
-		t.Fatalf("saved mode = %04o, want 0600", got)
-	}
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), fi.Mode().Perm())
 
 	got, err := LoadDeviceKey(path)
-	if err != nil {
-		t.Fatalf("LoadDeviceKey: %v", err)
-	}
-	if got.priv != k.priv || got.pub != k.pub {
-		t.Fatal("loaded key does not match saved key")
-	}
-	if got.Public() != k.Public() {
-		t.Fatal("Public() mismatch after round trip")
-	}
+	require.NoError(t, err)
+	require.Equal(t, k.priv, got.priv, "loaded key does not match saved key")
+	require.Equal(t, k.pub, got.pub, "loaded key does not match saved key")
+	require.Equal(t, k.Public(), got.Public(), "Public() mismatch after round trip")
 }
 
 func TestLoadDeviceKeyRejectsLoosePermissions(t *testing.T) {
 	k := mustDevice(t)
 	path := filepath.Join(t.TempDir(), "device.key")
-	if err := k.Save(path); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	if err := os.Chmod(path, 0o644); err != nil {
-		t.Fatalf("Chmod: %v", err)
-	}
+	require.NoError(t, k.Save(path))
+	require.NoError(t, os.Chmod(path, 0o644))
 	_, err := LoadDeviceKey(path)
-	if !errors.Is(err, ErrKeyPerms) {
-		t.Fatalf("LoadDeviceKey err = %v, want ErrKeyPerms", err)
-	}
+	require.ErrorIs(t, err, ErrKeyPerms)
 }
 
 func TestLoadDeviceKeyRejectsCorruption(t *testing.T) {
 	k := mustDevice(t)
 	path := filepath.Join(t.TempDir(), "device.key")
-	if err := k.Save(path); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
+	require.NoError(t, k.Save(path))
 	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
+	require.NoError(t, err)
 	// Flip a byte inside the base64 payload (after the prefix) so the stored
 	// public key no longer matches the private key.
 	corrupt := bytes.Clone(raw)
 	corrupt[len(devicePrefix)+5] ^= 0x01
-	if err := os.WriteFile(path, corrupt, 0o600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-	if _, err := LoadDeviceKey(path); err == nil {
-		t.Fatal("LoadDeviceKey accepted a corrupted key")
-	}
+	require.NoError(t, os.WriteFile(path, corrupt, 0o600))
+	_, err = LoadDeviceKey(path)
+	require.Error(t, err, "LoadDeviceKey accepted a corrupted key")
 }
 
 func TestPublicFromBytes(t *testing.T) {
 	k := mustDevice(t)
 	pubSlice := k.Public()
 	got, err := PublicFromBytes(pubSlice[:])
-	if err != nil {
-		t.Fatalf("PublicFromBytes: %v", err)
-	}
-	if got != k.Public() {
-		t.Fatal("PublicFromBytes changed the key")
-	}
-	if _, err := PublicFromBytes(pubSlice[:31]); !errors.Is(err, ErrKeyLength) {
-		t.Fatalf("short key err = %v, want ErrKeyLength", err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, k.Public(), got, "PublicFromBytes changed the key")
+
+	_, err = PublicFromBytes(pubSlice[:31])
+	require.ErrorIs(t, err, ErrKeyLength)
 }
 
 // --- History Key ---------------------------------------------------------
@@ -145,38 +107,27 @@ func TestPublicFromBytes(t *testing.T) {
 func TestHKWrapUnwrapAcrossDevices(t *testing.T) {
 	a, b, c := mustDevice(t), mustDevice(t), mustDevice(t)
 	hk, err := NewHistoryKey()
-	if err != nil {
-		t.Fatalf("NewHistoryKey: %v", err)
-	}
+	require.NoError(t, err)
 
 	blob, err := WrapHK(hk, b.Public()) // sealed to B
-	if err != nil {
-		t.Fatalf("WrapHK: %v", err)
-	}
+	require.NoError(t, err)
 
 	got, err := UnwrapHK(blob, b)
-	if err != nil {
-		t.Fatalf("B UnwrapHK: %v", err)
-	}
-	if got != hk {
-		t.Fatal("B unwrapped the wrong HK")
-	}
+	require.NoError(t, err)
+	require.Equal(t, hk, got, "B unwrapped the wrong HK")
 
-	if _, err := UnwrapHK(blob, a); err == nil {
-		t.Fatal("A unwrapped a blob sealed to B")
-	}
-	if _, err := UnwrapHK(blob, c); err == nil {
-		t.Fatal("third device C unwrapped a blob sealed to B")
-	}
+	_, err = UnwrapHK(blob, a)
+	require.Error(t, err, "A unwrapped a blob sealed to B")
+
+	_, err = UnwrapHK(blob, c)
+	require.Error(t, err, "third device C unwrapped a blob sealed to B")
 }
 
 func TestHKBlobTamperAndTruncation(t *testing.T) {
 	b := mustDevice(t)
 	hk, _ := NewHistoryKey()
 	blob, err := WrapHK(hk, b.Public())
-	if err != nil {
-		t.Fatalf("WrapHK: %v", err)
-	}
+	require.NoError(t, err)
 	open := func(blob []byte) error { _, err := UnwrapHK(blob, b); return err }
 	assertRejectsTampering(t, blob, open)
 	assertRejectsTruncation(t, blob, open)
@@ -187,20 +138,12 @@ func TestHKBlobTamperAndTruncation(t *testing.T) {
 func TestDEKWrapUnwrapRoundTrip(t *testing.T) {
 	hk, _ := NewHistoryKey()
 	keyID, dek, err := NewDEK()
-	if err != nil {
-		t.Fatalf("NewDEK: %v", err)
-	}
+	require.NoError(t, err)
 	blob, err := WrapDEK(dek, hk, keyID, "dev-1", 1700000000000, 3)
-	if err != nil {
-		t.Fatalf("WrapDEK: %v", err)
-	}
+	require.NoError(t, err)
 	got, err := UnwrapDEK(blob, hk, keyID, "dev-1", 1700000000000, 3)
-	if err != nil {
-		t.Fatalf("UnwrapDEK: %v", err)
-	}
-	if got != dek {
-		t.Fatal("unwrapped DEK differs from original")
-	}
+	require.NoError(t, err)
+	require.Equal(t, dek, got, "unwrapped DEK differs from original")
 }
 
 func TestDEKWrongHKFails(t *testing.T) {
@@ -208,9 +151,8 @@ func TestDEKWrongHKFails(t *testing.T) {
 	other, _ := NewHistoryKey()
 	keyID, dek, _ := NewDEK()
 	blob, _ := WrapDEK(dek, hk, keyID, "dev-1", 42, 1)
-	if _, err := UnwrapDEK(blob, other, keyID, "dev-1", 42, 1); err == nil {
-		t.Fatal("UnwrapDEK succeeded under the wrong HK")
-	}
+	_, err := UnwrapDEK(blob, other, keyID, "dev-1", 42, 1)
+	require.Error(t, err, "UnwrapDEK succeeded under the wrong HK")
 }
 
 func TestDEKAADBinding(t *testing.T) {
@@ -236,15 +178,13 @@ func TestDEKAADBinding(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := UnwrapDEK(blob, hk, tc.keyID, tc.deviceID, tc.epoch, tc.hkVersion); err == nil {
-				t.Fatalf("changing %s did not fail authentication", tc.name)
-			}
+			_, err := UnwrapDEK(blob, hk, tc.keyID, tc.deviceID, tc.epoch, tc.hkVersion)
+			require.Error(t, err, "changing %s did not fail authentication", tc.name)
 		})
 	}
 	// Sanity: the exact parameters still open.
-	if _, err := UnwrapDEK(blob, hk, keyID, devID, epoch, hkVer); err != nil {
-		t.Fatalf("baseline UnwrapDEK failed: %v", err)
-	}
+	_, err := UnwrapDEK(blob, hk, keyID, devID, epoch, hkVer)
+	require.NoError(t, err, "baseline UnwrapDEK failed")
 }
 
 func TestDEKBlobTamperAndTruncation(t *testing.T) {
@@ -270,25 +210,18 @@ func TestRecordSealOpenRoundTrip(t *testing.T) {
 	aad := sampleAAD()
 	pt := []byte(`{"cmd":"git status","cwd":"/home/dev"}`)
 	blob, err := SealRecord(pt, dek, aad)
-	if err != nil {
-		t.Fatalf("SealRecord: %v", err)
-	}
+	require.NoError(t, err)
 	got, err := OpenRecord(blob, dek, aad)
-	if err != nil {
-		t.Fatalf("OpenRecord: %v", err)
-	}
-	if !bytes.Equal(got, pt) {
-		t.Fatalf("OpenRecord = %q, want %q", got, pt)
-	}
+	require.NoError(t, err)
+	require.Equal(t, pt, got)
 }
 
 func TestRecordWrongDEKFails(t *testing.T) {
 	_, dek, _ := NewDEK()
 	_, wrong, _ := NewDEK()
 	blob, _ := SealRecord([]byte("secret"), dek, sampleAAD())
-	if _, err := OpenRecord(blob, wrong, sampleAAD()); err == nil {
-		t.Fatal("OpenRecord succeeded under the wrong DEK")
-	}
+	_, err := OpenRecord(blob, wrong, sampleAAD())
+	require.Error(t, err, "OpenRecord succeeded under the wrong DEK")
 }
 
 func TestRecordAADBinding(t *testing.T) {
@@ -306,9 +239,8 @@ func TestRecordAADBinding(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			aad := base
 			f(&aad)
-			if _, err := OpenRecord(blob, dek, aad); err == nil {
-				t.Fatalf("changing %s did not fail authentication", name)
-			}
+			_, err := OpenRecord(blob, dek, aad)
+			require.Error(t, err, "changing %s did not fail authentication", name)
 		})
 	}
 }
@@ -330,15 +262,13 @@ func TestSealIsNondeterministic(t *testing.T) {
 	pt := []byte("same plaintext")
 	b1, _ := SealRecord(pt, dek, aad)
 	b2, _ := SealRecord(pt, dek, aad)
-	if bytes.Equal(b1, b2) {
-		t.Fatal("two seals of the same plaintext produced identical blobs (nonce reuse)")
-	}
+	require.NotEqual(t, b1, b2, "two seals of the same plaintext produced identical blobs (nonce reuse)")
+
 	// Both must still open to the same plaintext.
 	for _, b := range [][]byte{b1, b2} {
 		got, err := OpenRecord(b, dek, aad)
-		if err != nil || !bytes.Equal(got, pt) {
-			t.Fatalf("re-open failed: got %q err %v", got, err)
-		}
+		require.NoError(t, err)
+		require.Equal(t, pt, got)
 	}
 }
 
@@ -349,9 +279,7 @@ func TestEpochStart(t *testing.T) {
 	const sixH = 6 * time.Hour
 	mustParse := func(s string) time.Time {
 		ts, err := time.Parse(time.RFC3339, s)
-		if err != nil {
-			t.Fatalf("parse %s: %v", s, err)
-		}
+		require.NoError(t, err, "parse %s", s)
 		return ts
 	}
 	msOf := func(s string) int64 { return mustParse(s).UnixMilli() }
@@ -373,15 +301,12 @@ func TestEpochStart(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := EpochStart(tc.t, tc.width); got != tc.want {
-				t.Fatalf("EpochStart = %d, want %d", got, tc.want)
-			}
+			require.Equal(t, tc.want, EpochStart(tc.t, tc.width))
 		})
 	}
 
 	// A record's epoch start is stable across the whole window and identical
 	// for two clocks reading different instants within it.
-	if EpochStart(mustParse("2026-07-20T00:00:01Z"), day) != EpochStart(mustParse("2026-07-20T23:00:00Z"), day) {
-		t.Fatal("EpochStart not stable across a 24h window")
-	}
+	require.Equal(t, EpochStart(mustParse("2026-07-20T00:00:01Z"), day), EpochStart(mustParse("2026-07-20T23:00:00Z"), day),
+		"EpochStart not stable across a 24h window")
 }

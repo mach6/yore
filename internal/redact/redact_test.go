@@ -4,15 +4,15 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // mustFilter builds a Filter and fails the test on any compile error.
 func mustFilter(t *testing.T, userPatterns, ignoreDirs []string) *Filter {
 	t.Helper()
 	f, errs := New(userPatterns, ignoreDirs)
-	if len(errs) != 0 {
-		t.Fatalf("unexpected New errors: %v", errs)
-	}
+	require.Empty(t, errs, "unexpected New errors")
 	return f
 }
 
@@ -74,12 +74,8 @@ func TestTruePositives(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if !f.Sensitive(tc.cmd) {
-				t.Fatalf("Sensitive=false, want true\n  cmd: %s", tc.cmd)
-			}
-			if got := f.Reason(tc.cmd); got != tc.want {
-				t.Fatalf("Reason=%q, want %q\n  cmd: %s", got, tc.want, tc.cmd)
-			}
+			require.True(t, f.Sensitive(tc.cmd), "cmd: %s", tc.cmd)
+			require.Equal(t, tc.want, f.Reason(tc.cmd), "cmd: %s", tc.cmd)
 		})
 	}
 }
@@ -123,21 +119,16 @@ func TestFalsePositives(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if f.Sensitive(tc.cmd) {
-				t.Fatalf("Sensitive=true (rule %q), want false\n  cmd: %s", f.Reason(tc.cmd), tc.cmd)
-			}
+			require.False(t, f.Sensitive(tc.cmd), "cmd: %s (rule %q)", tc.cmd, f.Reason(tc.cmd))
 		})
 	}
 }
 
 func TestReasonEmptyOnClean(t *testing.T) {
 	f := mustFilter(t, nil, nil)
-	if got := f.Reason("git status"); got != "" {
-		t.Fatalf("Reason(clean)=%q, want empty", got)
-	}
-	if f.Sensitive("") || f.Reason("") != "" {
-		t.Fatalf("empty command should be clean")
-	}
+	require.Empty(t, f.Reason("git status"), "Reason(clean)")
+	require.False(t, f.Sensitive(""), "empty command should be clean")
+	require.Empty(t, f.Reason(""), "empty command should be clean")
 }
 
 func TestSkipDir(t *testing.T) {
@@ -162,9 +153,7 @@ func TestSkipDir(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := f.SkipDir(tc.cwd); got != tc.want {
-				t.Fatalf("SkipDir(%q)=%v, want %v", tc.cwd, got, tc.want)
-			}
+			require.Equal(t, tc.want, f.SkipDir(tc.cwd))
 		})
 	}
 }
@@ -174,97 +163,61 @@ func TestSkipDir(t *testing.T) {
 func TestSkipDirRoot(t *testing.T) {
 	f := mustFilter(t, nil, []string{"/"})
 	for _, cwd := range []string{"/", "/home/y/work", "/opt", "/a/b/c"} {
-		if !f.SkipDir(cwd) {
-			t.Fatalf("with ignore dir \"/\", SkipDir(%q) should be true", cwd)
-		}
+		t.Run(cwd, func(t *testing.T) {
+			require.True(t, f.SkipDir(cwd), "with ignore dir \"/\", SkipDir should be true")
+		})
 	}
-	if f.SkipDir("") {
-		t.Fatal("empty cwd is never skipped, even under a \"/\" ignore dir")
-	}
+	require.False(t, f.SkipDir(""), "empty cwd is never skipped, even under a \"/\" ignore dir")
 }
 
 // TestSkipDirNoRoot isolates the segment-boundary logic without the catch-all
 // "/" entry so "unrelated path" genuinely means not-skipped.
 func TestSkipDirNoRoot(t *testing.T) {
 	f := mustFilter(t, nil, []string{"/home/x/secrets"})
-	if f.SkipDir("/home/x/secretsandmore") {
-		t.Fatal("/home/x/secretsandmore must not be skipped by /home/x/secrets")
-	}
-	if f.SkipDir("/home/y/work") {
-		t.Fatal("unrelated path must not be skipped")
-	}
-	if !f.SkipDir("/home/x/secrets/deep/nest") {
-		t.Fatal("child of ignore dir must be skipped")
-	}
-	if f.SkipDir("") {
-		t.Fatal("empty cwd must not be skipped")
-	}
+	require.False(t, f.SkipDir("/home/x/secretsandmore"), "/home/x/secretsandmore must not be skipped by /home/x/secrets")
+	require.False(t, f.SkipDir("/home/y/work"), "unrelated path must not be skipped")
+	require.True(t, f.SkipDir("/home/x/secrets/deep/nest"), "child of ignore dir must be skipped")
+	require.False(t, f.SkipDir(""), "empty cwd must not be skipped")
 }
 
 func TestNoIgnoreDirs(t *testing.T) {
 	f := mustFilter(t, nil, nil)
-	if f.SkipDir("/anything/at/all") {
-		t.Fatal("with no ignore dirs, nothing is skipped")
-	}
+	require.False(t, f.SkipDir("/anything/at/all"), "with no ignore dirs, nothing is skipped")
 }
 
 func TestUserPatternsValid(t *testing.T) {
 	f := mustFilter(t, []string{`INTERNAL-[0-9]{6}`, `(?i)my-corp-secret`}, nil)
 
-	if !f.Sensitive("deploy --ticket INTERNAL-004217") {
-		t.Fatal("valid user pattern should match")
-	}
-	if got := f.Reason("deploy --ticket INTERNAL-004217"); got != "user:INTERNAL-[0-9]{6}" {
-		t.Fatalf("Reason=%q, want user-pattern name", got)
-	}
-	if !f.Sensitive("echo MY-CORP-SECRET") {
-		t.Fatal("case-insensitive user pattern should match")
-	}
+	require.True(t, f.Sensitive("deploy --ticket INTERNAL-004217"), "valid user pattern should match")
+	require.Equal(t, "user:INTERNAL-[0-9]{6}", f.Reason("deploy --ticket INTERNAL-004217"))
+	require.True(t, f.Sensitive("echo MY-CORP-SECRET"), "case-insensitive user pattern should match")
 	// Built-ins still work alongside user patterns.
-	if !f.Sensitive("export DB_PASSWORD=hunter2") {
-		t.Fatal("built-ins must still fire with user patterns present")
-	}
+	require.True(t, f.Sensitive("export DB_PASSWORD=hunter2"), "built-ins must still fire with user patterns present")
 	// A command matching neither is clean.
-	if f.Sensitive("git status") {
-		t.Fatal("clean command should not match")
-	}
+	require.False(t, f.Sensitive("git status"), "clean command should not match")
 }
 
 func TestUserPatternsInvalidReported(t *testing.T) {
 	f, errs := New([]string{`valid[0-9]+`, `(unclosed`, `also[a-`}, nil)
-	if len(errs) != 2 {
-		t.Fatalf("want 2 errors for 2 bad patterns, got %d: %v", len(errs), errs)
-	}
+	require.Len(t, errs, 2, "want 2 errors for 2 bad patterns")
 	for _, e := range errs {
-		if !strings.Contains(e.Error(), "invalid user pattern") {
-			t.Fatalf("error missing context: %v", e)
-		}
+		require.Contains(t, e.Error(), "invalid user pattern", "error missing context: %v", e)
 	}
 	// The valid one is still active; the invalid ones are skipped, not fatal.
-	if !f.Sensitive("id valid123") {
-		t.Fatal("valid pattern should still be compiled after skipping bad ones")
-	}
-	if f.Sensitive("nothing here") {
-		t.Fatal("skipped bad patterns must not match anything")
-	}
+	require.True(t, f.Sensitive("id valid123"), "valid pattern should still be compiled after skipping bad ones")
+	require.False(t, f.Sensitive("nothing here"), "skipped bad patterns must not match anything")
 }
 
 func TestEmptyInputs(t *testing.T) {
 	f, errs := New(nil, nil)
-	if len(errs) != 0 || f == nil {
-		t.Fatalf("New(nil,nil) should succeed: f=%v errs=%v", f, errs)
-	}
+	require.Empty(t, errs, "New(nil,nil) should succeed")
+	require.NotNil(t, f, "New(nil,nil) should succeed")
+
 	// Blank/whitespace patterns and dirs are ignored, not errors.
 	f2, errs2 := New([]string{"", "   "}, []string{"", "  "})
-	if len(errs2) != 0 {
-		t.Fatalf("blank inputs should not error: %v", errs2)
-	}
-	if len(f2.rules) != len(builtins) {
-		t.Fatalf("blank user patterns should add no rules: got %d", len(f2.rules))
-	}
-	if len(f2.dirs) != 0 {
-		t.Fatalf("blank dirs should add no ignore dirs: got %d", len(f2.dirs))
-	}
+	require.Empty(t, errs2, "blank inputs should not error")
+	require.Len(t, f2.rules, len(builtins), "blank user patterns should add no rules")
+	require.Empty(t, f2.dirs, "blank dirs should add no ignore dirs")
 }
 
 // TestBuiltinsCompile is a guard: every built-in name is unique and non-empty,
@@ -272,22 +225,14 @@ func TestEmptyInputs(t *testing.T) {
 func TestBuiltinsCompile(t *testing.T) {
 	seen := map[string]bool{}
 	for _, r := range builtins {
-		if r.name == "" {
-			t.Fatal("built-in with empty name")
-		}
-		if seen[r.name] {
-			t.Fatalf("duplicate built-in name %q", r.name)
-		}
+		require.NotEmpty(t, r.name, "built-in with empty name")
+		require.False(t, seen[r.name], "duplicate built-in name %q", r.name)
 		seen[r.name] = true
-		if r.re == nil {
-			t.Fatalf("built-in %q has nil regexp", r.name)
-		}
+		require.NotNil(t, r.re, "built-in %q has nil regexp", r.name)
 		// Fold rules must carry lowercase hints (containsFold assumes it).
 		if r.fold {
 			for _, h := range r.hints {
-				if h != strings.ToLower(h) {
-					t.Fatalf("fold rule %q has non-lowercase hint %q", r.name, h)
-				}
+				require.Equal(t, strings.ToLower(h), h, "fold rule %q has non-lowercase hint %q", r.name, h)
 			}
 		}
 	}
@@ -308,9 +253,9 @@ func TestContainsFold(t *testing.T) {
 		{"MixedCASE", "mixedcase", true},
 	}
 	for _, tc := range cases {
-		if got := containsFold(tc.s, tc.sub); got != tc.want {
-			t.Fatalf("containsFold(%q,%q)=%v, want %v", tc.s, tc.sub, got, tc.want)
-		}
+		t.Run(tc.s+"/"+tc.sub, func(t *testing.T) {
+			require.Equal(t, tc.want, containsFold(tc.s, tc.sub))
+		})
 	}
 }
 
@@ -320,21 +265,16 @@ func TestContainsFold(t *testing.T) {
 func TestHintGating(t *testing.T) {
 	f := mustFilter(t, nil, nil)
 	// Contains "AKIA"-ish but wrong shape (too short) -> no match.
-	if f.Sensitive("echo AKIA123") {
-		t.Fatal("short AKIA-like string must not match aws-access-key")
-	}
+	require.False(t, f.Sensitive("echo AKIA123"), "short AKIA-like string must not match aws-access-key")
 	// A real regexp sanity: our built-in count is what we expect (catch drift).
-	if len(builtins) != 17 {
-		t.Fatalf("expected 17 built-in rules, got %d", len(builtins))
-	}
+	require.Len(t, builtins, 17, "expected 17 built-in rules")
 }
 
 // Sanity: ensure our patterns are valid Go regexp (defense in depth beyond
 // MustCompile at init, in case specs are edited).
 func TestSpecsAreValidRegexp(t *testing.T) {
 	for _, r := range builtins {
-		if _, err := regexp.Compile(r.re.String()); err != nil {
-			t.Fatalf("rule %q regexp invalid: %v", r.name, err)
-		}
+		_, err := regexp.Compile(r.re.String())
+		require.NoError(t, err, "rule %q regexp invalid", r.name)
 	}
 }

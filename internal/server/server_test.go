@@ -13,6 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"yore/internal/reqsign"
 	"yore/internal/wire"
 )
@@ -64,6 +67,46 @@ func (c *testClient) send(method, path string, body []byte, sign bool) (int, []b
 	return c.roundtrip(req)
 }
 
+// sendConcurrent performs a signed request and returns the outcome purely as
+// values (it never touches c.t), so it is safe to call from a spawned
+// goroutine: testify's FailNow is illegal off the main test goroutine, so the
+// caller ships the result back and asserts on the main goroutine. It mirrors
+// do -> send(sign=true).
+func (c *testClient) sendConcurrent(method, path string, body any) (int, []byte, error) {
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return 0, nil, fmt.Errorf("marshal: %w", err)
+	}
+	var r io.Reader
+	if raw != nil {
+		r = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequest(method, c.base+path, r)
+	if err != nil {
+		return 0, nil, fmt.Errorf("new request: %w", err)
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	if c.priv != nil {
+		hdrs, err := reqsign.Sign(c.devID, func(b []byte) []byte { return ed25519.Sign(c.priv, b) },
+			method, req.URL.RequestURI(), raw, time.Now())
+		if err != nil {
+			return 0, nil, fmt.Errorf("sign: %w", err)
+		}
+		for k, v := range hdrs {
+			req.Header.Set(k, v)
+		}
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, nil, fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, data, nil
+}
+
 // sendSignedAt signs the request at a specific clock time (used to forge a
 // stale-timestamp request).
 func (c *testClient) sendSignedAt(method, path string, body []byte, now time.Time) (int, []byte) {
@@ -100,9 +143,7 @@ func (c *testClient) newRequest(method, path string, body []byte) *http.Request 
 		r = bytes.NewReader(body)
 	}
 	req, err := http.NewRequest(method, c.base+path, r)
-	if err != nil {
-		c.t.Fatalf("new request: %v", err)
-	}
+	require.NoError(c.t, err, "new request")
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
@@ -113,18 +154,14 @@ func (c *testClient) signHeaders(req *http.Request, method string, body []byte, 
 	c.t.Helper()
 	hdrs, err := reqsign.Sign(c.devID, func(b []byte) []byte { return ed25519.Sign(c.priv, b) },
 		method, req.URL.RequestURI(), body, now)
-	if err != nil {
-		c.t.Fatalf("sign: %v", err)
-	}
+	require.NoError(c.t, err, "sign")
 	return hdrs
 }
 
 func (c *testClient) roundtrip(req *http.Request) (int, []byte) {
 	c.t.Helper()
 	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		c.t.Fatalf("do request: %v", err)
-	}
+	require.NoError(c.t, err, "do request")
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, data
@@ -136,18 +173,14 @@ func marshal(t *testing.T, body any) []byte {
 		return nil
 	}
 	b, err := json.Marshal(body)
-	if err != nil {
-		t.Fatalf("marshal body: %v", err)
-	}
+	require.NoError(t, err, "marshal body")
 	return b
 }
 
 func setup(t *testing.T) (*Server, *testClient) {
 	t.Helper()
 	s, err := New(Options{DBPath: filepath.Join(t.TempDir(), "sync.db"), Token: "tok"})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	require.NoError(t, err, "New")
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(func() {
 		srv.Close()
@@ -159,9 +192,7 @@ func setup(t *testing.T) (*Server, *testClient) {
 func mustJSON[T any](t *testing.T, data []byte) T {
 	t.Helper()
 	var v T
-	if err := json.Unmarshal(data, &v); err != nil {
-		t.Fatalf("unmarshal %T from %s: %v", v, data, err)
-	}
+	require.NoErrorf(t, json.Unmarshal(data, &v), "unmarshal %T from %s", v, data)
 	return v
 }
 
@@ -186,14 +217,10 @@ func pubKey() []byte { return make([]byte, 32) }
 func registerDevice(t *testing.T, base *testClient, id string) *testClient {
 	t.Helper()
 	pub, priv, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		t.Fatalf("genkey: %v", err)
-	}
+	require.NoError(t, err, "genkey")
 	dc := base.withKey(id, priv)
 	status, body := dc.do("POST", "/v1/devices", wire.RegisterReq{ID: id, Name: id, PubKey: pubKey(), SignKey: pub})
-	if status != http.StatusOK {
-		t.Fatalf("register %s: status %d body %s", id, status, body)
-	}
+	require.Equalf(t, http.StatusOK, status, "register %s: body %s", id, body)
 	return dc
 }
 
@@ -203,9 +230,7 @@ func activateDevice(t *testing.T, signer *testClient, id string, version int) {
 	t.Helper()
 	req := wire.ActivateReq{Wrap: wire.HKWrap{DeviceID: id, HKVersion: version, Blob: []byte("hk-" + id)}}
 	status, body := signer.do("POST", "/v1/devices/"+id+"/activate", req)
-	if status != http.StatusOK {
-		t.Fatalf("activate %s: status %d body %s", id, status, body)
-	}
+	require.Equalf(t, http.StatusOK, status, "activate %s: body %s", id, body)
 }
 
 // bootstrapActive registers id and activates it as the first (bootstrap) device,
@@ -221,9 +246,7 @@ func bootstrapActive(t *testing.T, base *testClient, id string) *testClient {
 
 func TestNewRefusesEmptyToken(t *testing.T) {
 	_, err := New(Options{DBPath: filepath.Join(t.TempDir(), "x.db"), Token: ""})
-	if err == nil {
-		t.Fatal("expected error for empty token")
-	}
+	require.Error(t, err, "expected error for empty token")
 }
 
 // ---- auth (bearer token; runs before signatures) ----
@@ -233,9 +256,8 @@ func TestAuth(t *testing.T) {
 
 	// Health is open.
 	noAuth := &testClient{t: t, base: c.base, token: ""}
-	if status, _ := noAuth.do("GET", "/v1/health", nil); status != http.StatusOK {
-		t.Fatalf("health no-auth: got %d", status)
-	}
+	status, _ := noAuth.do("GET", "/v1/health", nil)
+	require.Equal(t, http.StatusOK, status, "health no-auth")
 
 	wrong := &testClient{t: t, base: c.base, token: "nope"}
 	routes := []struct{ method, path string }{
@@ -252,12 +274,14 @@ func TestAuth(t *testing.T) {
 		{"POST", "/v1/keys/rotate"},
 	}
 	for _, r := range routes {
-		if status, _ := noAuth.do(r.method, r.path, nil); status != http.StatusUnauthorized {
-			t.Errorf("no header %s %s: got %d want 401", r.method, r.path, status)
-		}
-		if status, _ := wrong.do(r.method, r.path, nil); status != http.StatusUnauthorized {
-			t.Errorf("wrong token %s %s: got %d want 401", r.method, r.path, status)
-		}
+		t.Run(r.method+" "+r.path, func(t *testing.T) {
+			// Both the no-header and wrong-token cases are independent checks, so
+			// accumulate them with assert rather than fail-fast.
+			status, _ := noAuth.do(r.method, r.path, nil)
+			assert.Equal(t, http.StatusUnauthorized, status, "no header")
+			status, _ = wrong.do(r.method, r.path, nil)
+			assert.Equal(t, http.StatusUnauthorized, status, "wrong token")
+		})
 	}
 }
 
@@ -270,29 +294,24 @@ func TestRegisterSignature(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	dc := c.withKey("A", priv)
 	status, body := dc.do("POST", "/v1/devices", wire.RegisterReq{ID: "A", Name: "A", PubKey: pubKey(), SignKey: pub})
-	if status != http.StatusOK {
-		t.Fatalf("register: status %d body %s", status, body)
-	}
-	if d := mustJSON[wire.Device](t, body); d.Status != wire.DevicePending || !bytes.Equal(d.SignKey, pub) {
-		t.Fatalf("register: status=%q signKeyStored=%v", d.Status, bytes.Equal(d.SignKey, pub))
-	}
+	require.Equalf(t, http.StatusOK, status, "register: body %s", body)
+	d := mustJSON[wire.Device](t, body)
+	require.Equal(t, wire.DevicePending, d.Status, "register status")
+	require.True(t, bytes.Equal(d.SignKey, pub), "register: sign key stored")
 	_ = s
 
 	// No signature (valid token) => 401.
-	if status, _ := c.do("POST", "/v1/devices", wire.RegisterReq{ID: "B", Name: "B", PubKey: pubKey(), SignKey: pub}); status != http.StatusUnauthorized {
-		t.Fatalf("unsigned register: got %d want 401", status)
-	}
+	status, _ = c.do("POST", "/v1/devices", wire.RegisterReq{ID: "B", Name: "B", PubKey: pubKey(), SignKey: pub})
+	require.Equal(t, http.StatusUnauthorized, status, "unsigned register")
 
 	// sign_key not 32 bytes => 400.
-	if status, _ := c.do("POST", "/v1/devices", wire.RegisterReq{ID: "C", PubKey: pubKey(), SignKey: []byte("short")}); status != http.StatusBadRequest {
-		t.Fatalf("short sign_key: got %d want 400", status)
-	}
+	status, _ = c.do("POST", "/v1/devices", wire.RegisterReq{ID: "C", PubKey: pubKey(), SignKey: []byte("short")})
+	require.Equal(t, http.StatusBadRequest, status, "short sign_key")
 
 	// Header device id != body id => rejected. dc2 signs as "A" but claims id "D".
 	dc2 := c.withKey("A", priv)
-	if status, _ := dc2.do("POST", "/v1/devices", wire.RegisterReq{ID: "D", PubKey: pubKey(), SignKey: pub}); status != http.StatusUnauthorized {
-		t.Fatalf("device-id mismatch register: got %d want 401", status)
-	}
+	status, _ = dc2.do("POST", "/v1/devices", wire.RegisterReq{ID: "D", PubKey: pubKey(), SignKey: pub})
+	require.Equal(t, http.StatusUnauthorized, status, "device-id mismatch register")
 }
 
 // ---- push signature ----
@@ -304,31 +323,26 @@ func TestPushSignature(t *testing.T) {
 
 	// Signed push from an active device succeeds.
 	hdrs := dev.signOnly("POST", "/v1/records", pushBody)
-	if status, body := dev.sendWithHeaders("POST", "/v1/records", pushBody, hdrs); status != http.StatusOK {
-		t.Fatalf("signed push: status %d body %s", status, body)
-	}
+	status, body := dev.sendWithHeaders("POST", "/v1/records", pushBody, hdrs)
+	require.Equalf(t, http.StatusOK, status, "signed push: body %s", body)
 	// Same request replayed (same nonce) => 401.
-	if status, _ := dev.sendWithHeaders("POST", "/v1/records", pushBody, hdrs); status != http.StatusUnauthorized {
-		t.Fatalf("replayed push: got %d want 401", status)
-	}
+	status, _ = dev.sendWithHeaders("POST", "/v1/records", pushBody, hdrs)
+	require.Equal(t, http.StatusUnauthorized, status, "replayed push")
 
 	// Unsigned push (valid token, no signature) => 401.
-	if status, _ := c.do("POST", "/v1/records", wire.PushReq{HostID: "hostA", Records: mkRecords(10, 1)}); status != http.StatusUnauthorized {
-		t.Fatalf("unsigned push: got %d want 401", status)
-	}
+	status, _ = c.do("POST", "/v1/records", wire.PushReq{HostID: "hostA", Records: mkRecords(10, 1)})
+	require.Equal(t, http.StatusUnauthorized, status, "unsigned push")
 
 	// Push signed by a different key than registered => 401.
 	_, wrongPriv, _ := ed25519.GenerateKey(nil)
 	bad := c.withKey("pusher", wrongPriv)
-	if status, _ := bad.do("POST", "/v1/records", wire.PushReq{HostID: "hostA", Records: mkRecords(20, 1)}); status != http.StatusUnauthorized {
-		t.Fatalf("wrong-key push: got %d want 401", status)
-	}
+	status, _ = bad.do("POST", "/v1/records", wire.PushReq{HostID: "hostA", Records: mkRecords(20, 1)})
+	require.Equal(t, http.StatusUnauthorized, status, "wrong-key push")
 
 	// Push with a stale timestamp => 401.
 	stale := marshal(t, wire.PushReq{HostID: "hostA", Records: mkRecords(30, 1)})
-	if status, _ := dev.sendSignedAt("POST", "/v1/records", stale, time.Now().Add(-2*reqsign.Skew)); status != http.StatusUnauthorized {
-		t.Fatalf("stale-timestamp push: got %d want 401", status)
-	}
+	status, _ = dev.sendSignedAt("POST", "/v1/records", stale, time.Now().Add(-2*reqsign.Skew))
+	require.Equal(t, http.StatusUnauthorized, status, "stale-timestamp push")
 }
 
 func TestPushHappyAndIdempotent(t *testing.T) {
@@ -336,48 +350,50 @@ func TestPushHappyAndIdempotent(t *testing.T) {
 	dev := bootstrapActive(t, c, "pusher")
 
 	status, body := dev.do("POST", "/v1/records", wire.PushReq{HostID: "hostA", Records: mkRecords(1, 3)})
-	if status != http.StatusOK {
-		t.Fatalf("push: status %d body %s", status, body)
-	}
+	require.Equalf(t, http.StatusOK, status, "push: body %s", body)
 	resp := mustJSON[wire.PushResp](t, body)
-	if resp.Stored != 3 || resp.MaxSeq != 3 {
-		t.Fatalf("push: got stored=%d maxSeq=%d want 3/3", resp.Stored, resp.MaxSeq)
-	}
+	require.Equal(t, 3, resp.Stored, "push stored")
+	require.Equal(t, uint64(3), resp.MaxSeq, "push maxSeq")
 
 	// Re-push the same batch (fresh signature/nonce): nothing stored, MaxSeq stable.
 	status, body = dev.do("POST", "/v1/records", wire.PushReq{HostID: "hostA", Records: mkRecords(1, 3)})
-	if status != http.StatusOK {
-		t.Fatalf("re-push: status %d body %s", status, body)
-	}
+	require.Equalf(t, http.StatusOK, status, "re-push: body %s", body)
 	resp = mustJSON[wire.PushResp](t, body)
-	if resp.Stored != 0 || resp.MaxSeq != 3 {
-		t.Fatalf("re-push: got stored=%d maxSeq=%d want 0/3", resp.Stored, resp.MaxSeq)
-	}
+	require.Equal(t, 0, resp.Stored, "re-push stored")
+	require.Equal(t, uint64(3), resp.MaxSeq, "re-push maxSeq")
 }
 
 func TestPushValidation(t *testing.T) {
 	_, c := setup(t)
 	dev := bootstrapActive(t, c, "pusher")
 
-	// Missing host_id.
-	if status, _ := dev.do("POST", "/v1/records", wire.PushReq{Records: mkRecords(1, 1)}); status != http.StatusBadRequest {
-		t.Errorf("empty host_id: got %d want 400", status)
+	tests := []struct {
+		name string
+		send func() int // returns the response status for a 400-expected request
+	}{
+		{"empty host_id", func() int {
+			status, _ := dev.do("POST", "/v1/records", wire.PushReq{Records: mkRecords(1, 1)})
+			return status
+		}},
+		{"descending seqs", func() int {
+			desc := []wire.PushRecord{{Seq: 3}, {Seq: 2}, {Seq: 1}}
+			status, _ := dev.do("POST", "/v1/records", wire.PushReq{HostID: "h", Records: desc})
+			return status
+		}},
+		{">1000 records", func() int {
+			status, _ := dev.do("POST", "/v1/records", wire.PushReq{HostID: "h", Records: mkRecords(1, 1001)})
+			return status
+		}},
+		{"malformed JSON", func() int {
+			// Validly signed over the raw bytes, but not valid JSON.
+			status, _ := dev.doRaw("POST", "/v1/records", []byte("{not json"))
+			return status
+		}},
 	}
-
-	// Descending seqs.
-	desc := []wire.PushRecord{{Seq: 3}, {Seq: 2}, {Seq: 1}}
-	if status, _ := dev.do("POST", "/v1/records", wire.PushReq{HostID: "h", Records: desc}); status != http.StatusBadRequest {
-		t.Errorf("descending seqs: got %d want 400", status)
-	}
-
-	// More than 1000 records.
-	if status, _ := dev.do("POST", "/v1/records", wire.PushReq{HostID: "h", Records: mkRecords(1, 1001)}); status != http.StatusBadRequest {
-		t.Errorf(">1000 records: got %d want 400", status)
-	}
-
-	// Malformed JSON (validly signed over the raw bytes).
-	if status, _ := dev.doRaw("POST", "/v1/records", []byte("{not json")); status != http.StatusBadRequest {
-		t.Errorf("malformed JSON: got %d want 400", status)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, http.StatusBadRequest, tc.send())
+		})
 	}
 }
 
@@ -390,9 +406,7 @@ func TestPullPaging(t *testing.T) {
 	// Load 2500 records over 3 pushes (push caps at 1000).
 	for _, batch := range [][2]uint64{{1, 1000}, {1001, 1000}, {2001, 500}} {
 		status, body := dev.do("POST", "/v1/records", wire.PushReq{HostID: "h", Records: mkRecords(batch[0], batch[1])})
-		if status != http.StatusOK {
-			t.Fatalf("load push: status %d body %s", status, body)
-		}
+		require.Equalf(t, http.StatusOK, status, "load push: body %s", body)
 	}
 
 	after := uint64(0)
@@ -400,33 +414,23 @@ func TestPullPaging(t *testing.T) {
 	pages := 0
 	for {
 		status, body := c.do("GET", fmt.Sprintf("/v1/records?host_id=h&after=%d&limit=1000", after), nil)
-		if status != http.StatusOK {
-			t.Fatalf("pull: status %d body %s", status, body)
-		}
+		require.Equalf(t, http.StatusOK, status, "pull: body %s", body)
 		resp := mustJSON[wire.PullResp](t, body)
 		total += len(resp.Records)
 		pages++
 		// Verify ascending & contiguous.
 		for i, r := range resp.Records {
 			want := after + uint64(i) + 1
-			if r.Seq != want {
-				t.Fatalf("page %d record %d: seq %d want %d", pages, i, r.Seq, want)
-			}
+			require.Equalf(t, want, r.Seq, "page %d record %d seq", pages, i)
 		}
 		if resp.NextAfter == nil {
 			break
 		}
 		after = *resp.NextAfter
-		if pages > 10 {
-			t.Fatal("too many pages")
-		}
+		require.LessOrEqual(t, pages, 10, "too many pages")
 	}
-	if total != 2500 {
-		t.Fatalf("pulled %d records want 2500", total)
-	}
-	if pages != 3 {
-		t.Fatalf("used %d pages want 3", pages)
-	}
+	require.Equal(t, 2500, total, "pulled records")
+	require.Equal(t, 3, pages, "pages")
 }
 
 func TestPullUnknownAndBeyond(t *testing.T) {
@@ -435,24 +439,18 @@ func TestPullUnknownAndBeyond(t *testing.T) {
 
 	// Unknown host => empty, no NextAfter, not 404.
 	status, body := c.do("GET", "/v1/records?host_id=nope", nil)
-	if status != http.StatusOK {
-		t.Fatalf("unknown host: status %d body %s", status, body)
-	}
+	require.Equalf(t, http.StatusOK, status, "unknown host: body %s", body)
 	resp := mustJSON[wire.PullResp](t, body)
-	if len(resp.Records) != 0 || resp.NextAfter != nil {
-		t.Fatalf("unknown host: got %d records nextAfter=%v", len(resp.Records), resp.NextAfter)
-	}
+	require.Empty(t, resp.Records, "unknown host records")
+	require.Nil(t, resp.NextAfter, "unknown host nextAfter")
 
 	// after beyond end => empty, no NextAfter.
 	dev.do("POST", "/v1/records", wire.PushReq{HostID: "h", Records: mkRecords(1, 3)})
 	status, body = c.do("GET", "/v1/records?host_id=h&after=100", nil)
-	if status != http.StatusOK {
-		t.Fatalf("beyond end: status %d body %s", status, body)
-	}
+	require.Equalf(t, http.StatusOK, status, "beyond end: body %s", body)
 	resp = mustJSON[wire.PullResp](t, body)
-	if len(resp.Records) != 0 || resp.NextAfter != nil {
-		t.Fatalf("beyond end: got %d records nextAfter=%v", len(resp.Records), resp.NextAfter)
-	}
+	require.Empty(t, resp.Records, "beyond end records")
+	require.Nil(t, resp.NextAfter, "beyond end nextAfter")
 }
 
 // ---- reads stay token-only ----
@@ -465,15 +463,15 @@ func TestReadsTokenOnly(t *testing.T) {
 	// GET endpoints work with the token alone — no signature attached.
 	reads := []string{"/v1/health", "/v1/hosts", "/v1/records?host_id=h", "/v1/devices", "/v1/keys/dek"}
 	for _, path := range reads {
-		if status, body := c.do("GET", path, nil); status != http.StatusOK {
-			t.Errorf("read %s: got %d want 200 body %s", path, status, body)
-		}
+		t.Run(path, func(t *testing.T) {
+			status, body := c.do("GET", path, nil)
+			require.Equalf(t, http.StatusOK, status, "read %s: body %s", path, body)
+		})
 	}
 	// Health is open even without the token.
 	noAuth := &testClient{t: t, base: c.base, token: ""}
-	if status, _ := noAuth.do("GET", "/v1/health", nil); status != http.StatusOK {
-		t.Errorf("health no-auth: got %d want 200", status)
-	}
+	status, _ := noAuth.do("GET", "/v1/health", nil)
+	require.Equal(t, http.StatusOK, status, "health no-auth")
 }
 
 // ---- hosts ----
@@ -485,17 +483,14 @@ func TestHosts(t *testing.T) {
 	dev.do("POST", "/v1/records", wire.PushReq{HostID: "beta", Records: mkRecords(1, 9)})
 
 	status, body := c.do("GET", "/v1/hosts", nil)
-	if status != http.StatusOK {
-		t.Fatalf("hosts: status %d body %s", status, body)
-	}
+	require.Equalf(t, http.StatusOK, status, "hosts: body %s", body)
 	resp := mustJSON[wire.HostsResp](t, body)
 	got := map[string]uint64{}
 	for _, h := range resp.Hosts {
 		got[h.HostID] = h.MaxSeq
 	}
-	if got["alpha"] != 5 || got["beta"] != 9 {
-		t.Fatalf("hosts max seqs: got %+v want alpha=5 beta=9", got)
-	}
+	require.Equal(t, uint64(5), got["alpha"], "alpha max seq")
+	require.Equal(t, uint64(9), got["beta"], "beta max seq")
 }
 
 // ---- device lifecycle ----
@@ -507,28 +502,21 @@ func TestDeviceLifecycle(t *testing.T) {
 	pubA, privA, _ := ed25519.GenerateKey(nil)
 	dcA := c.withKey("A", privA)
 	status, body := dcA.do("POST", "/v1/devices", wire.RegisterReq{ID: "A", Name: "A", PubKey: pubKey(), SignKey: pubA})
-	if status != http.StatusOK {
-		t.Fatalf("register A: status %d body %s", status, body)
-	}
-	if d := mustJSON[wire.Device](t, body); d.Status != wire.DevicePending {
-		t.Fatalf("register A: status %q want pending", d.Status)
-	}
+	require.Equalf(t, http.StatusOK, status, "register A: body %s", body)
+	require.Equal(t, wire.DevicePending, mustJSON[wire.Device](t, body).Status, "register A status")
 
 	// Duplicate (still self-signed, fresh nonce) => 409.
-	if status, _ := dcA.do("POST", "/v1/devices", wire.RegisterReq{ID: "A", Name: "A", PubKey: pubKey(), SignKey: pubA}); status != http.StatusConflict {
-		t.Fatalf("duplicate register: got %d want 409", status)
-	}
+	status, _ = dcA.do("POST", "/v1/devices", wire.RegisterReq{ID: "A", Name: "A", PubKey: pubKey(), SignKey: pubA})
+	require.Equal(t, http.StatusConflict, status, "duplicate register")
 
 	// Bad pubkey => 400 (shape check precedes signature).
-	if status, _ := c.do("POST", "/v1/devices", wire.RegisterReq{ID: "Z", PubKey: []byte("short"), SignKey: pubA}); status != http.StatusBadRequest {
-		t.Fatalf("short pubkey: got %d want 400", status)
-	}
+	status, _ = c.do("POST", "/v1/devices", wire.RegisterReq{ID: "Z", PubKey: []byte("short"), SignKey: pubA})
+	require.Equal(t, http.StatusBadRequest, status, "short pubkey")
 
 	// Activate with wrong wrap.DeviceID => 400 (A self-signs at bootstrap).
 	badWrap := wire.ActivateReq{Wrap: wire.HKWrap{DeviceID: "other", HKVersion: 1}}
-	if status, _ := dcA.do("POST", "/v1/devices/A/activate", badWrap); status != http.StatusBadRequest {
-		t.Fatalf("wrong wrap.device_id: got %d want 400", status)
-	}
+	status, _ = dcA.do("POST", "/v1/devices/A/activate", badWrap)
+	require.Equal(t, http.StatusBadRequest, status, "wrong wrap.device_id")
 
 	// Bootstrap first activate sets version=1.
 	activateDevice(t, dcA, "A", 1)
@@ -538,48 +526,37 @@ func TestDeviceLifecycle(t *testing.T) {
 	dcB := registerDevice(t, c, "B")
 	_ = dcB
 	wrongVer := wire.ActivateReq{Wrap: wire.HKWrap{DeviceID: "B", HKVersion: 2}}
-	if status, _ := dcA.do("POST", "/v1/devices/B/activate", wrongVer); status != http.StatusBadRequest {
-		t.Fatalf("activate B wrong version: got %d want 400", status)
-	}
+	status, _ = dcA.do("POST", "/v1/devices/B/activate", wrongVer)
+	require.Equal(t, http.StatusBadRequest, status, "activate B wrong version")
 	activateDevice(t, dcA, "B", 1)
 
 	// A's HK wrap is retrievable (token-only GET).
-	if status, _ := c.do("GET", "/v1/keys/hk?device_id=A", nil); status != http.StatusOK {
-		t.Fatalf("get hk A: got %d want 200", status)
-	}
+	status, _ = c.do("GET", "/v1/keys/hk?device_id=A", nil)
+	require.Equal(t, http.StatusOK, status, "get hk A")
 
 	// Revoke A, signed by active device B => deletes A's wrap.
-	if status, _ := dcB.do("POST", "/v1/devices/A/revoke", nil); status != http.StatusOK {
-		t.Fatalf("revoke A: got %d want 200", status)
-	}
-	if status, _ := c.do("GET", "/v1/keys/hk?device_id=A", nil); status != http.StatusNotFound {
-		t.Fatalf("get hk A after revoke: got %d want 404", status)
-	}
+	status, _ = dcB.do("POST", "/v1/devices/A/revoke", nil)
+	require.Equal(t, http.StatusOK, status, "revoke A")
+	status, _ = c.do("GET", "/v1/keys/hk?device_id=A", nil)
+	require.Equal(t, http.StatusNotFound, status, "get hk A after revoke")
 
 	// Activate revoked A (signed by active B) => 409.
 	reactivate := wire.ActivateReq{Wrap: wire.HKWrap{DeviceID: "A", HKVersion: 1}}
-	if status, _ := dcB.do("POST", "/v1/devices/A/activate", reactivate); status != http.StatusConflict {
-		t.Fatalf("activate revoked A: got %d want 409", status)
-	}
+	status, _ = dcB.do("POST", "/v1/devices/A/activate", reactivate)
+	require.Equal(t, http.StatusConflict, status, "activate revoked A")
 
 	// Revoke unknown (signed by active B) => 404.
-	if status, _ := dcB.do("POST", "/v1/devices/ghost/revoke", nil); status != http.StatusNotFound {
-		t.Fatalf("revoke unknown: got %d want 404", status)
-	}
+	status, _ = dcB.do("POST", "/v1/devices/ghost/revoke", nil)
+	require.Equal(t, http.StatusNotFound, status, "revoke unknown")
 
 	// List returns all devices regardless of status.
 	status, body = c.do("GET", "/v1/devices", nil)
-	if status != http.StatusOK {
-		t.Fatalf("list devices: status %d", status)
-	}
-	if devs := mustJSON[[]wire.Device](t, body); len(devs) != 2 {
-		t.Fatalf("list devices: got %d want 2", len(devs))
-	}
+	require.Equal(t, http.StatusOK, status, "list devices")
+	require.Len(t, mustJSON[[]wire.Device](t, body), 2, "list devices count")
 
 	// hk get for a device that never had a wrap => 404.
-	if status, _ := c.do("GET", "/v1/keys/hk?device_id=ghost", nil); status != http.StatusNotFound {
-		t.Fatalf("get hk ghost: got %d want 404", status)
-	}
+	status, _ = c.do("GET", "/v1/keys/hk?device_id=ghost", nil)
+	require.Equal(t, http.StatusNotFound, status, "get hk ghost")
 }
 
 // ---- revoke signature ----
@@ -591,15 +568,13 @@ func TestRevokeSignature(t *testing.T) {
 	activateDevice(t, dcA, "B", 1)
 
 	// Token-only revoke (no signature) => 401.
-	if status, _ := c.do("POST", "/v1/devices/B/revoke", nil); status != http.StatusUnauthorized {
-		t.Fatalf("token-only revoke: got %d want 401", status)
-	}
+	status, _ := c.do("POST", "/v1/devices/B/revoke", nil)
+	require.Equal(t, http.StatusUnauthorized, status, "token-only revoke")
 
 	// Properly signed revoke by an active device => 200. (Any active device may
 	// revoke any device; A revokes B.)
-	if status, _ := dcA.do("POST", "/v1/devices/B/revoke", nil); status != http.StatusOK {
-		t.Fatalf("signed revoke: got %d want 200", status)
-	}
+	status, _ = dcA.do("POST", "/v1/devices/B/revoke", nil)
+	require.Equal(t, http.StatusOK, status, "signed revoke")
 	_ = dcB
 }
 
@@ -621,23 +596,16 @@ func TestDEK(t *testing.T) {
 
 	// Upload all 5 (signed by active A).
 	status, body := dcA.do("POST", "/v1/keys/dek", mkDEKs(ids, 1))
-	if status != http.StatusOK {
-		t.Fatalf("upload dek: status %d body %s", status, body)
-	}
-	if got := mustJSON[map[string]int](t, body)["stored"]; got != 5 {
-		t.Fatalf("upload dek: stored %d want 5", got)
-	}
+	require.Equalf(t, http.StatusOK, status, "upload dek: body %s", body)
+	require.Equal(t, 5, mustJSON[map[string]int](t, body)["stored"], "upload dek stored")
 
 	// Idempotent re-upload => stored 0.
 	status, body = dcA.do("POST", "/v1/keys/dek", mkDEKs(ids, 1))
-	if got := mustJSON[map[string]int](t, body)["stored"]; got != 0 {
-		t.Fatalf("re-upload dek: stored %d want 0", got)
-	}
+	require.Equal(t, 0, mustJSON[map[string]int](t, body)["stored"], "re-upload dek stored")
 
 	// Wrong HKVersion => 400.
-	if status, _ := dcA.do("POST", "/v1/keys/dek", mkDEKs([]string{"key-999"}, 2)); status != http.StatusBadRequest {
-		t.Fatalf("wrong hk_version dek: got %d want 400", status)
-	}
+	status, _ = dcA.do("POST", "/v1/keys/dek", mkDEKs([]string{"key-999"}, 2))
+	require.Equal(t, http.StatusBadRequest, status, "wrong hk_version dek")
 
 	// Paging cursor walk (token-only GET), limit 2 over 5 keys => pages 2,2,1.
 	cursor := ""
@@ -649,9 +617,7 @@ func TestDEK(t *testing.T) {
 			path += "&cursor=" + cursor
 		}
 		status, body = c.do("GET", path, nil)
-		if status != http.StatusOK {
-			t.Fatalf("dek list: status %d body %s", status, body)
-		}
+		require.Equalf(t, http.StatusOK, status, "dek list: body %s", body)
 		resp := mustJSON[wire.DEKListResp](t, body)
 		for _, w := range resp.Wraps {
 			walked = append(walked, w.KeyID)
@@ -661,16 +627,10 @@ func TestDEK(t *testing.T) {
 			break
 		}
 		cursor = resp.NextCursor
-		if pages > 10 {
-			t.Fatal("too many dek pages")
-		}
+		require.LessOrEqual(t, pages, 10, "too many dek pages")
 	}
-	if pages != 3 {
-		t.Fatalf("dek paging: used %d pages want 3", pages)
-	}
-	if fmt.Sprint(walked) != fmt.Sprint(ids) {
-		t.Fatalf("dek paging: walked %v want %v", walked, ids)
-	}
+	require.Equal(t, 3, pages, "dek paging pages")
+	require.Equal(t, ids, walked, "dek paging walked")
 }
 
 // ---- rotate ----
@@ -688,9 +648,8 @@ func rotateSetup(t *testing.T, c *testClient) (*testClient, []string) {
 	for _, id := range ids {
 		deks = append(deks, wire.DEKWrap{KeyID: id, DeviceID: "A", HKVersion: 1, Blob: []byte("v1-" + id)})
 	}
-	if status, body := dcA.do("POST", "/v1/keys/dek", deks); status != http.StatusOK {
-		t.Fatalf("rotate setup dek: status %d body %s", status, body)
-	}
+	status, body := dcA.do("POST", "/v1/keys/dek", deks)
+	require.Equalf(t, http.StatusOK, status, "rotate setup dek: body %s", body)
 	return dcA, ids
 }
 
@@ -699,9 +658,8 @@ func TestRotateHappy(t *testing.T) {
 	dcA, ids := rotateSetup(t, c)
 
 	// Revoke B (signed by active A); only A survives.
-	if status, _ := dcA.do("POST", "/v1/devices/B/revoke", nil); status != http.StatusOK {
-		t.Fatal("revoke B failed")
-	}
+	status, _ := dcA.do("POST", "/v1/devices/B/revoke", nil)
+	require.Equal(t, http.StatusOK, status, "revoke B failed")
 
 	newDEKs := make([]wire.DEKWrap, 0, len(ids))
 	for _, id := range ids {
@@ -712,48 +670,36 @@ func TestRotateHappy(t *testing.T) {
 		HKWraps:   []wire.HKWrap{{DeviceID: "A", HKVersion: 2, Blob: []byte("hk2-A")}},
 		DEKWraps:  newDEKs,
 	}
-	if status, body := dcA.do("POST", "/v1/keys/rotate", req); status != http.StatusOK {
-		t.Fatalf("rotate: status %d body %s", status, body)
-	}
+	status, body := dcA.do("POST", "/v1/keys/rotate", req)
+	require.Equalf(t, http.StatusOK, status, "rotate: body %s", body)
 
 	// Version bumped: A's hk wrap now v2.
-	status, body := c.do("GET", "/v1/keys/hk?device_id=A", nil)
-	if status != http.StatusOK {
-		t.Fatalf("get hk A: status %d", status)
-	}
-	if w := mustJSON[wire.HKWrap](t, body); w.HKVersion != 2 {
-		t.Fatalf("A hk after rotate: version %d want 2", w.HKVersion)
-	}
+	status, body = c.do("GET", "/v1/keys/hk?device_id=A", nil)
+	require.Equal(t, http.StatusOK, status, "get hk A")
+	require.Equal(t, 2, mustJSON[wire.HKWrap](t, body).HKVersion, "A hk after rotate")
 
 	// B's wrap is gone (was revoked before rotate).
-	if status, _ := c.do("GET", "/v1/keys/hk?device_id=B", nil); status != http.StatusNotFound {
-		t.Fatalf("get hk B after rotate: got %d want 404", status)
-	}
+	status, _ = c.do("GET", "/v1/keys/hk?device_id=B", nil)
+	require.Equal(t, http.StatusNotFound, status, "get hk B after rotate")
 
 	// All DEKs replaced with v2.
 	status, body = c.do("GET", "/v1/keys/dek?limit=1000", nil)
 	resp := mustJSON[wire.DEKListResp](t, body)
-	if len(resp.Wraps) != 3 {
-		t.Fatalf("dek count after rotate: %d want 3", len(resp.Wraps))
-	}
+	require.Len(t, resp.Wraps, 3, "dek count after rotate")
 	for _, w := range resp.Wraps {
-		if w.HKVersion != 2 {
-			t.Fatalf("dek %s version %d want 2", w.KeyID, w.HKVersion)
-		}
+		require.Equalf(t, 2, w.HKVersion, "dek %s version", w.KeyID)
 	}
 
 	// New DEKs at the new version are now accepted (confirms hk_version=2).
-	if status, _ := dcA.do("POST", "/v1/keys/dek", []wire.DEKWrap{{KeyID: "key-100", DeviceID: "A", HKVersion: 2, Blob: []byte("x")}}); status != http.StatusOK {
-		t.Fatalf("post dek at v2 after rotate: got %d want 200", status)
-	}
+	status, _ = dcA.do("POST", "/v1/keys/dek", []wire.DEKWrap{{KeyID: "key-100", DeviceID: "A", HKVersion: 2, Blob: []byte("x")}})
+	require.Equal(t, http.StatusOK, status, "post dek at v2 after rotate")
 }
 
 func TestRotatePartialIsAllOrNothing(t *testing.T) {
 	_, c := setup(t)
 	dcA, ids := rotateSetup(t, c)
-	if status, _ := dcA.do("POST", "/v1/devices/B/revoke", nil); status != http.StatusOK {
-		t.Fatal("revoke B failed")
-	}
+	status, _ := dcA.do("POST", "/v1/devices/B/revoke", nil)
+	require.Equal(t, http.StatusOK, status, "revoke B failed")
 
 	// Provide only 2 of 3 DEKs => 400, nothing changes.
 	partial := []wire.DEKWrap{
@@ -766,30 +712,21 @@ func TestRotatePartialIsAllOrNothing(t *testing.T) {
 		DEKWraps:  partial,
 	}
 	status, body := dcA.do("POST", "/v1/keys/rotate", req)
-	if status != http.StatusBadRequest {
-		t.Fatalf("partial rotate: got %d want 400 body %s", status, body)
-	}
+	require.Equalf(t, http.StatusBadRequest, status, "partial rotate: body %s", body)
 
 	// Assert NOTHING changed: A's wrap still v1.
 	_, body = c.do("GET", "/v1/keys/hk?device_id=A", nil)
-	if w := mustJSON[wire.HKWrap](t, body); w.HKVersion != 1 {
-		t.Fatalf("A hk after failed rotate: version %d want 1", w.HKVersion)
-	}
+	require.Equal(t, 1, mustJSON[wire.HKWrap](t, body).HKVersion, "A hk after failed rotate")
 	// All 3 DEKs still present at v1.
 	_, body = c.do("GET", "/v1/keys/dek?limit=1000", nil)
 	resp := mustJSON[wire.DEKListResp](t, body)
-	if len(resp.Wraps) != 3 {
-		t.Fatalf("dek count after failed rotate: %d want 3", len(resp.Wraps))
-	}
+	require.Len(t, resp.Wraps, 3, "dek count after failed rotate")
 	for _, w := range resp.Wraps {
-		if w.HKVersion != 1 {
-			t.Fatalf("dek %s version %d want 1 (unchanged)", w.KeyID, w.HKVersion)
-		}
+		require.Equalf(t, 1, w.HKVersion, "dek %s version want 1 (unchanged)", w.KeyID)
 	}
 	// hk_version unchanged: a fresh v1 DEK still validates (== current).
-	if status, _ := dcA.do("POST", "/v1/keys/dek", []wire.DEKWrap{{KeyID: "key-777", DeviceID: "A", HKVersion: 1, Blob: []byte("x")}}); status != http.StatusOK {
-		t.Fatalf("post dek at v1 after failed rotate: got %d want 200 (version unchanged)", status)
-	}
+	status, _ = dcA.do("POST", "/v1/keys/dek", []wire.DEKWrap{{KeyID: "key-777", DeviceID: "A", HKVersion: 1, Blob: []byte("x")}})
+	require.Equal(t, http.StatusOK, status, "post dek at v1 after failed rotate")
 }
 
 func TestRotateWrongVersion(t *testing.T) {
@@ -806,9 +743,8 @@ func TestRotateWrongVersion(t *testing.T) {
 		HKWraps:   []wire.HKWrap{{DeviceID: "A", HKVersion: 3, Blob: []byte("hk3-A")}},
 		DEKWraps:  newDEKs,
 	}
-	if status, _ := dcA.do("POST", "/v1/keys/rotate", req); status != http.StatusBadRequest {
-		t.Fatalf("rotate wrong version: got %d want 400", status)
-	}
+	status, _ := dcA.do("POST", "/v1/keys/rotate", req)
+	require.Equal(t, http.StatusBadRequest, status, "rotate wrong version")
 }
 
 // ---- concurrency ----
@@ -820,8 +756,19 @@ func TestConcurrentPushDistinctHosts(t *testing.T) {
 	const hosts = 10
 	const perHost = 100
 
+	// pushResult carries each goroutine's raw outcome back to the main goroutine,
+	// where all assertions happen (testify's FailNow is illegal off the main test
+	// goroutine). Each goroutine writes its own slice slot, so no lock is needed
+	// and wg.Wait establishes happens-before for the reads below.
+	type pushResult struct {
+		hostID string
+		status int
+		body   []byte
+		err    error
+	}
+
 	var wg sync.WaitGroup
-	errs := make([]error, hosts)
+	results := make([]pushResult, hosts)
 	for h := 0; h < hosts; h++ {
 		wg.Add(1)
 		go func(h int) {
@@ -831,33 +778,25 @@ func TestConcurrentPushDistinctHosts(t *testing.T) {
 			// mutex-guarded.
 			cc := *dev
 			hostID := fmt.Sprintf("host-%02d", h)
-			status, body := (&cc).do("POST", "/v1/records", wire.PushReq{HostID: hostID, Records: mkRecords(1, perHost)})
-			if status != http.StatusOK {
-				errs[h] = fmt.Errorf("host %s push status %d body %s", hostID, status, body)
-				return
-			}
-			resp := mustJSON[wire.PushResp](t, body)
-			if resp.Stored != perHost || resp.MaxSeq != perHost {
-				errs[h] = fmt.Errorf("host %s stored=%d maxSeq=%d", hostID, resp.Stored, resp.MaxSeq)
-			}
+			status, body, err := (&cc).sendConcurrent("POST", "/v1/records", wire.PushReq{HostID: hostID, Records: mkRecords(1, perHost)})
+			results[h] = pushResult{hostID: hostID, status: status, body: body, err: err}
 		}(h)
 	}
 	wg.Wait()
-	for _, err := range errs {
-		if err != nil {
-			t.Fatal(err)
-		}
+
+	for _, r := range results {
+		require.NoErrorf(t, r.err, "host %s push", r.hostID)
+		require.Equalf(t, http.StatusOK, r.status, "host %s push status; body %s", r.hostID, r.body)
+		resp := mustJSON[wire.PushResp](t, r.body)
+		require.Equalf(t, perHost, resp.Stored, "host %s stored", r.hostID)
+		require.Equalf(t, uint64(perHost), resp.MaxSeq, "host %s maxSeq", r.hostID)
 	}
 
 	// Every host present with the right max seq.
 	_, body := c.do("GET", "/v1/hosts", nil)
 	resp := mustJSON[wire.HostsResp](t, body)
-	if len(resp.Hosts) != hosts {
-		t.Fatalf("hosts: got %d want %d", len(resp.Hosts), hosts)
-	}
+	require.Len(t, resp.Hosts, hosts, "hosts count")
 	for _, h := range resp.Hosts {
-		if h.MaxSeq != perHost {
-			t.Fatalf("host %s maxSeq=%d want %d", h.HostID, h.MaxSeq, perHost)
-		}
+		require.Equalf(t, uint64(perHost), h.MaxSeq, "host %s maxSeq", h.HostID)
 	}
 }

@@ -2,11 +2,12 @@ package syncer
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"yore/internal/cryptobox"
 	"yore/internal/rec"
@@ -24,27 +25,19 @@ func enroll(t *testing.T, url string) *HTTPClient {
 	t.Helper()
 	ctx := context.Background()
 	dk, err := cryptobox.GenerateDeviceKey()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	id := rec.NewID()
 	c := NewHTTPClient(url, testToken, "")
 	c.SetSigner(id, dk.Sign)
 	pub := dk.Public()
-	if _, err := c.RegisterDevice(ctx, wire.RegisterReq{ID: id, Name: "test", PubKey: pub[:], SignKey: dk.SignPublic()}); err != nil {
-		t.Fatalf("enroll register: %v", err)
-	}
+	_, err = c.RegisterDevice(ctx, wire.RegisterReq{ID: id, Name: "test", PubKey: pub[:], SignKey: dk.SignPublic()})
+	require.NoError(t, err, "enroll register")
 	hk, err := cryptobox.NewHistoryKey()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	blob, err := cryptobox.WrapHK(hk, pub)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := c.ActivateDevice(ctx, id, wire.ActivateReq{Wrap: wire.HKWrap{DeviceID: id, Blob: blob, HKVersion: 1}}); err != nil {
-		t.Fatalf("enroll activate: %v", err)
-	}
+	require.NoError(t, err)
+	err = c.ActivateDevice(ctx, id, wire.ActivateReq{Wrap: wire.HKWrap{DeviceID: id, Blob: blob, HKVersion: 1}})
+	require.NoError(t, err, "enroll activate")
 	return c
 }
 
@@ -56,9 +49,7 @@ func newServer(t *testing.T) string {
 		DBPath: filepath.Join(t.TempDir(), "sync.db"),
 		Token:  testToken,
 	})
-	if err != nil {
-		t.Fatalf("server.New: %v", err)
-	}
+	require.NoError(t, err, "server.New")
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	t.Cleanup(func() { srv.Close() })
@@ -67,9 +58,7 @@ func newServer(t *testing.T) string {
 
 func TestHTTPClientHealth(t *testing.T) {
 	c := NewHTTPClient(newServer(t), testToken, "")
-	if err := c.Health(context.Background()); err != nil {
-		t.Fatalf("Health: %v", err)
-	}
+	require.NoError(t, c.Health(context.Background()), "Health")
 }
 
 func TestHTTPClientBadTokenIsAPIError(t *testing.T) {
@@ -77,22 +66,14 @@ func TestHTTPClientBadTokenIsAPIError(t *testing.T) {
 	c := NewHTTPClient(newServer(t), "wrong-token", "")
 
 	// Health needs no token: it still succeeds.
-	if err := c.Health(ctx); err != nil {
-		t.Fatalf("Health with wrong token should still work: %v", err)
-	}
+	require.NoError(t, c.Health(ctx), "Health with wrong token should still work")
 
 	// An authed call must surface a typed 401.
 	_, err := c.Hosts(ctx)
-	if err == nil {
-		t.Fatal("Hosts with wrong token: want error, got nil")
-	}
+	require.Error(t, err, "Hosts with wrong token: want error, got nil")
 	var ae *APIError
-	if !errors.As(err, &ae) {
-		t.Fatalf("want *APIError, got %T: %v", err, err)
-	}
-	if ae.Status != http.StatusUnauthorized {
-		t.Fatalf("want status 401, got %d", ae.Status)
-	}
+	require.ErrorAs(t, err, &ae, "want *APIError")
+	require.Equal(t, http.StatusUnauthorized, ae.Status, "want status 401")
 }
 
 func TestHTTPClientDeviceLifecycle(t *testing.T) {
@@ -101,9 +82,7 @@ func TestHTTPClientDeviceLifecycle(t *testing.T) {
 
 	// A self-signed registration (device stays pending until approved).
 	dk, err := cryptobox.GenerateDeviceKey()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	id := rec.NewID()
 	c := NewHTTPClient(url, testToken, "")
 	c.SetSigner(id, dk.Sign)
@@ -111,37 +90,25 @@ func TestHTTPClientDeviceLifecycle(t *testing.T) {
 	req := wire.RegisterReq{ID: id, Name: "laptop", PubKey: pub[:], SignKey: dk.SignPublic()}
 
 	dev, err := c.RegisterDevice(ctx, req)
-	if err != nil {
-		t.Fatalf("RegisterDevice: %v", err)
-	}
-	if dev.Status != wire.DevicePending {
-		t.Fatalf("want pending, got %q", dev.Status)
-	}
+	require.NoError(t, err, "RegisterDevice")
+	require.Equal(t, wire.DevicePending, dev.Status)
 
 	// Duplicate register is a typed 409.
 	_, err = c.RegisterDevice(ctx, req)
 	var ae *APIError
-	if !errors.As(err, &ae) || ae.Status != http.StatusConflict {
-		t.Fatalf("duplicate register: want APIError 409, got %v", err)
-	}
+	require.ErrorAs(t, err, &ae, "duplicate register: want APIError")
+	require.Equal(t, http.StatusConflict, ae.Status, "duplicate register: want 409")
 
 	// List sees it.
 	devs, err := c.ListDevices(ctx)
-	if err != nil {
-		t.Fatalf("ListDevices: %v", err)
-	}
-	if len(devs) != 1 || devs[0].ID != id {
-		t.Fatalf("ListDevices: unexpected %+v", devs)
-	}
+	require.NoError(t, err, "ListDevices")
+	require.Len(t, devs, 1)
+	require.Equal(t, id, devs[0].ID)
 
 	// No HK wrap yet: found=false, no error.
 	_, found, err := c.GetHKWrap(ctx, id)
-	if err != nil {
-		t.Fatalf("GetHKWrap: %v", err)
-	}
-	if found {
-		t.Fatal("GetHKWrap: want found=false before activation")
-	}
+	require.NoError(t, err, "GetHKWrap")
+	require.False(t, found, "GetHKWrap: want found=false before activation")
 }
 
 func TestHTTPClientPushPull(t *testing.T) {
@@ -155,58 +122,37 @@ func TestHTTPClientPushPull(t *testing.T) {
 			{Seq: 2, ID: "r2", KeyID: "k1", Blob: []byte("blob-2")},
 		},
 	})
-	if err != nil {
-		t.Fatalf("PushRecords: %v", err)
-	}
-	if push.Stored != 2 || push.MaxSeq != 2 {
-		t.Fatalf("PushResp: %+v", push)
-	}
+	require.NoError(t, err, "PushRecords")
+	require.Equal(t, 2, push.Stored)
+	require.Equal(t, uint64(2), push.MaxSeq)
 
 	// Idempotent re-push stores nothing.
 	push2, err := c.PushRecords(ctx, wire.PushReq{
 		HostID:  "host-A",
 		Records: []wire.PushRecord{{Seq: 1, ID: "r1", KeyID: "k1", Blob: []byte("blob-1")}},
 	})
-	if err != nil {
-		t.Fatalf("PushRecords (re): %v", err)
-	}
-	if push2.Stored != 0 {
-		t.Fatalf("re-push should store 0, got %d", push2.Stored)
-	}
+	require.NoError(t, err, "PushRecords (re)")
+	require.Equal(t, 0, push2.Stored, "re-push should store 0")
 
 	pull, err := c.PullRecords(ctx, "host-A", 0, 100)
-	if err != nil {
-		t.Fatalf("PullRecords: %v", err)
-	}
-	if len(pull.Records) != 2 {
-		t.Fatalf("want 2 records, got %d", len(pull.Records))
-	}
-	if string(pull.Records[0].Blob) != "blob-1" {
-		t.Fatalf("blob mismatch: %q", pull.Records[0].Blob)
-	}
+	require.NoError(t, err, "PullRecords")
+	require.Len(t, pull.Records, 2)
+	require.Equal(t, "blob-1", string(pull.Records[0].Blob))
 
 	// Hosts sees the stream.
 	hosts, err := c.Hosts(ctx)
-	if err != nil {
-		t.Fatalf("Hosts: %v", err)
-	}
-	if len(hosts) != 1 || hosts[0].HostID != "host-A" || hosts[0].MaxSeq != 2 {
-		t.Fatalf("Hosts: unexpected %+v", hosts)
-	}
+	require.NoError(t, err, "Hosts")
+	require.Len(t, hosts, 1)
+	require.Equal(t, "host-A", hosts[0].HostID)
+	require.Equal(t, uint64(2), hosts[0].MaxSeq)
 }
 
 func TestVerificationCodeStableAndDistinct(t *testing.T) {
 	var a, b [32]byte
 	a[0] = 1
 	b[0] = 2
-	if VerificationCode(a) != VerificationCode(a) {
-		t.Fatal("VerificationCode not stable for the same key")
-	}
-	if VerificationCode(a) == VerificationCode(b) {
-		t.Fatal("VerificationCode collided for distinct keys")
-	}
+	require.Equal(t, VerificationCode(a), VerificationCode(a), "VerificationCode not stable for the same key")
+	require.NotEqual(t, VerificationCode(a), VerificationCode(b), "VerificationCode collided for distinct keys")
 	// Format: 6 groups of 4 => 6*4 + 5 separators = 29 chars.
-	if got := len(VerificationCode(a)); got != 29 {
-		t.Fatalf("code length = %d, want 29 (%q)", got, VerificationCode(a))
-	}
+	require.Len(t, VerificationCode(a), 29, "code length")
 }

@@ -1,28 +1,33 @@
 package match
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
 
 func TestFuzzy(t *testing.T) {
-	cases := []struct {
+	tests := []struct {
+		name       string
 		pattern, s string
 		want       bool
 	}{
-		{"", "anything", true},
-		{"gco", "git commit -m fix", true},
-		{"dcu", "docker compose up", true},
-		{"gco", "grep -r foo", false}, // no 'c' after 'g...o' subsequence
-		{"xyz", "git status", false},
-		{"GIT", "git status", false},   // smart-case: uppercase pattern is case-sensitive
-		{"git", "GIT STATUS", true},    // lowercase pattern folds
-		{"café", "run café now", true}, // unicode
-		{"abc", "aXbXc", true},         // scattered subsequence
-		{"cba", "aXbXc", false},        // wrong order
+		{"empty pattern matches anything", "", "anything", true},
+		{"gco subsequence", "gco", "git commit -m fix", true},
+		{"dcu subsequence", "dcu", "docker compose up", true},
+		{"no c after g...o subsequence", "gco", "grep -r foo", false},
+		{"no subsequence at all", "xyz", "git status", false},
+		{"smart-case: uppercase pattern is case-sensitive", "GIT", "git status", false},
+		{"lowercase pattern folds", "git", "GIT STATUS", true},
+		{"unicode", "café", "run café now", true},
+		{"scattered subsequence", "abc", "aXbXc", true},
+		{"wrong order", "cba", "aXbXc", false},
 	}
-	for _, c := range cases {
-		got, _ := Fuzzy(c.pattern, c.s)
-		if got != c.want {
-			t.Errorf("Fuzzy(%q, %q) = %v, want %v", c.pattern, c.s, got, c.want)
-		}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _ := Fuzzy(tc.pattern, tc.s)
+			require.Equal(t, tc.want, got)
+		})
 	}
 }
 
@@ -30,7 +35,5 @@ func TestFuzzyScoreOrders(t *testing.T) {
 	// A contiguous match should score lower (tighter) than a scattered one.
 	_, tight := Fuzzy("abc", "abcdef")
 	_, loose := Fuzzy("abc", "aXbXcX")
-	if tight >= loose {
-		t.Errorf("contiguous score %d should be < scattered score %d", tight, loose)
-	}
+	require.Less(t, tight, loose, "contiguous score should be less than scattered score")
 }

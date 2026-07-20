@@ -7,15 +7,16 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"yore/internal/rec"
 )
 
 func glob(t *testing.T, dir string) []string {
 	t.Helper()
 	m, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return m
 }
 
@@ -27,9 +28,7 @@ func TestAppendDrainRoundTrip(t *testing.T) {
 		{Type: rec.TypeDelete, TargetID: "a"},
 	}
 	for _, r := range want {
-		if err := Append(dir, r); err != nil {
-			t.Fatalf("Append: %v", err)
-		}
+		require.NoError(t, Append(dir, r), "Append")
 	}
 
 	var got []rec.Record
@@ -37,70 +36,51 @@ func TestAppendDrainRoundTrip(t *testing.T) {
 		got = append(got, r)
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("Drain: %v", err)
-	}
-	if n != len(want) || len(got) != len(want) {
-		t.Fatalf("drained n=%d got=%d, want %d", n, len(got), len(want))
-	}
+	require.NoError(t, err, "Drain")
+	require.Equal(t, len(want), n, "drained count")
+	require.Len(t, got, len(want), "drained records")
 	for i := range want {
-		if got[i].ID != want[i].ID || got[i].Cmd != want[i].Cmd || got[i].TargetID != want[i].TargetID {
-			t.Errorf("record %d = %+v, want %+v", i, got[i], want[i])
-		}
+		assert.Equalf(t, want[i].ID, got[i].ID, "record %d ID", i)
+		assert.Equalf(t, want[i].Cmd, got[i].Cmd, "record %d Cmd", i)
+		assert.Equalf(t, want[i].TargetID, got[i].TargetID, "record %d TargetID", i)
 	}
-	if left := glob(t, dir); len(left) != 0 {
-		t.Errorf("spool files remain after drain: %v", left)
-	}
+	assert.Empty(t, glob(t, dir), "spool files remain after drain")
 
 	// A second drain finds nothing.
 	n2, err := Drain(dir, func(rec.Record) error { return nil })
-	if err != nil || n2 != 0 {
-		t.Errorf("second Drain = (%d,%v), want (0,nil)", n2, err)
-	}
+	assert.NoError(t, err, "second Drain")
+	assert.Equal(t, 0, n2, "second Drain count")
 }
 
 func TestDrainTornFinalLine(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "spool")
-	if err := Append(dir, rec.Record{ID: "ok", Cmd: "good"}); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, Append(dir, rec.Record{ID: "ok", Cmd: "good"}))
 
 	// Simulate a crash mid-write: a valid line already fsynced, then a
 	// partial JSON fragment with no trailing newline.
 	path := filepath.Join(dir, strconv.Itoa(os.Getpid())+".jsonl")
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.WriteString(`{"id":"torn","cmd":"half`); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.Close(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	_, err = f.WriteString(`{"id":"torn","cmd":"half`)
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
 
 	var got []rec.Record
 	n, err := Drain(dir, func(r rec.Record) error {
 		got = append(got, r)
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("Drain: %v", err)
-	}
-	if n != 1 || len(got) != 1 || got[0].ID != "ok" {
-		t.Fatalf("Drain got n=%d %+v, want 1 record id=ok", n, got)
-	}
-	if left := glob(t, dir); len(left) != 0 {
-		t.Errorf("file not deleted after tolerating torn line: %v", left)
-	}
+	require.NoError(t, err, "Drain")
+	require.Equal(t, 1, n, "Drain count")
+	require.Len(t, got, 1, "Drain records")
+	require.Equal(t, "ok", got[0].ID, "Drain record id")
+	assert.Empty(t, glob(t, dir), "file not deleted after tolerating torn line")
 }
 
 func TestDrainFnErrorKeepsFile(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "spool")
 	for _, c := range []string{"one", "two", "three"} {
-		if err := Append(dir, rec.Record{ID: c, Cmd: c}); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, Append(dir, rec.Record{ID: c, Cmd: c}))
 	}
 
 	boom := errors.New("boom")
@@ -112,15 +92,9 @@ func TestDrainFnErrorKeepsFile(t *testing.T) {
 		}
 		return nil
 	})
-	if !errors.Is(err, boom) {
-		t.Fatalf("Drain err = %v, want boom", err)
-	}
-	if n != 1 {
-		t.Fatalf("Drain count = %d, want 1 (only the first was handed off)", n)
-	}
-	if left := glob(t, dir); len(left) != 1 {
-		t.Fatalf("file removed despite fn error: %v", left)
-	}
+	require.ErrorIs(t, err, boom, "Drain err")
+	require.Equal(t, 1, n, "Drain count (only the first was handed off)")
+	require.Len(t, glob(t, dir), 1, "file removed despite fn error")
 
 	// Retrying with a passing fn re-reads the whole file (nothing on disk was
 	// consumed), so all three come through; downstream dedupes by ID.
@@ -129,24 +103,17 @@ func TestDrainFnErrorKeepsFile(t *testing.T) {
 		got = append(got, r)
 		return nil
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n2 != 3 {
-		t.Fatalf("retry drained %d, want 3", n2)
-	}
-	if left := glob(t, dir); len(left) != 0 {
-		t.Errorf("files remain after successful retry: %v", left)
-	}
+	require.NoError(t, err)
+	require.Equal(t, 3, n2, "retry drained count")
+	assert.Empty(t, glob(t, dir), "files remain after successful retry")
 }
 
 func TestDrainMissingDir(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "nope")
 	n, err := Drain(missing, func(rec.Record) error {
-		t.Fatal("fn must not be called for a missing dir")
+		require.Fail(t, "fn must not be called for a missing dir")
 		return nil
 	})
-	if n != 0 || err != nil {
-		t.Fatalf("Drain(missing) = (%d,%v), want (0,nil)", n, err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, 0, n)
 }

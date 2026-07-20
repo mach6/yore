@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestSignVerifyRoundTrip(t *testing.T) {
@@ -14,19 +16,13 @@ func TestSignVerifyRoundTrip(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 
 	hdrs, err := Sign("dev-1", sign, http.MethodPost, "/v1/records?x=1", body, now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	h := http.Header{}
 	for k, v := range hdrs {
 		h.Set(k, v)
 	}
-	if Device(h) != "dev-1" {
-		t.Errorf("device = %q", Device(h))
-	}
-	if err := Verify(h, http.MethodPost, "/v1/records?x=1", body, pub, now); err != nil {
-		t.Fatalf("verify: %v", err)
-	}
+	require.Equal(t, "dev-1", Device(h))
+	require.NoError(t, Verify(h, http.MethodPost, "/v1/records?x=1", body, pub, now))
 }
 
 func TestVerifyRejects(t *testing.T) {
@@ -42,29 +38,28 @@ func TestVerifyRejects(t *testing.T) {
 		}
 		return h
 	}
-
-	// Tampered body.
-	if err := Verify(mk(), "POST", "/v1/x", []byte("other"), pub, now); err == nil {
-		t.Error("tampered body accepted")
-	}
-	// Tampered target (path/method binding).
-	if err := Verify(mk(), "POST", "/v1/y", body, pub, now); err == nil {
-		t.Error("tampered target accepted")
-	}
-	if err := Verify(mk(), "DELETE", "/v1/x", body, pub, now); err == nil {
-		t.Error("tampered method accepted")
-	}
-	// Wrong key.
 	otherPub, _, _ := ed25519.GenerateKey(nil)
-	if err := Verify(mk(), "POST", "/v1/x", body, otherPub, now); err == nil {
-		t.Error("wrong key accepted")
+
+	tests := []struct {
+		name   string
+		hdrs   http.Header
+		method string
+		path   string
+		body   []byte
+		pub    ed25519.PublicKey
+		now    time.Time
+	}{
+		{"tampered body", mk(), "POST", "/v1/x", []byte("other"), pub, now},
+		{"tampered target (path/method binding)", mk(), "POST", "/v1/y", body, pub, now},
+		{"tampered method", mk(), "DELETE", "/v1/x", body, pub, now},
+		{"wrong key", mk(), "POST", "/v1/x", body, otherPub, now},
+		{"stale timestamp (outside skew)", mk(), "POST", "/v1/x", body, pub, now.Add(2 * Skew)},
+		{"missing headers", http.Header{}, "POST", "/v1/x", body, pub, now},
 	}
-	// Stale timestamp (outside skew).
-	if err := Verify(mk(), "POST", "/v1/x", body, pub, now.Add(2*Skew)); err == nil {
-		t.Error("stale timestamp accepted")
-	}
-	// Missing headers.
-	if err := Verify(http.Header{}, "POST", "/v1/x", body, pub, now); err == nil {
-		t.Error("missing headers accepted")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := Verify(tc.hdrs, tc.method, tc.path, tc.body, tc.pub, tc.now)
+			require.Error(t, err)
+		})
 	}
 }

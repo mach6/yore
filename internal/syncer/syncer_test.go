@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"yore/internal/cryptobox"
 	"yore/internal/rec"
 	"yore/internal/store"
@@ -20,14 +22,10 @@ const testEpoch = time.Hour
 func newDevice(t *testing.T, url string) (*Syncer, *store.Store) {
 	t.Helper()
 	st, err := store.Open(t.TempDir())
-	if err != nil {
-		t.Fatalf("store.Open: %v", err)
-	}
+	require.NoError(t, err, "store.Open")
 	t.Cleanup(func() { st.Close() })
 	key, err := cryptobox.GenerateDeviceKey()
-	if err != nil {
-		t.Fatalf("GenerateDeviceKey: %v", err)
-	}
+	require.NoError(t, err, "GenerateDeviceKey")
 	return New(st, NewHTTPClient(url, testToken, ""), key, testEpoch), st
 }
 
@@ -39,28 +37,19 @@ func enrollPair(t *testing.T, url string) (a *Syncer, aStore *store.Store, b *Sy
 	a, aStore = newDevice(t, url)
 	b, bStore = newDevice(t, url)
 
-	if err := a.Bootstrap(ctx, "machine-A"); err != nil {
-		t.Fatalf("A.Bootstrap: %v", err)
-	}
-	if _, err := b.Register(ctx, "machine-B"); err != nil {
-		t.Fatalf("B.Register: %v", err)
-	}
+	require.NoError(t, a.Bootstrap(ctx, "machine-A"), "A.Bootstrap")
+	_, err := b.Register(ctx, "machine-B")
+	require.NoError(t, err, "B.Register")
 	pending, err := a.PendingDevices(ctx)
-	if err != nil {
-		t.Fatalf("A.PendingDevices: %v", err)
-	}
+	require.NoError(t, err, "A.PendingDevices")
 	found := false
 	for _, d := range pending {
 		if d.ID == b.DeviceID() {
 			found = true
 		}
 	}
-	if !found {
-		t.Fatalf("A did not see B pending; pending=%+v", pending)
-	}
-	if err := a.Approve(ctx, b.DeviceID()); err != nil {
-		t.Fatalf("A.Approve(B): %v", err)
-	}
+	require.Truef(t, found, "A did not see B pending; pending=%+v", pending)
+	require.NoError(t, a.Approve(ctx, b.DeviceID()), "A.Approve(B)")
 	return a, aStore, b, bStore
 }
 
@@ -98,9 +87,7 @@ func makeRecords(n int) []rec.Record {
 func canonicalByID(t *testing.T, st *store.Store) map[string]rec.Record {
 	t.Helper()
 	all, err := st.Since(0, 0)
-	if err != nil {
-		t.Fatalf("store.Since: %v", err)
-	}
+	require.NoError(t, err, "store.Since")
 	m := make(map[string]rec.Record, len(all))
 	for _, r := range all {
 		m[r.ID] = r
@@ -110,52 +97,22 @@ func canonicalByID(t *testing.T, st *store.Store) map[string]rec.Record {
 
 // requireSameRecord asserts every synced field matches, treating Exit and DurMs
 // pointers by their nil-ness and value. KeyID (transit-only) and DeletedMs
-// (local-only) are intentionally not compared.
+// (local-only) are intentionally not compared. require.Equal compares the two
+// pointers via deep equality, so it matches on both nil-ness and pointee value.
 func requireSameRecord(t *testing.T, want, got rec.Record) {
 	t.Helper()
-	if want.ID != got.ID || want.Type != got.Type || want.TargetID != got.TargetID {
-		t.Fatalf("identity mismatch: want %+v got %+v", want, got)
-	}
-	if want.HostID != got.HostID || want.Hostname != got.Hostname || want.Seq != got.Seq {
-		t.Fatalf("stream fields mismatch for %s: want host=%s/%s seq=%d got host=%s/%s seq=%d",
-			want.ID, want.HostID, want.Hostname, want.Seq, got.HostID, got.Hostname, got.Seq)
-	}
-	if want.Session != got.Session || want.Cmd != got.Cmd || want.Cwd != got.Cwd || want.StartMs != got.StartMs {
-		t.Fatalf("content mismatch for %s: want %+v got %+v", want.ID, want, got)
-	}
-	if !samePtrInt(want.Exit, got.Exit) {
-		t.Fatalf("exit mismatch for %s: want %v got %v", want.ID, deref(want.Exit), deref(got.Exit))
-	}
-	if !samePtrInt64(want.DurMs, got.DurMs) {
-		t.Fatalf("dur_ms mismatch for %s: want %v got %v", want.ID, deref64(want.DurMs), deref64(got.DurMs))
-	}
-}
-
-func samePtrInt(a, b *int) bool {
-	if (a == nil) != (b == nil) {
-		return false
-	}
-	return a == nil || *a == *b
-}
-
-func samePtrInt64(a, b *int64) bool {
-	if (a == nil) != (b == nil) {
-		return false
-	}
-	return a == nil || *a == *b
-}
-
-func deref(p *int) any {
-	if p == nil {
-		return nil
-	}
-	return *p
-}
-func deref64(p *int64) any {
-	if p == nil {
-		return nil
-	}
-	return *p
+	require.Equal(t, want.ID, got.ID, "id mismatch")
+	require.Equal(t, want.Type, got.Type, "type mismatch")
+	require.Equal(t, want.TargetID, got.TargetID, "target_id mismatch")
+	require.Equal(t, want.HostID, got.HostID, "host_id mismatch")
+	require.Equal(t, want.Hostname, got.Hostname, "hostname mismatch")
+	require.Equal(t, want.Seq, got.Seq, "seq mismatch")
+	require.Equal(t, want.Session, got.Session, "session mismatch")
+	require.Equal(t, want.Cmd, got.Cmd, "cmd mismatch")
+	require.Equal(t, want.Cwd, got.Cwd, "cwd mismatch")
+	require.Equal(t, want.StartMs, got.StartMs, "start_ms mismatch")
+	require.Equal(t, want.Exit, got.Exit, "exit mismatch")
+	require.Equal(t, want.DurMs, got.DurMs, "dur_ms mismatch")
 }
 
 // TestIntegration is the milestone gate: two machines with distinct keys and
@@ -167,124 +124,82 @@ func TestIntegration(t *testing.T) {
 	// --- Steps 1-2: enrollment. ---
 	a, aStore, b, _ := enrollPair(t, url)
 
-	if a.DeviceID() == b.DeviceID() {
-		t.Fatal("devices must have distinct IDs")
-	}
+	require.NotEqual(t, a.DeviceID(), b.DeviceID(), "devices must have distinct IDs")
 
 	// Step 1: A is active and its HK resolves.
 	devs, err := a.http.ListDevices(ctx)
-	if err != nil {
-		t.Fatalf("ListDevices: %v", err)
-	}
+	require.NoError(t, err, "ListDevices")
 	for _, d := range devs {
-		if d.ID == a.DeviceID() && d.Status != wire.DeviceActive {
-			t.Fatalf("A should be active, got %q", d.Status)
+		if d.ID == a.DeviceID() {
+			require.Equal(t, wire.DeviceActive, d.Status, "A should be active")
 		}
 	}
 	hkA, verA, err := a.resolveHK(ctx)
-	if err != nil {
-		t.Fatalf("A.resolveHK: %v", err)
-	}
+	require.NoError(t, err, "A.resolveHK")
 
 	// Step 2: B resolves the SAME HK after approval.
 	hkB, verB, err := b.resolveHK(ctx)
-	if err != nil {
-		t.Fatalf("B.resolveHK: %v", err)
-	}
-	if hkA != hkB {
-		t.Fatal("B's HK does not equal A's HK")
-	}
-	if verA != verB || verA != bootstrapHKVersion {
-		t.Fatalf("HK versions: A=%d B=%d want %d", verA, verB, bootstrapHKVersion)
-	}
+	require.NoError(t, err, "B.resolveHK")
+	require.Equal(t, hkA, hkB, "B's HK does not equal A's HK")
+	require.Equal(t, verB, verA, "A and B HK versions differ")
+	require.Equal(t, bootstrapHKVersion, verA, "HK version")
 
 	// --- Step 3: A stores ~2500 records across >1 epoch and pushes. ---
 	const n = 2500
-	if _, err := aStore.AppendBatch(makeRecords(n)); err != nil {
-		t.Fatalf("AppendBatch: %v", err)
-	}
+	_, err = aStore.AppendBatch(makeRecords(n))
+	require.NoError(t, err, "AppendBatch")
 	pushed, err := a.Push(ctx)
-	if err != nil {
-		t.Fatalf("A.Push: %v", err)
-	}
-	if pushed != n {
-		t.Fatalf("A.Push uploaded %d, want %d", pushed, n)
-	}
+	require.NoError(t, err, "A.Push")
+	require.Equal(t, n, pushed, "A.Push uploaded")
 
 	// At least two DEK epochs were created.
 	dekList, err := a.http.ListDEKWraps(ctx, "", 1000)
-	if err != nil {
-		t.Fatalf("ListDEKWraps: %v", err)
-	}
-	if len(dekList.Wraps) < 2 {
-		t.Fatalf("want >= 2 DEK epochs, got %d", len(dekList.Wraps))
-	}
+	require.NoError(t, err, "ListDEKWraps")
+	require.GreaterOrEqual(t, len(dekList.Wraps), 2, "want >= 2 DEK epochs")
 
 	// A re-push uploads nothing (watermark persisted).
-	if again, err := a.Push(ctx); err != nil || again != 0 {
-		t.Fatalf("A.Push (repeat): pushed=%d err=%v; want 0,nil", again, err)
-	}
+	again, err := a.Push(ctx)
+	require.NoError(t, err, "A.Push (repeat)")
+	require.Zero(t, again, "A.Push (repeat) should upload nothing")
 
 	// --- Step 4: B pulls all of A's records, decrypted, fields intact. ---
 	want := canonicalByID(t, aStore)
 	recs, cursors, err := b.PullOthers(ctx, map[string]uint64{})
-	if err != nil {
-		t.Fatalf("B.PullOthers: %v", err)
-	}
-	if len(recs) != n {
-		t.Fatalf("B pulled %d records, want %d", len(recs), n)
-	}
+	require.NoError(t, err, "B.PullOthers")
+	require.Len(t, recs, n, "B pulled records")
 	seen := make(map[string]bool, n)
 	for _, got := range recs {
 		w, ok := want[got.ID]
-		if !ok {
-			t.Fatalf("B pulled unknown record %s", got.ID)
-		}
+		require.Truef(t, ok, "B pulled unknown record %s", got.ID)
 		requireSameRecord(t, w, got)
 		seen[got.ID] = true
 	}
-	if len(seen) != n {
-		t.Fatalf("B pulled %d distinct records, want %d", len(seen), n)
-	}
-	if cursors[a.DeviceID()] == 0 {
-		t.Fatal("cursor for A did not advance")
-	}
+	require.Len(t, seen, n, "B pulled distinct records")
+	require.NotZero(t, cursors[a.DeviceID()], "cursor for A did not advance")
 
 	// Second pull with advanced cursors returns nothing new.
 	recs2, cursors2, err := b.PullOthers(ctx, cursors)
-	if err != nil {
-		t.Fatalf("B.PullOthers (2nd): %v", err)
-	}
-	if len(recs2) != 0 {
-		t.Fatalf("2nd pull returned %d records, want 0", len(recs2))
-	}
-	if cursors2[a.DeviceID()] != cursors[a.DeviceID()] {
-		t.Fatalf("cursor moved on empty pull: %d -> %d", cursors[a.DeviceID()], cursors2[a.DeviceID()])
-	}
+	require.NoError(t, err, "B.PullOthers (2nd)")
+	require.Empty(t, recs2, "2nd pull returned records")
+	require.Equal(t, cursors[a.DeviceID()], cursors2[a.DeviceID()], "cursor moved on empty pull")
 
 	// --- Step 5: tombstone replays to B. ---
 	targetID := recs[0].ID
-	if _, err := aStore.Append(rec.Record{
+	_, err = aStore.Append(rec.Record{
 		Type:     rec.TypeDelete,
 		TargetID: targetID,
 		StartMs:  time.Date(2026, 1, 1, 0, 30, 0, 0, time.UTC).UnixMilli(),
-	}); err != nil {
-		t.Fatalf("append tombstone: %v", err)
-	}
-	if pushed, err := a.Push(ctx); err != nil || pushed != 1 {
-		t.Fatalf("A.Push tombstone: pushed=%d err=%v; want 1,nil", pushed, err)
-	}
+	})
+	require.NoError(t, err, "append tombstone")
+	pushed, err = a.Push(ctx)
+	require.NoError(t, err, "A.Push tombstone")
+	require.Equal(t, 1, pushed, "A.Push tombstone")
 	recs3, _, err := b.PullOthers(ctx, cursors2)
-	if err != nil {
-		t.Fatalf("B.PullOthers (tombstone): %v", err)
-	}
-	if len(recs3) != 1 {
-		t.Fatalf("tombstone pull returned %d records, want 1", len(recs3))
-	}
+	require.NoError(t, err, "B.PullOthers (tombstone)")
+	require.Len(t, recs3, 1, "tombstone pull")
 	tomb := recs3[0]
-	if tomb.Type != rec.TypeDelete || tomb.TargetID != targetID {
-		t.Fatalf("B did not receive a usable delete tombstone: %+v", tomb)
-	}
+	require.Equalf(t, rec.TypeDelete, tomb.Type, "B did not receive a usable delete tombstone: %+v", tomb)
+	require.Equalf(t, targetID, tomb.TargetID, "B did not receive a usable delete tombstone: %+v", tomb)
 }
 
 // TestPayloadRoundTrip focuses on field fidelity through seal->push->pull->open,
@@ -300,26 +215,18 @@ func TestPayloadRoundTrip(t *testing.T) {
 		{ID: rec.NewID(), Cmd: "grep x", Cwd: "/var", Session: "s3", StartMs: 1_700_000_200_000, Exit: rec.IntPtr(2)},        // DurMs nil
 		{ID: rec.NewID(), Cmd: "sleep 1", Cwd: "/etc", Session: "s4", StartMs: 1_700_000_300_000, DurMs: rec.Int64Ptr(1000)}, // Exit nil
 	}
-	if _, err := aStore.AppendBatch(inputs); err != nil {
-		t.Fatalf("AppendBatch: %v", err)
-	}
-	if _, err := a.Push(ctx); err != nil {
-		t.Fatalf("A.Push: %v", err)
-	}
+	_, err := aStore.AppendBatch(inputs)
+	require.NoError(t, err, "AppendBatch")
+	_, err = a.Push(ctx)
+	require.NoError(t, err, "A.Push")
 
 	want := canonicalByID(t, aStore)
 	recs, _, err := b.PullOthers(ctx, map[string]uint64{})
-	if err != nil {
-		t.Fatalf("B.PullOthers: %v", err)
-	}
-	if len(recs) != len(inputs) {
-		t.Fatalf("pulled %d, want %d", len(recs), len(inputs))
-	}
+	require.NoError(t, err, "B.PullOthers")
+	require.Len(t, recs, len(inputs), "pulled count")
 	for _, got := range recs {
 		requireSameRecord(t, want[got.ID], got)
-		if got.Hostname != aStore.Hostname() {
-			t.Fatalf("hostname not preserved: got %q want %q", got.Hostname, aStore.Hostname())
-		}
+		require.Equal(t, aStore.Hostname(), got.Hostname, "hostname not preserved")
 	}
 }
 
@@ -333,47 +240,36 @@ func TestPullDecryptionFatal(t *testing.T) {
 	a, aStore, b, _ := enrollPair(t, url)
 
 	// A pushes one honest record so a real DEK wrap exists on the server.
-	if _, err := aStore.Append(rec.Record{Cmd: "echo hi", StartMs: 1_700_000_000_000}); err != nil {
-		t.Fatalf("append: %v", err)
-	}
-	if _, err := a.Push(ctx); err != nil {
-		t.Fatalf("A.Push: %v", err)
-	}
+	_, err := aStore.Append(rec.Record{Cmd: "echo hi", StartMs: 1_700_000_000_000})
+	require.NoError(t, err, "append")
+	_, err = a.Push(ctx)
+	require.NoError(t, err, "A.Push")
 	dekList, err := a.http.ListDEKWraps(ctx, "", 10)
-	if err != nil || len(dekList.Wraps) == 0 {
-		t.Fatalf("ListDEKWraps: %v (%d)", err, len(dekList.Wraps))
-	}
+	require.NoError(t, err, "ListDEKWraps")
+	require.NotEmpty(t, dekList.Wraps, "ListDEKWraps returned no wraps")
 	keyID := dekList.Wraps[0].KeyID
 
 	// Craft a tampered record: correct keyID and AAD, but sealed with a random
 	// key the DEK wrap does not correspond to.
 	var wrongDEK [32]byte
-	if _, err := rand.Read(wrongDEK[:]); err != nil {
-		t.Fatalf("rand: %v", err)
-	}
+	_, err = rand.Read(wrongDEK[:])
+	require.NoError(t, err, "rand")
 	tamperSeq := uint64(1_000_000)
 	tamperID := rec.NewID()
 	pt, err := marshalPayload(rec.Record{ID: tamperID, HostID: aStore.HostID(), Cmd: "evil", StartMs: 1_700_000_000_000})
-	if err != nil {
-		t.Fatalf("marshalPayload: %v", err)
-	}
+	require.NoError(t, err, "marshalPayload")
 	aad := cryptobox.RecordAAD{RecordID: tamperID, HostID: aStore.HostID(), Seq: tamperSeq, KeyID: keyID}
 	blob, err := cryptobox.SealRecord(pt, wrongDEK, aad)
-	if err != nil {
-		t.Fatalf("SealRecord: %v", err)
-	}
-	if _, err := a.http.PushRecords(ctx, wire.PushReq{
+	require.NoError(t, err, "SealRecord")
+	_, err = a.http.PushRecords(ctx, wire.PushReq{
 		HostID:  aStore.HostID(),
 		Records: []wire.PushRecord{{Seq: tamperSeq, ID: tamperID, KeyID: keyID, Blob: blob}},
-	}); err != nil {
-		t.Fatalf("push tampered: %v", err)
-	}
+	})
+	require.NoError(t, err, "push tampered")
 
 	// B must FAIL the pull, not skip.
 	_, _, err = b.PullOthers(ctx, map[string]uint64{})
-	if err == nil {
-		t.Fatal("PullOthers: want fatal decryption error, got nil")
-	}
+	require.Error(t, err, "PullOthers: want fatal decryption error, got nil")
 }
 
 // TestRevokeRotation proves O(1) revocation: after A revokes B and rotates the
@@ -387,71 +283,49 @@ func TestRevokeRotation(t *testing.T) {
 
 	// A writes and pushes records under HK version 1.
 	const n = 1200 // spans >1 push batch and >1 epoch
-	if _, err := aStore.AppendBatch(makeRecords(n)); err != nil {
-		t.Fatalf("AppendBatch: %v", err)
-	}
-	if pushed, err := a.Push(ctx); err != nil || pushed != n {
-		t.Fatalf("A.Push: pushed=%d err=%v want %d", pushed, err, n)
-	}
+	_, err := aStore.AppendBatch(makeRecords(n))
+	require.NoError(t, err, "AppendBatch")
+	pushed, err := a.Push(ctx)
+	require.NoError(t, err, "A.Push")
+	require.Equal(t, n, pushed, "A.Push")
 	want := canonicalByID(t, aStore)
 
 	// A revokes B and rotates to HK version 2.
-	if err := a.Revoke(ctx, b.DeviceID()); err != nil {
-		t.Fatalf("A.Revoke(B): %v", err)
-	}
+	require.NoError(t, a.Revoke(ctx, b.DeviceID()), "A.Revoke(B)")
 
 	// B's device is revoked and has no HK wrap anymore.
 	devs, err := a.http.ListDevices(ctx)
-	if err != nil {
-		t.Fatalf("ListDevices: %v", err)
-	}
+	require.NoError(t, err, "ListDevices")
 	for _, d := range devs {
-		if d.ID == b.DeviceID() && d.Status != wire.DeviceRevoked {
-			t.Fatalf("B should be revoked, got %q", d.Status)
+		if d.ID == b.DeviceID() {
+			require.Equal(t, wire.DeviceRevoked, d.Status, "B should be revoked")
 		}
 	}
-	if _, found, err := b.http.GetHKWrap(ctx, b.DeviceID()); err != nil || found {
-		t.Fatalf("B GetHKWrap after revoke: found=%v err=%v; want found=false", found, err)
-	}
+	_, found, err := b.http.GetHKWrap(ctx, b.DeviceID())
+	require.NoError(t, err, "B GetHKWrap after revoke")
+	require.False(t, found, "B GetHKWrap after revoke: want found=false")
 
 	// A is now on HK version 2.
 	_, verA, err := a.resolveHK(ctx)
-	if err != nil {
-		t.Fatalf("A.resolveHK after rotate: %v", err)
-	}
-	if verA != bootstrapHKVersion+1 {
-		t.Fatalf("A HK version = %d, want %d", verA, bootstrapHKVersion+1)
-	}
+	require.NoError(t, err, "A.resolveHK after rotate")
+	require.Equal(t, bootstrapHKVersion+1, verA, "A HK version")
 
 	// Enroll a fresh device C AFTER the rotation. It receives HK2.
 	c, _ := newDevice(t, url)
-	if _, err := c.Register(ctx, "machine-C"); err != nil {
-		t.Fatalf("C.Register: %v", err)
-	}
-	if err := a.Approve(ctx, c.DeviceID()); err != nil {
-		t.Fatalf("A.Approve(C): %v", err)
-	}
+	_, err = c.Register(ctx, "machine-C")
+	require.NoError(t, err, "C.Register")
+	require.NoError(t, a.Approve(ctx, c.DeviceID()), "A.Approve(C)")
 	hkC, verC, err := c.resolveHK(ctx)
-	if err != nil {
-		t.Fatalf("C.resolveHK: %v", err)
-	}
-	if verC != bootstrapHKVersion+1 {
-		t.Fatalf("C HK version = %d, want %d", verC, bootstrapHKVersion+1)
-	}
+	require.NoError(t, err, "C.resolveHK")
+	require.Equal(t, bootstrapHKVersion+1, verC, "C HK version")
 	hkA2, _, _ := a.resolveHK(ctx)
-	if hkC != hkA2 {
-		t.Fatal("C's HK does not equal A's rotated HK")
-	}
+	require.Equal(t, hkA2, hkC, "C's HK does not equal A's rotated HK")
 
 	// C decrypts every pre-rotation record — proving old records stayed
 	// decryptable through the rotation without being re-encrypted.
 	recs, _, err := c.PullOthers(ctx, map[string]uint64{})
-	if err != nil {
-		t.Fatalf("C.PullOthers: %v", err)
-	}
-	if len(recs) != n {
-		t.Fatalf("C pulled %d records, want %d", len(recs), n)
-	}
+	require.NoError(t, err, "C.PullOthers")
+	require.Len(t, recs, n, "C pulled records")
 	for _, got := range recs {
 		requireSameRecord(t, want[got.ID], got)
 	}

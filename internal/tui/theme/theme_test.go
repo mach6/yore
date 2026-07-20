@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/stretchr/testify/require"
 )
 
 func TestHostStable(t *testing.T) {
@@ -14,17 +15,13 @@ func TestHostStable(t *testing.T) {
 	for _, name := range []string{"web-01", "db.prod", "laptop", ""} {
 		a := th.Host(name).GetForeground()
 		b := th.Host(name).GetForeground()
-		if a != b {
-			t.Errorf("Host(%q) not stable within an instance: %v vs %v", name, a, b)
-		}
+		require.Equalf(t, a, b, "Host(%q) not stable within an instance", name)
 	}
 	// Same name -> same color across independently constructed themes
 	// (a proxy for cross-process stability of the FNV hash + fixed palette).
 	th2 := New()
 	for _, name := range []string{"web-01", "db.prod", "gateway-7"} {
-		if th.Host(name).GetForeground() != th2.Host(name).GetForeground() {
-			t.Errorf("Host(%q) differs across Theme instances", name)
-		}
+		require.Equalf(t, th.Host(name).GetForeground(), th2.Host(name).GetForeground(), "Host(%q) differs across Theme instances", name)
 	}
 }
 
@@ -36,9 +33,7 @@ func TestHostDistinguishes(t *testing.T) {
 		seen[th.Host(n).GetForeground()] = true
 	}
 	// With 8 buckets and 10 distinct names, we must observe >1 distinct color.
-	if len(seen) < 2 {
-		t.Fatalf("Host produced only %d distinct colors across %d names; want >= 2", len(seen), len(names))
-	}
+	require.GreaterOrEqualf(t, len(seen), 2, "Host produced only %d distinct colors across %d names", len(seen), len(names))
 }
 
 func TestRelTime(t *testing.T) {
@@ -68,37 +63,34 @@ func TestRelTime(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got := RelTime(nowMs, tc.then)
-			if got != tc.want {
-				t.Fatalf("RelTime = %q, want %q", got, tc.want)
-			}
-			if utf8.RuneCountInString(got) > 8 {
-				t.Fatalf("RelTime = %q exceeds 8 columns", got)
-			}
+			require.Equal(t, tc.want, got)
+			require.LessOrEqualf(t, utf8.RuneCountInString(got), 8, "RelTime = %q exceeds 8 columns", got)
 		})
 	}
 }
 
 func TestDuration(t *testing.T) {
 	tests := []struct {
+		name string
 		ms   int64
 		want string
 	}{
-		{0, "0ms"},
-		{-5, "0ms"},
-		{412, "412ms"},
-		{999, "999ms"},
-		{1000, "1.0s"},
-		{2100, "2.1s"},
-		{59500, "59.5s"},
-		{60000, "1m00s"},
-		{312000, "5m12s"},
-		{3599000, "59m59s"},
-		{3600000, "1h00m"},
-		{3780000, "1h03m"},
+		{"zero", 0, "0ms"},
+		{"negative clamps to zero", -5, "0ms"},
+		{"sub-second", 412, "412ms"},
+		{"just under a second", 999, "999ms"},
+		{"one second", 1000, "1.0s"},
+		{"seconds with tenths", 2100, "2.1s"},
+		{"just under a minute", 59500, "59.5s"},
+		{"one minute", 60000, "1m00s"},
+		{"minutes and seconds", 312000, "5m12s"},
+		{"just under an hour", 3599000, "59m59s"},
+		{"one hour", 3600000, "1h00m"},
+		{"hours and minutes", 3780000, "1h03m"},
 	}
 	for _, tc := range tests {
-		if got := Duration(tc.ms); got != tc.want {
-			t.Errorf("Duration(%d) = %q, want %q", tc.ms, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, Duration(tc.ms))
+		})
 	}
 }

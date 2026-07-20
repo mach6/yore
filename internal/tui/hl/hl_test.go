@@ -1,6 +1,11 @@
 package hl
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
 
 // at returns the Kind classified at the first index of sub within s.
 func at(s, sub string) Kind {
@@ -22,34 +27,34 @@ func indexOf(s, sub string) int {
 
 func TestClassify(t *testing.T) {
 	cases := []struct {
+		name     string
 		cmd, sub string
 		want     Kind
 	}{
-		{"git commit -m fix", "git", Command},
-		{"git commit -m fix", "-m", Flag},
-		{"git commit -m 'a msg'", "'a msg'", String},
-		{"cat /etc/hosts", "cat", Command},
-		{"cat /etc/hosts", "/etc/hosts", Path},
-		{"echo $HOME", "$HOME", Variable},
-		{"echo ${PATH}", "${PATH}", Variable},
-		{"ls | grep foo", "|", Operator},
-		{"ls | grep foo", "grep", Command},  // command after a pipe
-		{"FOO=bar ./run", "./run", Command}, // assignment doesn't take the command slot
-		{"docker build -t app:1 .", "docker", Command},
-		{"docker build -t app:1 .", "-t", Flag},
+		{"command", "git commit -m fix", "git", Command},
+		{"flag", "git commit -m fix", "-m", Flag},
+		{"quoted string", "git commit -m 'a msg'", "'a msg'", String},
+		{"cat command", "cat /etc/hosts", "cat", Command},
+		{"path", "cat /etc/hosts", "/etc/hosts", Path},
+		{"variable", "echo $HOME", "$HOME", Variable},
+		{"braced variable", "echo ${PATH}", "${PATH}", Variable},
+		{"pipe operator", "ls | grep foo", "|", Operator},
+		{"command after a pipe", "ls | grep foo", "grep", Command},
+		{"assignment doesn't take the command slot", "FOO=bar ./run", "./run", Command},
+		{"docker command", "docker build -t app:1 .", "docker", Command},
+		{"docker flag", "docker build -t app:1 .", "-t", Flag},
 	}
 	for _, c := range cases {
-		got := at(c.cmd, c.sub)
-		if got != c.want {
-			t.Errorf("Classify(%q) at %q = %v, want %v", c.cmd, c.sub, got, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			require.Equal(t, c.want, at(c.cmd, c.sub))
+		})
 	}
 }
 
 func TestClassifyLengthMatches(t *testing.T) {
 	for _, s := range []string{"", "x", "git status", "a | b && c", "echo \"hi $x\""} {
-		if len(Classify(s)) != len(s) {
-			t.Errorf("Classify(%q) length %d != %d", s, len(Classify(s)), len(s))
-		}
+		t.Run(fmt.Sprintf("%q", s), func(t *testing.T) {
+			require.Len(t, Classify(s), len(s))
+		})
 	}
 }

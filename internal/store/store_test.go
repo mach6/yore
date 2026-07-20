@@ -1,10 +1,12 @@
 package store
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"yore/internal/config"
 	"yore/internal/rec"
@@ -14,9 +16,7 @@ import (
 func openTemp(t *testing.T) *Store {
 	t.Helper()
 	s, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
+	require.NoError(t, err, "Open")
 	t.Cleanup(func() { s.Close() })
 	return s
 }
@@ -25,187 +25,136 @@ func TestAppendMonotonicAndHostFields(t *testing.T) {
 	s := openTemp(t)
 
 	hn, _ := os.Hostname()
-	if s.HostID() == "" {
-		t.Fatal("HostID empty after Open")
-	}
-	if hn != "" && s.Hostname() != hn {
-		t.Errorf("Hostname = %q, want %q", s.Hostname(), hn)
+	require.NotEmpty(t, s.HostID(), "HostID empty after Open")
+	if hn != "" {
+		assert.Equal(t, hn, s.Hostname())
 	}
 
 	var last uint64
 	for i := 0; i < 5; i++ {
 		r, err := s.Append(rec.Record{Cmd: fmt.Sprintf("cmd-%d", i)})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if r.Seq != last+1 {
-			t.Errorf("seq = %d, want %d", r.Seq, last+1)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, last+1, r.Seq, "seq")
 		last = r.Seq
-		if r.ID == "" {
-			t.Error("ID not generated")
-		}
-		if r.HostID != s.HostID() || r.Hostname != s.Hostname() {
-			t.Errorf("host fields not filled: %+v", r)
-		}
+		assert.NotEmpty(t, r.ID, "ID not generated")
+		assert.Equal(t, s.HostID(), r.HostID, "record HostID not filled")
+		assert.Equal(t, s.Hostname(), r.Hostname, "record Hostname not filled")
 	}
 
-	if ls, _ := s.LastSeq(); ls != 5 {
-		t.Errorf("LastSeq = %d, want 5", ls)
-	}
-	if c, _ := s.Count(); c != 5 {
-		t.Errorf("Count = %d, want 5", c)
-	}
+	ls, _ := s.LastSeq()
+	assert.EqualValues(t, 5, ls, "LastSeq")
+	c, _ := s.Count()
+	assert.Equal(t, 5, c, "Count")
 }
 
 func TestIdempotentReAppend(t *testing.T) {
 	s := openTemp(t)
 
 	first, err := s.Append(rec.Record{ID: "fixed", Cmd: "echo once"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	added, err := s.AppendBatch([]rec.Record{
 		{ID: "fixed", Cmd: "echo once"},
 		{ID: "fixed", Cmd: "same id different cmd"},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if added != 0 {
-		t.Errorf("AppendBatch added = %d, want 0 (all duplicate IDs)", added)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, 0, added, "AppendBatch added, want 0 (all duplicate IDs)")
 
 	// A duplicate single Append returns the originally stored record.
 	got, err := s.Append(rec.Record{ID: "fixed", Cmd: "yet another"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Seq != first.Seq || got.Cmd != first.Cmd {
-		t.Errorf("dup Append returned %+v, want stored %+v", got, first)
-	}
-	if c, _ := s.Count(); c != 1 {
-		t.Errorf("Count = %d, want 1", c)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, first.Seq, got.Seq, "dup Append returned wrong Seq")
+	assert.Equal(t, first.Cmd, got.Cmd, "dup Append returned wrong Cmd")
+
+	c, _ := s.Count()
+	assert.Equal(t, 1, c, "Count")
 }
 
 func TestSecondOpenLocked(t *testing.T) {
 	dir := t.TempDir()
 	s, err := Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer s.Close()
 
-	if _, err := Open(dir); !errors.Is(err, ErrLocked) {
-		t.Fatalf("second Open err = %v, want ErrLocked", err)
-	}
+	_, err = Open(dir)
+	require.ErrorIs(t, err, ErrLocked, "second Open")
 }
 
 func TestTombstoneMarksTargetAndAllExcludes(t *testing.T) {
 	s := openTemp(t)
 
-	if _, err := s.Append(rec.Record{ID: "victim", Cmd: "secret command"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Append(rec.Record{ID: "keep", Cmd: "harmless"}); err != nil {
-		t.Fatal(err)
-	}
+	_, err := s.Append(rec.Record{ID: "victim", Cmd: "secret command"})
+	require.NoError(t, err)
+	_, err = s.Append(rec.Record{ID: "keep", Cmd: "harmless"})
+	require.NoError(t, err)
 	del, err := s.Append(rec.Record{Type: rec.TypeDelete, TargetID: "victim", StartMs: 12345})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if del.Type != rec.TypeDelete || del.Seq == 0 {
-		t.Fatalf("tombstone not appended to stream: %+v", del)
-	}
+	require.NoError(t, err)
+	require.Equal(t, rec.TypeDelete, del.Type, "tombstone not appended to stream")
+	require.NotZero(t, del.Seq, "tombstone not appended to stream")
 
 	// All excludes both the tombstone and the now-deleted target.
 	all, err := s.All()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(all) != 1 || all[0].ID != "keep" {
-		t.Fatalf("All = %+v, want only [keep]", all)
-	}
+	require.NoError(t, err)
+	require.Len(t, all, 1, "All, want only [keep]")
+	assert.Equal(t, "keep", all[0].ID, "All, want only [keep]")
 
 	// Since is the raw stream: target (deleted), keep, and the tombstone.
 	raw, err := s.Since(0, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(raw) != 3 {
-		t.Fatalf("Since(0) len = %d, want 3", len(raw))
-	}
+	require.NoError(t, err)
+	require.Len(t, raw, 3, "Since(0)")
 	var sawTarget, sawTomb bool
 	for _, r := range raw {
 		if r.ID == "victim" {
 			sawTarget = true
-			if r.DeletedMs != 12345 {
-				t.Errorf("victim DeletedMs = %d, want 12345 (from tombstone StartMs)", r.DeletedMs)
-			}
+			assert.Equal(t, int64(12345), r.DeletedMs, "victim DeletedMs (from tombstone StartMs)")
 		}
 		if r.Type == rec.TypeDelete {
 			sawTomb = true
 		}
 	}
-	if !sawTarget || !sawTomb {
-		t.Errorf("Since must include deleted target and tombstone; target=%v tomb=%v", sawTarget, sawTomb)
-	}
+	assert.True(t, sawTarget, "Since must include deleted target")
+	assert.True(t, sawTomb, "Since must include tombstone")
 }
 
 func TestMarkDeleted(t *testing.T) {
 	s := openTemp(t)
 
-	if _, err := s.Append(rec.Record{ID: "x", Cmd: "rm -rf /"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.MarkDeleted("x", 999); err != nil {
-		t.Fatal(err)
-	}
-	if all, _ := s.All(); len(all) != 0 {
-		t.Errorf("All after MarkDeleted = %+v, want empty", all)
-	}
+	_, err := s.Append(rec.Record{ID: "x", Cmd: "rm -rf /"})
+	require.NoError(t, err)
+	require.NoError(t, s.MarkDeleted("x", 999))
+
+	all, _ := s.All()
+	assert.Empty(t, all, "All after MarkDeleted")
+
 	raw, _ := s.Since(0, 0)
-	if len(raw) != 1 || raw[0].DeletedMs != 999 {
-		t.Errorf("raw stream = %+v, want x with DeletedMs=999", raw)
+	if assert.Len(t, raw, 1, "raw stream after MarkDeleted") {
+		assert.Equal(t, int64(999), raw[0].DeletedMs, "raw stream DeletedMs")
 	}
 
-	if err := s.MarkDeleted("does-not-exist", 0); err == nil {
-		t.Error("MarkDeleted on missing ID should error")
-	}
+	assert.Error(t, s.MarkDeleted("does-not-exist", 0), "MarkDeleted on missing ID should error")
 }
 
 func TestSinceLimitAndStrictlyGreater(t *testing.T) {
 	s := openTemp(t)
 	for i := 0; i < 10; i++ {
-		if _, err := s.Append(rec.Record{Cmd: fmt.Sprintf("c%d", i)}); err != nil {
-			t.Fatal(err)
-		}
+		_, err := s.Append(rec.Record{Cmd: fmt.Sprintf("c%d", i)})
+		require.NoError(t, err)
 	}
 	rows, err := s.Since(3, 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 4 {
-		t.Fatalf("Since(3,4) len = %d, want 4", len(rows))
-	}
-	if rows[0].Seq != 4 {
-		t.Errorf("first seq = %d, want 4 (strictly greater than 3)", rows[0].Seq)
-	}
+	require.NoError(t, err)
+	require.Len(t, rows, 4, "Since(3,4)")
+	assert.EqualValues(t, 4, rows[0].Seq, "first seq should be strictly greater than 3")
 }
 
 func TestMetaRoundTrip(t *testing.T) {
 	s := openTemp(t)
-	if v, _ := s.Meta("absent"); v != "" {
-		t.Errorf("Meta(absent) = %q, want empty", v)
-	}
-	if err := s.SetMeta("k", "v"); err != nil {
-		t.Fatal(err)
-	}
-	if v, _ := s.Meta("k"); v != "v" {
-		t.Errorf("Meta(k) = %q, want v", v)
-	}
+	v, _ := s.Meta("absent")
+	assert.Empty(t, v, "Meta(absent)")
+
+	require.NoError(t, s.SetMeta("k", "v"))
+
+	v2, _ := s.Meta("k")
+	assert.Equal(t, "v", v2, "Meta(k)")
 }
 
 func TestIngestSpoolEndToEnd(t *testing.T) {
@@ -215,36 +164,25 @@ func TestIngestSpoolEndToEnd(t *testing.T) {
 	const n = 20
 	for i := 0; i < n; i++ {
 		r := rec.Record{ID: fmt.Sprintf("s-%d", i), Cmd: fmt.Sprintf("cmd %d", i)}
-		if err := spool.Append(sd, r); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, spool.Append(sd, r))
 	}
 
 	added, err := s.IngestSpool()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if added != n {
-		t.Fatalf("IngestSpool added %d, want %d", added, n)
-	}
+	require.NoError(t, err)
+	require.Equal(t, n, added, "IngestSpool added")
 
 	all, err := s.All()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(all) != n {
-		t.Fatalf("All len = %d, want %d", len(all), n)
-	}
+	require.NoError(t, err)
+	require.Len(t, all, n, "All")
 	for _, r := range all {
-		if r.HostID != s.HostID() || r.Hostname != s.Hostname() {
-			t.Errorf("ingested record missing host fields: %+v", r)
-		}
+		assert.Equal(t, s.HostID(), r.HostID, "ingested record missing host fields")
+		assert.Equal(t, s.Hostname(), r.Hostname, "ingested record missing host fields")
 	}
 
 	// Spool is now empty; a second ingest is a no-op.
-	if added2, err := s.IngestSpool(); err != nil || added2 != 0 {
-		t.Errorf("second IngestSpool = (%d,%v), want (0,nil)", added2, err)
-	}
+	added2, err := s.IngestSpool()
+	assert.NoError(t, err, "second IngestSpool")
+	assert.Equal(t, 0, added2, "second IngestSpool")
 }
 
 func BenchmarkAppend(b *testing.B) {
