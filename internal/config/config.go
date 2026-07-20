@@ -63,6 +63,17 @@ type Config struct {
 	// Ctrl-R search widget. The CLI passes this through to each TUI's Options.
 	Keymap string `json:"keymap,omitempty"` // default "emacs"
 
+	// Integration picks how deeply the emitted shell hooks take over history:
+	//   "takeover" (default) — yore is the single source of truth: the shell's
+	//     persistent history is disabled, its in-memory list is seeded from yore
+	//     and gated by yore's redaction (so !N / up-arrow work against yore-
+	//     consistent, secret-free history), and Ctrl-R / up-arrow / h / hs are
+	//     yore.
+	//   "coexist"  — record alongside the shell's own history (untouched); rebind
+	//     Ctrl-R and add h/hs. Native !N works against native history.
+	//   "capture"  — only record; no keybinding or alias changes.
+	Integration string `json:"integration,omitempty"` // default "takeover"
+
 	// Recording filters (see internal/redact). Commands matching a built-in
 	// secret pattern or any of these user regexes are never recorded; commands
 	// run under an ignored directory are never recorded; a leading space skips
@@ -86,6 +97,16 @@ func (c Config) EnterExecutesOn() bool {
 // KeymapVim reports whether the vim keymap is selected (Atuin keymap_mode=vim
 // parity). The empty value and "emacs" both keep the default emacs bindings.
 func (c Config) KeymapVim() bool { return c.Keymap == "vim" }
+
+// IntegrationMode returns the shell-integration mode, defaulting to "takeover".
+func (c Config) IntegrationMode() string {
+	switch c.Integration {
+	case "coexist", "capture":
+		return c.Integration
+	default:
+		return "takeover"
+	}
+}
 
 func (c Config) KeyEpochD() time.Duration     { return durOr(c.KeyEpoch, 24*time.Hour) }
 func (c Config) DaemonIdleD() time.Duration   { return durOr(c.DaemonIdle, 30*time.Minute) }

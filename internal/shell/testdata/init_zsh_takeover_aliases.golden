@@ -1,4 +1,4 @@
-# yore — zsh shell integration ({{.Mode}} mode).
+# yore — zsh shell integration (takeover mode).
 # Emitted by `yore init zsh`; load with:  eval "$(yore init zsh)"
 # Sourcing repeatedly is safe and produces no output during normal operation.
 
@@ -12,7 +12,7 @@ autoload -Uz add-zsh-hook
 # One stable session id per shell. Exported so it survives `exec` and subshells;
 # only generated when unset so a re-exec'd shell keeps the same id.
 if [[ -z ${YORE_SESSION-} ]]; then
-	export YORE_SESSION="$(command {{.Bin}} gen-id 2>/dev/null)"
+	export YORE_SESSION="$(command yore gen-id 2>/dev/null)"
 fi
 
 # Two-phase capture state. Globals, __yore-prefixed; nothing else touches them.
@@ -35,7 +35,7 @@ _yore_precmd() {
 		# Command text goes in on stdin (printf), never argv: immune to quoting
 		# quirks and E2BIG. Fully backgrounded and disowned so the prompt never
 		# waits and no job-control notice ever prints.
-		printf '%s' "$__yore_cmd" | command {{.Bin}} record \
+		printf '%s' "$__yore_cmd" | command yore record \
 			--exit "$exit" --duration-ms "$dur" \
 			--session "$YORE_SESSION" --cwd "$PWD" &>/dev/null &!
 		__yore_cmd=
@@ -46,7 +46,6 @@ _yore_precmd() {
 
 add-zsh-hook preexec _yore_preexec
 add-zsh-hook precmd _yore_precmd
-{{- if .Takeover}}
 
 # --- History takeover: yore is the single source of truth ---------------------
 # Disable the shell's OWN persistent history so no unredacted ~/.zsh_history is
@@ -60,7 +59,7 @@ unsetopt inc_append_history share_history 2>/dev/null
 if [[ -o interactive ]]; then
 	# Seed the in-memory history from yore (best effort; never blocks startup).
 	# =(...) is a real temp file, which `fc -R` needs.
-	fc -R =(command {{.Bin}} export --shell 2>/dev/null) 2>/dev/null
+	fc -R =(command yore export --shell 2>/dev/null) 2>/dev/null
 fi
 # Redaction gate: keep the shell's in-memory history consistent with yore's
 # store — anything yore would drop (secret / ignored dir / space-prefixed) is
@@ -68,11 +67,9 @@ fi
 # zshaddhistory function returning non-zero skips the entry.
 _yore_addhistory() {
 	emulate -L zsh
-	command {{.Bin}} filter --cwd "$PWD" <<< "${1%$'\n'}"
+	command yore filter --cwd "$PWD" <<< "${1%$'\n'}"
 }
 add-zsh-hook zshaddhistory _yore_addhistory
-{{- end}}
-{{- if .Bindings}}
 
 # Whether accepting a Ctrl-R result should run it immediately (Atuin parity).
 # Read from config.json at call time — NOT at source time — so toggling
@@ -89,7 +86,7 @@ _yore_enter_executes() {
 # accept-line instead of being left on the line for review.
 _yore_search_widget() {
 	local selected
-	selected=$(command {{.Bin}} search --query "$BUFFER" 2>/dev/null)
+	selected=$(command yore search --query "$BUFFER" 2>/dev/null)
 	if (( $? == 0 )) && [[ -n $selected ]]; then
 		BUFFER=$selected
 		CURSOR=$#BUFFER
@@ -100,29 +97,13 @@ _yore_search_widget() {
 	fi
 	zle reset-prompt
 }
-{{- if not .Takeover}}
-# Coexist mode: bind Up to search only if the user opts in (config bind_up_arrow).
-_yore_bind_up_arrow() {
-	local f="${YORE_DIR:-$HOME/.config/yore}/config.json"
-	[[ -r $f ]] && grep -q '"bind_up_arrow"[[:space:]]*:[[:space:]]*true' "$f"
-}
-{{- end}}
 if [[ -o interactive ]]; then
 	zle -N _yore_search_widget
 	bindkey '^r' _yore_search_widget
-	{{- if .Takeover}}
 	# Takeover: Up arrow opens yore search (native scroll still on Down/^N).
 	bindkey '^[[A' _yore_search_widget  # Up (normal cursor keys)
 	bindkey '^[OA' _yore_search_widget  # Up (application cursor keys)
-	{{- else}}
-	if _yore_bind_up_arrow; then
-		bindkey '^[[A' _yore_search_widget
-		bindkey '^[OA' _yore_search_widget
-	fi
-	{{- end}}
 fi
-{{- end}}
-{{- if .Aliases}}
 
 # Convenience aliases (Options.Aliases). You may already use h/hs as aliases
 # (the common `history` / `history | grep` pattern). Remove those first so our
@@ -130,12 +111,11 @@ fi
 # not alias-expand it at PARSE time — an unescaped hs() would abort sourcing
 # the whole script with "defining function based on alias".
 unalias h hs 2>/dev/null
-alias h='{{.Bin}} browse'
+alias h='yore browse'
 \hs() {
 	if [[ -t 1 ]]; then
-		command {{.Bin}} search --query "$*"
+		command yore search --query "$*"
 	else
-		command {{.Bin}} search --headless "$*"
+		command yore search --headless "$*"
 	fi
 }
-{{- end}}

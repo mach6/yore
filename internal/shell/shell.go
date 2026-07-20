@@ -30,13 +30,19 @@ type Options struct {
 	// Bin is the command name or path used to invoke yore from the hooks
 	// (e.g. "yore" or "/usr/local/bin/yore"). Empty means DefaultBin.
 	Bin string
+	// Mode is the integration depth: "takeover" (default), "coexist", or
+	// "capture". Empty means "takeover".
+	Mode string
 }
 
 // tmplData is the payload handed to the embedded templates.
 type tmplData struct {
-	Bin     string // resolved binary name/path
-	Aliases bool   // emit the alias block
-	Preexec string // vendored bash-preexec source (bash only)
+	Bin      string // resolved binary name/path
+	Aliases  bool   // emit the alias block (and only when not capture-only)
+	Preexec  string // vendored bash-preexec source (bash only)
+	Mode     string // "takeover" | "coexist" | "capture"
+	Takeover bool   // Mode == takeover: yore owns history
+	Bindings bool   // Mode != capture: rebind Ctrl-R (+ up-arrow), emit aliases
 }
 
 // Init returns the full shell-integration script for the given shell, which
@@ -46,7 +52,19 @@ func Init(sh string, o Options) (string, error) {
 	if bin == "" {
 		bin = DefaultBin
 	}
-	data := tmplData{Bin: bin, Aliases: o.Aliases}
+	mode := o.Mode
+	switch mode {
+	case "coexist", "capture":
+	default:
+		mode = "takeover"
+	}
+	data := tmplData{
+		Bin:      bin,
+		Mode:     mode,
+		Takeover: mode == "takeover",
+		Bindings: mode != "capture",
+		Aliases:  o.Aliases && mode != "capture",
+	}
 
 	var asset string
 	switch sh {

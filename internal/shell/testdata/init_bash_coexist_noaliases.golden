@@ -1,4 +1,4 @@
-# yore — bash shell integration.
+# yore — bash shell integration (coexist mode).
 # Emitted by `yore init bash`; load with:  eval "$(yore init bash)"
 # Sourcing repeatedly is safe and produces no output during normal operation.
 
@@ -432,7 +432,7 @@ _yore_enter_executes() {
 	[[ -r $f ]] && grep -q '"enter_executes"[[:space:]]*:[[:space:]]*true' "$f"
 }
 
-# Ctrl-R: interactive search. The TUI draws on /dev/tty, so this command
+# Interactive search widget. The TUI draws on /dev/tty, so this command
 # substitution captures only the final selection printed to stdout. A missing
 # binary or a cancelled search (non-zero exit) leaves the line untouched —
 # except under enter_executes, where a cancelled/empty search blanks the line so
@@ -460,8 +460,7 @@ if _yore_enter_executes; then
 else
 	bind '"\C-r": "\eyore"'
 fi
-# Optionally also bind the Up arrow to search (config bind_up_arrow), Atuin
-# style. Decided at source time; honors $YORE_DIR.
+# Coexist: bind Up to search only if the user opts in (config bind_up_arrow).
 _yore_bind_up_arrow() {
 	local f="${YORE_DIR:-$HOME/.config/yore}/config.json"
 	[[ -r $f ]] && grep -q '"bind_up_arrow"[[:space:]]*:[[:space:]]*true' "$f"

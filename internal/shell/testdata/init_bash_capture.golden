@@ -1,4 +1,4 @@
-# yore — bash shell integration.
+# yore — bash shell integration (capture mode).
 # Emitted by `yore init bash`; load with:  eval "$(yore init bash)"
 # Sourcing repeatedly is safe and produces no output during normal operation.
 
@@ -421,68 +421,3 @@ __yore_precmd() {
 
 precmd_functions+=(__yore_precmd)
 preexec_functions+=(__yore_preexec)
-
-# Whether accepting a Ctrl-R result should run it immediately (Atuin parity).
-# Honors $YORE_DIR. NOTE: bash reads this at source time to choose the Ctrl-R
-# binding below (bash `bind -x` cannot itself accept the line), so a change to
-# "enter_executes" in config.json takes effect only in a new shell / re-source.
-# zsh, by contrast, re-reads it on every keypress.
-_yore_enter_executes() {
-	local f="${YORE_DIR:-$HOME/.config/yore}/config.json"
-	[[ -r $f ]] && grep -q '"enter_executes"[[:space:]]*:[[:space:]]*true' "$f"
-}
-
-# Ctrl-R: interactive search. The TUI draws on /dev/tty, so this command
-# substitution captures only the final selection printed to stdout. A missing
-# binary or a cancelled search (non-zero exit) leaves the line untouched —
-# except under enter_executes, where a cancelled/empty search blanks the line so
-# the auto-appended Return (see the binding below) runs nothing, never a stale
-# partial query.
-__yore_search() {
-	local selected
-	selected=$(command yore search --query "$READLINE_LINE" 2>/dev/null)
-	if (( $? == 0 )) && [[ -n $selected ]]; then
-		READLINE_LINE=$selected
-		READLINE_POINT=${#READLINE_LINE}
-	elif _yore_enter_executes; then
-		READLINE_LINE=
-		READLINE_POINT=0
-	fi
-}
-# `bind -x` runs the widget but cannot itself run accept-line, so
-# execute-on-enter is done with a two-part key macro: a private ESC-prefixed
-# sequence (\eyore) runs the widget to set the line, then an appended Return
-# (\C-m) accepts it. The insert-only binding omits the Return. This choice is
-# fixed here at source time (see the _yore_enter_executes note above).
-bind -x '"\eyore": __yore_search'
-if _yore_enter_executes; then
-	bind '"\C-r": "\eyore\C-m"'
-else
-	bind '"\C-r": "\eyore"'
-fi
-# Optionally also bind the Up arrow to search (config bind_up_arrow), Atuin
-# style. Decided at source time; honors $YORE_DIR.
-_yore_bind_up_arrow() {
-	local f="${YORE_DIR:-$HOME/.config/yore}/config.json"
-	[[ -r $f ]] && grep -q '"bind_up_arrow"[[:space:]]*:[[:space:]]*true' "$f"
-}
-if _yore_bind_up_arrow; then
-	if _yore_enter_executes; then
-		bind '"\e[A": "\eyore\C-m"'
-	else
-		bind '"\e[A": "\eyore"'
-	fi
-fi
-
-# Convenience aliases (Options.Aliases). Drop any pre-existing h/hs aliases
-# (the common `history` / `history | grep` pattern) so our versions win and a
-# leftover `hs` alias can't break the function definition below.
-unalias h hs 2>/dev/null
-alias h='yore browse'
-hs() {
-	if [[ -t 1 ]]; then
-		command yore search --query "$*"
-	else
-		command yore search --headless "$*"
-	fi
-}

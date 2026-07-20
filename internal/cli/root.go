@@ -76,6 +76,8 @@ func newRootCmd() *cobra.Command {
 
 	root.AddCommand(
 		newRecordCmd(),
+		newFilterCmd(),
+		newExportCmd(),
 		newSearchCmd(),
 		newBrowseCmd(),
 		newDaemonCmd(),
@@ -257,28 +259,34 @@ func newInitCmd() *cobra.Command {
 	var (
 		noAliases bool
 		bin       string
+		mode      string
 	)
 	cmd := &cobra.Command{
 		Use:   "init zsh|bash",
 		Short: "Print the shell integration script",
 		Long: "init prints the shell integration script to eval in your rc file:\n" +
 			"  eval \"$(yore init zsh)\"   # ~/.zshrc\n" +
-			"  eval \"$(yore init bash)\"  # ~/.bashrc",
+			"  eval \"$(yore init bash)\"  # ~/.bashrc\n\n" +
+			"Integration mode comes from --mode, else config.integration (default\n" +
+			"takeover). Modes: takeover (yore is the single source of truth), coexist\n" +
+			"(record alongside native history), capture (record only, no keybindings).",
 		Args:      cobra.ExactArgs(1),
 		ValidArgs: []cobra.Completion{"zsh", "bash"},
 		RunE: func(_ *cobra.Command, args []string) error {
-			return code(runInit(args[0], bin, noAliases))
+			return code(runInit(args[0], bin, mode, noAliases))
 		},
 	}
 	cmd.Flags().BoolVar(&noAliases, "no-aliases", false, "omit the h/hs convenience aliases")
 	cmd.Flags().StringVar(&bin, "bin", shell.DefaultBin, "binary name or path the hooks should invoke")
+	cmd.Flags().StringVar(&mode, "mode", "", "integration mode: takeover|coexist|capture (default: config)")
+	_ = cmd.RegisterFlagCompletionFunc("mode", fixedComp("takeover", "coexist", "capture"))
 	return cmd
 }
 
 // --- enrollment ------------------------------------------------------------
 
 func newSetupCmd() *cobra.Command {
-	var server, token, name string
+	var server, token, name, integration string
 	var pin bool
 	cmd := &cobra.Command{
 		Use:   "setup",
@@ -290,13 +298,15 @@ func newSetupCmd() *cobra.Command {
 			"network): thereafter the client refuses any other cert, defeating a\n" +
 			"TLS-inspecting proxy — but it also won't sync through one.",
 		RunE: func(*cobra.Command, []string) error {
-			return code(runSetup(server, token, name, pin))
+			return code(runSetup(server, token, name, integration, pin))
 		},
 	}
 	cmd.Flags().StringVar(&server, "server", "", "server URL")
 	cmd.Flags().StringVar(&token, "token", "", "auth token")
 	cmd.Flags().StringVar(&name, "name", "", "device name (default: hostname)")
+	cmd.Flags().StringVar(&integration, "integration", "", "shell integration: takeover|coexist|capture (default: prompt/takeover)")
 	cmd.Flags().BoolVar(&pin, "pin", false, "pin the server's TLS certificate (capture it now)")
+	_ = cmd.RegisterFlagCompletionFunc("integration", fixedComp("takeover", "coexist", "capture"))
 	return cmd
 }
 

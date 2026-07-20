@@ -99,7 +99,7 @@ func buildSyncer(dir string) (*syncer.Syncer, *syncer.HTTPClient, error) {
 // runSetup enrolls this machine: it records the server URL + token, ensures a
 // device key, and either bootstraps a new history group (first machine) or
 // registers as pending for approval from an already-enrolled machine.
-func runSetup(server, token, name string, pin bool) int {
+func runSetup(server, token, name, integration string, pin bool) int {
 	dir := stateDir()
 	url, tok, err := resolveServer(dir, server, token)
 	if err != nil {
@@ -110,6 +110,21 @@ func runSetup(server, token, name string, pin bool) int {
 	// Persist server + token so the daemon can sync unattended.
 	cfg, _ := config.Load(dir)
 	cfg.ServerURL, cfg.Token = url, tok
+
+	// Shell integration mode (how deeply yore takes over history).
+	if integration == "" {
+		integration = strings.TrimSpace(prompt(
+			"History integration — takeover (yore is the only history), coexist, or capture [takeover]: "))
+	}
+	switch integration {
+	case "coexist", "capture", "takeover":
+		cfg.Integration = integration
+	case "":
+		cfg.Integration = "takeover"
+	default:
+		fmt.Fprintf(os.Stderr, "yore setup: unknown integration %q (want takeover|coexist|capture)\n", integration)
+		return 1
+	}
 	if pin {
 		p, err := syncer.ServerPin(url)
 		if err != nil {

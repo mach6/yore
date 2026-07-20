@@ -1,4 +1,4 @@
-# yore — bash shell integration.
+# yore — bash shell integration ({{.Mode}} mode).
 # Emitted by `yore init bash`; load with:  eval "$(yore init bash)"
 # Sourcing repeatedly is safe and produces no output during normal operation.
 
@@ -59,6 +59,26 @@ __yore_precmd() {
 
 precmd_functions+=(__yore_precmd)
 preexec_functions+=(__yore_preexec)
+{{- if .Takeover}}
+
+# --- History takeover: yore is the single source of truth ---------------------
+# No persistent native ~/.bash_history (yore's store is the durable, redacted
+# source); seed the in-memory list from yore, and drop secrets from it. Source
+# yore AFTER your own HISTFILE settings so this wins. bash's history hooks are
+# coarser than zsh's, so the in-memory gate is best-effort.
+unset HISTFILE
+history -c
+history -r <(command {{.Bin}} export --shell --format bash 2>/dev/null) 2>/dev/null
+# Redaction gate: if yore would drop the just-entered command (secret / ignored
+# dir / space-prefixed), delete it from bash history too. Runs in preexec, where
+# the command is already in the history list.
+__yore_bash_gate() {
+	command {{.Bin}} filter --cwd "$PWD" <<< "$1" \
+		|| history -d "$(HISTTIMEFORMAT= history 1 | awk '{print $1}')" 2>/dev/null
+}
+preexec_functions+=(__yore_bash_gate)
+{{- end}}
+{{- if .Bindings}}
 
 # Whether accepting a Ctrl-R result should run it immediately (Atuin parity).
 # Honors $YORE_DIR. NOTE: bash reads this at source time to choose the Ctrl-R
@@ -70,7 +90,7 @@ _yore_enter_executes() {
 	[[ -r $f ]] && grep -q '"enter_executes"[[:space:]]*:[[:space:]]*true' "$f"
 }
 
-# Ctrl-R: interactive search. The TUI draws on /dev/tty, so this command
+# Interactive search widget. The TUI draws on /dev/tty, so this command
 # substitution captures only the final selection printed to stdout. A missing
 # binary or a cancelled search (non-zero exit) leaves the line untouched —
 # except under enter_executes, where a cancelled/empty search blanks the line so
@@ -98,8 +118,15 @@ if _yore_enter_executes; then
 else
 	bind '"\C-r": "\eyore"'
 fi
-# Optionally also bind the Up arrow to search (config bind_up_arrow), Atuin
-# style. Decided at source time; honors $YORE_DIR.
+{{- if .Takeover}}
+# Takeover: Up arrow opens yore search.
+if _yore_enter_executes; then
+	bind '"\e[A": "\eyore\C-m"'
+else
+	bind '"\e[A": "\eyore"'
+fi
+{{- else}}
+# Coexist: bind Up to search only if the user opts in (config bind_up_arrow).
 _yore_bind_up_arrow() {
 	local f="${YORE_DIR:-$HOME/.config/yore}/config.json"
 	[[ -r $f ]] && grep -q '"bind_up_arrow"[[:space:]]*:[[:space:]]*true' "$f"
@@ -111,6 +138,8 @@ if _yore_bind_up_arrow; then
 		bind '"\e[A": "\eyore"'
 	fi
 fi
+{{- end}}
+{{- end}}
 {{- if .Aliases}}
 
 # Convenience aliases (Options.Aliases). Drop any pre-existing h/hs aliases

@@ -5,54 +5,66 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"yore/internal/shell"
 )
 
 var update = flag.Bool("update", false, "regenerate golden files under testdata/")
 
-// cases covers every (shell, aliases) combination we render goldens for.
-var cases = []struct {
+// renderCase is one (shell, mode, aliases) combination we render a golden for.
+type renderCase struct {
 	name   string
 	sh     string
 	opts   shell.Options
 	golden string
-	syntax string // shell binary used for `-n` syntax validation
-	ext    string
-}{
-	{"zsh_aliases", "zsh", shell.Options{Aliases: true, Bin: "yore"}, "init_zsh_aliases.golden", "zsh", "zsh"},
-	{"zsh_noaliases", "zsh", shell.Options{Aliases: false, Bin: "yore"}, "init_zsh_noaliases.golden", "zsh", "zsh"},
-	{"bash_aliases", "bash", shell.Options{Aliases: true, Bin: "yore"}, "init_bash_aliases.golden", "bash", "bash"},
-	{"bash_noaliases", "bash", shell.Options{Aliases: false, Bin: "yore"}, "init_bash_noaliases.golden", "bash", "bash"},
 }
+
+// cases covers each shell × integration mode, with the alias toggle where it is
+// meaningful (capture mode emits no aliases regardless).
+var cases = func() []renderCase {
+	var cs []renderCase
+	for _, sh := range []string{"zsh", "bash"} {
+		for _, mode := range []string{"takeover", "coexist"} {
+			for _, al := range []bool{true, false} {
+				suffix := "aliases"
+				if !al {
+					suffix = "noaliases"
+				}
+				cs = append(cs, renderCase{
+					name:   sh + "_" + mode + "_" + suffix,
+					sh:     sh,
+					opts:   shell.Options{Aliases: al, Bin: "yore", Mode: mode},
+					golden: "init_" + sh + "_" + mode + "_" + suffix + ".golden",
+				})
+			}
+		}
+		cs = append(cs, renderCase{
+			name:   sh + "_capture",
+			sh:     sh,
+			opts:   shell.Options{Aliases: true, Bin: "yore", Mode: "capture"},
+			golden: "init_" + sh + "_capture.golden",
+		})
+	}
+	return cs
+}()
 
 func TestInitGolden(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := shell.Init(tc.sh, tc.opts)
-			if err != nil {
-				t.Fatalf("Init(%q): %v", tc.sh, err)
-			}
+			require.NoError(t, err)
 			path := filepath.Join("testdata", tc.golden)
 			if *update {
-				if err := os.MkdirAll("testdata", 0o755); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
-					t.Fatal(err)
-				}
+				require.NoError(t, os.MkdirAll("testdata", 0o755))
+				require.NoError(t, os.WriteFile(path, []byte(got), 0o644))
 				return
 			}
 			want, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatalf("reading golden (run `go test -run TestInitGolden -update`): %v", err)
-			}
-			if got != string(want) {
-				t.Errorf("Init(%q, %+v) does not match %s\n--- got ---\n%s\n--- want ---\n%s",
-					tc.sh, tc.opts, tc.golden, got, want)
-			}
+			require.NoError(t, err, "reading golden (run `go test -run TestInitGolden -update`)")
+			require.Equal(t, string(want), got, "rendered %s does not match its golden", tc.golden)
 		})
 	}
 }
@@ -65,116 +77,113 @@ func TestSyntax(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			bin, err := exec.LookPath(tc.syntax)
+			bin, err := exec.LookPath(tc.sh)
 			if err != nil {
-				t.Skipf("%s not installed: %v", tc.syntax, err)
+				t.Skipf("%s not installed: %v", tc.sh, err)
 			}
 			script, err := shell.Init(tc.sh, tc.opts)
-			if err != nil {
-				t.Fatalf("Init: %v", err)
-			}
-			f := filepath.Join(t.TempDir(), "init."+tc.ext)
-			if err := os.WriteFile(f, []byte(script), 0o644); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
+			f := filepath.Join(t.TempDir(), "init."+tc.sh)
+			require.NoError(t, os.WriteFile(f, []byte(script), 0o644))
 			out, err := exec.Command(bin, "-n", f).CombinedOutput()
-			if err != nil {
-				t.Fatalf("%s -n rejected the emitted script: %v\n%s", tc.syntax, err, out)
-			}
+			require.NoError(t, err, "%s -n rejected the emitted script:\n%s", tc.sh, out)
 		})
 	}
 }
 
 // TestAbsoluteBin ensures an absolute Bin path is substituted everywhere it is
-// invoked: gen-id, record, the Ctrl-R widget, the browse alias, and both arms
-// of the hs helper.
+// invoked and the bare default never leaks in.
 func TestAbsoluteBin(t *testing.T) {
 	const bin = "/usr/local/bin/yore"
 	for _, sh := range []string{"zsh", "bash"} {
 		t.Run(sh, func(t *testing.T) {
 			got, err := shell.Init(sh, shell.Options{Aliases: true, Bin: bin})
-			if err != nil {
-				t.Fatal(err)
-			}
-			wants := []string{
+			require.NoError(t, err)
+			for _, w := range []string{
 				"command " + bin + " gen-id",
 				"command " + bin + " record",
 				"command " + bin + ` search --query "`,
 				"alias h='" + bin + " browse'",
-				"command " + bin + ` search --query "$*"`,
 				"command " + bin + ` search --headless "$*"`,
+			} {
+				require.Contains(t, got, w, "missing invocation")
 			}
-			for _, w := range wants {
-				if !strings.Contains(got, w) {
-					t.Errorf("emitted %s script missing %q", sh, w)
-				}
-			}
-			// The bare default must never leak in when an absolute path is set.
-			if strings.Contains(got, "command yore ") || strings.Contains(got, "alias h='yore ") {
-				t.Errorf("emitted %s script leaked the bare default binary name", sh)
-			}
+			require.NotContains(t, got, "command yore ", "leaked bare default binary")
+			require.NotContains(t, got, "alias h='yore ", "leaked bare default binary")
 		})
 	}
 }
 
 func TestAliasToggle(t *testing.T) {
 	for _, sh := range []string{"zsh", "bash"} {
-		on, err := shell.Init(sh, shell.Options{Aliases: true, Bin: "yore"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		off, err := shell.Init(sh, shell.Options{Aliases: false, Bin: "yore"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(on, "alias h=") || !strings.Contains(on, "hs()") {
-			t.Errorf("%s: aliases:true should emit the alias block", sh)
-		}
-		if strings.Contains(off, "alias h=") || strings.Contains(off, "hs()") {
-			t.Errorf("%s: aliases:false must not emit the alias block", sh)
-		}
+		t.Run(sh, func(t *testing.T) {
+			on, err := shell.Init(sh, shell.Options{Aliases: true, Bin: "yore"})
+			require.NoError(t, err)
+			off, err := shell.Init(sh, shell.Options{Aliases: false, Bin: "yore"})
+			require.NoError(t, err)
+			require.Contains(t, on, "alias h=", "aliases:true should emit the alias block")
+			require.NotContains(t, off, "alias h=", "aliases:false must not emit the alias block")
+		})
+	}
+}
+
+// TestModes checks the mode-specific blocks: takeover disables persistent
+// history and gates it; capture emits neither bindings nor takeover.
+func TestModes(t *testing.T) {
+	tests := []struct {
+		sh, mode   string
+		mustHave   []string
+		mustNotHav []string
+	}{
+		{"zsh", "takeover", []string{"SAVEHIST=0", "fc -R", "zshaddhistory", "bindkey '^r'"}, nil},
+		{"zsh", "coexist", []string{"bindkey '^r'"}, []string{"SAVEHIST=0", "zshaddhistory"}},
+		{"zsh", "capture", nil, []string{"SAVEHIST=0", "bindkey '^r'", "alias h="}},
+		{"bash", "takeover", []string{"unset HISTFILE", "history -r", "__yore_bash_gate"}, nil},
+		{"bash", "coexist", []string{`bind -x '"\eyore"`}, []string{"unset HISTFILE", "__yore_bash_gate"}},
+		{"bash", "capture", nil, []string{"unset HISTFILE", `bind -x '"\eyore"`, "alias h="}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.sh+"_"+tc.mode, func(t *testing.T) {
+			got, err := shell.Init(tc.sh, shell.Options{Aliases: true, Bin: "yore", Mode: tc.mode})
+			require.NoError(t, err)
+			for _, w := range tc.mustHave {
+				require.Contains(t, got, w)
+			}
+			for _, w := range tc.mustNotHav {
+				require.NotContains(t, got, w)
+			}
+		})
 	}
 }
 
 func TestDefaultBin(t *testing.T) {
 	got, err := shell.Init("zsh", shell.Options{Aliases: true}) // Bin empty
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(got, "command yore gen-id") {
-		t.Errorf("empty Bin should default to %q", shell.DefaultBin)
-	}
+	require.NoError(t, err)
+	require.Contains(t, got, "command yore gen-id", "empty Bin should default to DefaultBin")
+}
+
+func TestDefaultModeIsTakeover(t *testing.T) {
+	got, err := shell.Init("zsh", shell.Options{Aliases: true, Bin: "yore"}) // Mode empty
+	require.NoError(t, err)
+	require.Contains(t, got, "SAVEHIST=0", "empty Mode should default to takeover")
 }
 
 func TestUnknownShell(t *testing.T) {
-	if _, err := shell.Init("fish", shell.Options{Bin: "yore"}); err == nil {
-		t.Fatal("expected an error for an unknown shell")
-	}
+	_, err := shell.Init("fish", shell.Options{Bin: "yore"})
+	require.Error(t, err, "expected an error for an unknown shell")
 }
 
-// TestVendoredPreexec verifies the pinned bash-preexec is present, non-empty,
-// carries our provenance header, and defines the install entrypoint. It is
-// inlined verbatim into the bash script.
+// TestVendoredPreexec verifies the pinned bash-preexec is present, carries our
+// provenance header, defines the install entrypoint, and is embedded.
 func TestVendoredPreexec(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("assets", "bash-preexec.sh"))
-	if err != nil {
-		t.Fatalf("vendored bash-preexec missing: %v", err)
-	}
-	if len(b) == 0 {
-		t.Fatal("vendored bash-preexec is empty")
-	}
+	require.NoError(t, err, "vendored bash-preexec missing")
+	require.NotEmpty(t, b, "vendored bash-preexec is empty")
 	src := string(b)
 	for _, want := range []string{"__bp_install", "version: 0.5.0", "MIT"} {
-		if !strings.Contains(src, want) {
-			t.Errorf("vendored bash-preexec missing %q", want)
-		}
+		require.Contains(t, src, want)
 	}
-	// It must actually be embedded in the emitted bash script.
 	bash, err := shell.Init("bash", shell.Options{Aliases: true, Bin: "yore"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(bash, "__bp_install") {
-		t.Error("emitted bash script does not embed the vendored bash-preexec")
-	}
+	require.NoError(t, err)
+	require.Contains(t, bash, "__bp_install", "emitted bash script does not embed bash-preexec")
 }

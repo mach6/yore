@@ -1,4 +1,4 @@
-# yore — zsh shell integration.
+# yore — zsh shell integration (capture mode).
 # Emitted by `yore init zsh`; load with:  eval "$(yore init zsh)"
 # Sourcing repeatedly is safe and produces no output during normal operation.
 
@@ -7,6 +7,7 @@
 typeset -g __YORE_INITED=1
 
 zmodload zsh/datetime   # provides $EPOCHREALTIME
+autoload -Uz add-zsh-hook
 
 # One stable session id per shell. Exported so it survives `exec` and subshells;
 # only generated when unset so a re-exec'd shell keeps the same id.
@@ -43,47 +44,5 @@ _yore_precmd() {
 	return $exit   # leave $? untouched for any of the user's own precmds
 }
 
-autoload -Uz add-zsh-hook
 add-zsh-hook preexec _yore_preexec
 add-zsh-hook precmd _yore_precmd
-
-# Whether accepting a Ctrl-R result should run it immediately (Atuin parity).
-# Read from config.json at call time — NOT at source time — so toggling
-# "enter_executes" takes effect without re-sourcing. Honors $YORE_DIR.
-_yore_enter_executes() {
-	local f="${YORE_DIR:-$HOME/.config/yore}/config.json"
-	[[ -r $f ]] && grep -q '"enter_executes"[[:space:]]*:[[:space:]]*true' "$f"
-}
-
-# Ctrl-R: interactive search. The TUI draws on /dev/tty, so this command
-# substitution captures only the final selection printed to stdout. A missing
-# binary or a cancelled search (non-zero exit) leaves the buffer untouched.
-# With enter_executes on, a successful selection is run immediately via
-# accept-line instead of being left on the line for review.
-_yore_search_widget() {
-	local selected
-	selected=$(command yore search --query "$BUFFER" 2>/dev/null)
-	if (( $? == 0 )) && [[ -n $selected ]]; then
-		BUFFER=$selected
-		CURSOR=$#BUFFER
-		if _yore_enter_executes; then
-			zle accept-line
-			return
-		fi
-	fi
-	zle reset-prompt
-}
-# Optionally also bind the Up arrow to search (config bind_up_arrow), Atuin
-# style. Decided at source time (bindings are static); honors $YORE_DIR.
-_yore_bind_up_arrow() {
-	local f="${YORE_DIR:-$HOME/.config/yore}/config.json"
-	[[ -r $f ]] && grep -q '"bind_up_arrow"[[:space:]]*:[[:space:]]*true' "$f"
-}
-if [[ -o interactive ]]; then
-	zle -N _yore_search_widget
-	bindkey '^r' _yore_search_widget
-	if _yore_bind_up_arrow; then
-		bindkey '^[[A' _yore_search_widget  # Up (normal cursor keys)
-		bindkey '^[OA' _yore_search_widget  # Up (application cursor keys)
-	fi
-fi
