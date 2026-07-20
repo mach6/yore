@@ -1,0 +1,12 @@
+extends: relaxed
+
+rules:
+  line-length:
+    max: 120
+  trailing-spaces: enable
+  new-line-at-end-of-file: enable
+
+ignore: |
+  .agents/
+  bin/
+  dist/

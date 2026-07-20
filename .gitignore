@@ -1,3 +1,16 @@
-bin/
-dist/
+# Build outputs
+/bin/
+/dist/
+*.test
+coverage.out
+coverage.html
+unit-test-report.json
+
+# Local host data / secrets (yore keeps state under ~/.config/yore; a stray db or
+# env in the working tree must never be committed)
 *.db
+.env
+
+# Transient/scratch agent working files (never committed)
+/.agents/
+/.claude/

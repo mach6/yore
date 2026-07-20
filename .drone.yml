@@ -1,0 +1,131 @@
+---
+kind: pipeline
+name: default
+
+global-variables:
+  environment: &default_environment
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_REGISTRY:
+      from_secret: DOCKER_REGISTRY
+    DOCKER_REGISTRY_PASSWORD:
+      from_secret: DOCKER_REGISTRY_PASSWORD
+    DOCKER_REGISTRY_USER:
+      from_secret: DOCKER_REGISTRY_USER
+    # Containers trip git's dubious-ownership guard; skip VCS stamping.
+    GOFLAGS: -buildvcs=false
+
+steps:
+  - name: yamllint
+    image: cytopia/yamllint:latest
+    commands:
+      - yamllint -c .yamllint.yml .
+
+  # Lint first so a formatting/vet/style failure fails the pipeline fast, before
+  # the slower race-enabled test run.
+  - name: lint
+    image: golangci/golangci-lint:v2.12-alpine
+    environment:
+      <<: *default_environment
+    commands:
+      - golangci-lint run --timeout 5m ./...
+
+  # Runs the suite (a coverage pass + a -race pass, formatted by gotestfmt) and
+  # writes coverage.out into the shared workspace; coverage-check below reads that
+  # profile. -race needs cgo, so build-base is installed. gotestfmt is fetched with
+  # go install (yore's toolchain is otherwise CGO-free).
+  - name: test
+    image: golang:1.26-alpine
+    environment:
+      <<: *default_environment
+    commands:
+      - apk add --no-cache git build-base
+      - go install github.com/gotesttools/gotestfmt/v2/cmd/gotestfmt@latest
+      - >-
+        go test -shuffle=on -count=1 -coverprofile=coverage.out -covermode=atomic
+        -json ./... | tee unit-test-report.json | gotestfmt
+      - go test -shuffle=on -count=1 -race -json ./... | gotestfmt
+
+  - name: coverage-check
+    image: golang:1.26-alpine
+    environment:
+      <<: *default_environment
+    commands:
+      - apk add --no-cache git
+      - go install github.com/mach6/go-covercheck/cmd/go-covercheck@latest
+      - go-covercheck coverage.out
+
+  - name: build-docker
+    when:
+      event:
+        - push
+        - tag
+    image: docker
+    environment:
+      <<: *default_environment
+    commands:
+      - docker build -f docker/Dockerfile -t yore:build-${DRONE_BUILD_NUMBER} ./
+
+  # Smoke the image: the entrypoint is `yore server`, so override it to run a
+  # trivial subcommand that must exit 0.
+  - name: test-docker
+    when:
+      event:
+        - push
+        - tag
+    image: docker
+    environment:
+      <<: *default_environment
+    commands:
+      - docker run --rm --entrypoint /yore yore:build-${DRONE_BUILD_NUMBER} version
+
+  - name: push-latest-build
+    when:
+      event:
+        - push
+      branch:
+        - main
+    image: docker
+    environment:
+      <<: *default_environment
+    commands:
+      - mkdir -p $HOME/.docker
+      - >-
+        echo $DOCKER_REGISTRY_PASSWORD
+        | docker login -u $DOCKER_REGISTRY_USER
+        --password-stdin $DOCKER_REGISTRY
+      - >-
+        docker tag yore:build-${DRONE_BUILD_NUMBER}
+        $DOCKER_REGISTRY/yore:latest-build
+      - docker push $DOCKER_REGISTRY/yore:latest-build
+
+  - name: push-tag
+    when:
+      event:
+        - tag
+    image: docker
+    environment:
+      <<: *default_environment
+    commands:
+      - mkdir -p $HOME/.docker
+      - export TAG=${DRONE_TAG##v}
+      - >-
+        echo $DOCKER_REGISTRY_PASSWORD
+        | docker login -u $DOCKER_REGISTRY_USER
+        --password-stdin $DOCKER_REGISTRY
+      - >-
+        docker tag yore:build-${DRONE_BUILD_NUMBER}
+        $DOCKER_REGISTRY/yore:$TAG
+      - docker push $DOCKER_REGISTRY/yore:$TAG
+      - >-
+        docker tag yore:build-${DRONE_BUILD_NUMBER}
+        $DOCKER_REGISTRY/yore:latest
+      - docker push $DOCKER_REGISTRY/yore:latest
+
+services:
+  - name: docker
+    image: docker:dind
+    environment:
+      <<: *default_environment
+    privileged: true
+    commands:
+      - dockerd --tls=false -H $DOCKER_HOST
