@@ -7,6 +7,7 @@ import (
 	"yore/internal/config"
 	"yore/internal/daemon"
 	"yore/internal/proto"
+	"yore/internal/rec"
 	"yore/internal/tui/search"
 )
 
@@ -32,8 +33,10 @@ func interactiveSearch(initialQuery string) int {
 	})
 	if err != nil {
 		// No /dev/tty (or the TUI failed): behave like headless so pipes
-		// and odd environments still get results.
-		return headlessSearch(initialQuery, proto.ScopeLocal, "", "", false, 0)
+		// and odd environments still get results. showHost=false: this feeds
+		// the Ctrl-R `$(yore search …)` capture, whose contract is that ONLY
+		// the bare command is printed — a host prefix would corrupt the buffer.
+		return headlessSearch(initialQuery, proto.ScopeLocal, "", "", false, 0, false)
 	}
 	if !ok {
 		return 1
@@ -42,7 +45,7 @@ func interactiveSearch(initialQuery string) int {
 	return 0
 }
 
-func headlessSearch(q, scope, tag, sortMode string, fuzzy bool, limit int) int {
+func headlessSearch(q, scope, tag, sortMode string, fuzzy bool, limit int, showHost bool) int {
 	c, err := daemon.EnsureRunning(stateDir())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "yore: daemon unavailable:", err)
@@ -64,8 +67,36 @@ func headlessSearch(q, scope, tag, sortMode string, fuzzy bool, limit int) int {
 		fmt.Fprintln(os.Stderr, "yore:", err)
 		return 1
 	}
-	for _, r := range resp.Rows {
-		fmt.Println(r.Cmd)
+	for _, line := range formatHeadless(resp.Rows, showHost) {
+		fmt.Println(line)
 	}
 	return 0
+}
+
+// formatHeadless renders query rows as headless output lines. With showHost the
+// hostname leads each line, left-padded to the widest hostname in rows and
+// followed by two spaces, so the command column aligns; without it each line is
+// the bare command (the Ctrl-R capture contract). It's a pure helper so the
+// column math stays unit-testable. Embedded newlines in a command are passed
+// through unchanged, matching the previous fmt.Println behavior.
+func formatHeadless(rows []rec.Record, showHost bool) []string {
+	if !showHost {
+		out := make([]string, len(rows))
+		for i, r := range rows {
+			out[i] = r.Cmd
+		}
+		return out
+	}
+	maxw := 0
+	for _, r := range rows {
+		if len(r.Hostname) > maxw {
+			maxw = len(r.Hostname)
+		}
+	}
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		// Hostnames are ASCII, so byte width == column width.
+		out[i] = fmt.Sprintf("%-*s  %s", maxw, r.Hostname, r.Cmd)
+	}
+	return out
 }

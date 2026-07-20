@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"yore/internal/config"
+	"yore/internal/rec"
 )
 
 // boolPtr is a tiny helper for setting *bool config fields in table rows.
@@ -113,6 +114,53 @@ func TestShellHistoryLine(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.want, shellHistoryLine(tc.startMs, tc.cmd))
+		})
+	}
+}
+
+// TestFormatHeadless covers headless search line formatting: with showHost the
+// host column is left-padded to the widest hostname (so commands align across
+// differing hostname lengths, including an empty hostname); without it the
+// lines are the bare commands.
+func TestFormatHeadless(t *testing.T) {
+	rows := []rec.Record{
+		{Hostname: "web1", Cmd: "ls -la"},
+		{Hostname: "database-01", Cmd: "psql"},
+		{Hostname: "", Cmd: "whoami"},
+	}
+	tests := []struct {
+		name     string
+		rows     []rec.Record
+		showHost bool
+		want     []string
+	}{
+		{
+			name:     "host column aligns across widths",
+			rows:     rows,
+			showHost: true,
+			// hostnames padded to len("database-01")==11, then two spaces.
+			want: []string{
+				"web1         ls -la",
+				"database-01  psql",
+				"             whoami",
+			},
+		},
+		{
+			name:     "no host column is bare commands",
+			rows:     rows,
+			showHost: false,
+			want:     []string{"ls -la", "psql", "whoami"},
+		},
+		{
+			name:     "no rows yields no lines",
+			rows:     nil,
+			showHost: true,
+			want:     []string{},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, formatHeadless(tc.rows, tc.showHost))
 		})
 	}
 }

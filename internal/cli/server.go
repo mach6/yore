@@ -97,7 +97,16 @@ func trimNL(b []byte) []byte {
 	return b
 }
 
-// runHealthcheck is used by the container HEALTHCHECK (distroless has no curl).
+// runHealthcheck probes url's health endpoint. It backs the container
+// HEALTHCHECK (distroless has no curl) but also runs interactively, so it prints
+// a one-line result — "healthy: …" to stdout, "unhealthy: …" to stderr — and
+// returns the exit code the container probe reads (0 = 2xx).
 func runHealthcheck(url string) int {
-	return server.HealthCheck(url)
+	code, detail := server.HealthCheck(url)
+	if code == 0 {
+		fmt.Printf("healthy: %s (%s)\n", url, detail)
+	} else {
+		fmt.Fprintf(os.Stderr, "unhealthy: %s: %s\n", url, detail)
+	}
+	return code
 }
