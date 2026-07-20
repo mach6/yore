@@ -52,8 +52,9 @@ type Model struct {
 	th   *theme.Theme
 	ti   textinput.Model
 
-	scope  string // one of proto.Scope*
-	dedupe bool
+	scope    string // one of proto.Scope*
+	dedupe   bool
+	frecency bool // alt+f: rank by frequency×recency instead of recency
 
 	rows      []rec.Record
 	total     int
@@ -182,6 +183,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.dedupe = !m.dedupe
 		return m.issueQuery()
 
+	case "alt+f":
+		m.frecency = !m.frecency
+		m.applyLayout()
+		return m.issueQuery()
+
 	case "up", "ctrl+p":
 		m.moveSel(-1)
 		return m, nil
@@ -225,6 +231,9 @@ func (m Model) buildReq() proto.QueryReq {
 		Scope:  m.scope,
 		Limit:  queryLimit,
 		Dedupe: m.dedupe,
+	}
+	if m.frecency {
+		req.Sort = proto.SortFrecency
 	}
 	switch m.scope {
 	case proto.ScopeSession:

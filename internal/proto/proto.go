@@ -56,10 +56,17 @@ type QueryReq struct {
 	Session string `json:"session,omitempty"` // session id for ScopeSession
 	Cwd     string `json:"cwd,omitempty"`     // directory for ScopeCwd
 	Tag     string `json:"tag,omitempty"`     // executor filter, e.g. "claude-code"; "" = any
+	Sort    string `json:"sort,omitempty"`    // "" = recency (newest first); "frecency" = frequency×recency
 	Limit   int    `json:"limit,omitempty"`   // 0 = server default (200)
 	Offset  int    `json:"offset,omitempty"`
 	Dedupe  bool   `json:"dedupe,omitempty"` // collapse identical commands, newest wins
 }
+
+// Sort modes for QueryReq.Sort.
+const (
+	SortRecency  = ""         // newest first
+	SortFrecency = "frecency" // frequency × recency, same-dir boost (implies dedupe)
+)
 
 type QueryResp struct {
 	Rows   []rec.Record `json:"rows"`

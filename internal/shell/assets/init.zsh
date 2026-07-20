@@ -47,15 +47,29 @@ autoload -Uz add-zsh-hook
 add-zsh-hook preexec _yore_preexec
 add-zsh-hook precmd _yore_precmd
 
+# Whether accepting a Ctrl-R result should run it immediately (Atuin parity).
+# Read from config.json at call time — NOT at source time — so toggling
+# "enter_executes" takes effect without re-sourcing. Honors $YORE_DIR.
+_yore_enter_executes() {
+	local f="${YORE_DIR:-$HOME/.config/yore}/config.json"
+	[[ -r $f ]] && grep -q '"enter_executes"[[:space:]]*:[[:space:]]*true' "$f"
+}
+
 # Ctrl-R: interactive search. The TUI draws on /dev/tty, so this command
 # substitution captures only the final selection printed to stdout. A missing
 # binary or a cancelled search (non-zero exit) leaves the buffer untouched.
+# With enter_executes on, a successful selection is run immediately via
+# accept-line instead of being left on the line for review.
 _yore_search_widget() {
 	local selected
 	selected=$(command {{.Bin}} search --query "$BUFFER" 2>/dev/null)
 	if (( $? == 0 )) && [[ -n $selected ]]; then
 		BUFFER=$selected
 		CURSOR=$#BUFFER
+		if _yore_enter_executes; then
+			zle accept-line
+			return
+		fi
 	fi
 	zle reset-prompt
 }

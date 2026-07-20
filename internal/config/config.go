@@ -41,6 +41,12 @@ type Config struct {
 	SyncInterval string `json:"sync_interval,omitempty"` // default 5m
 	AutoDeepen   *bool  `json:"auto_deepen,omitempty"`   // default true
 
+	// EnterExecutes controls the Ctrl-R search widget: when true, accepting a
+	// result with Enter runs it immediately (Atuin parity); when false/unset it
+	// is inserted into the prompt for review. Read directly by the emitted shell
+	// integration; see internal/shell/assets.
+	EnterExecutes *bool `json:"enter_executes,omitempty"` // default false
+
 	// Recording filters (see internal/redact). Commands matching a built-in
 	// secret pattern or any of these user regexes are never recorded; commands
 	// run under an ignored directory are never recorded; a leading space skips
@@ -53,6 +59,12 @@ type Config struct {
 // RecordSpacePrefixedOn reports whether space-prefixed commands are recorded.
 func (c Config) RecordSpacePrefixedOn() bool {
 	return c.RecordSpacePrefixed != nil && *c.RecordSpacePrefixed
+}
+
+// EnterExecutesOn reports whether accepting a Ctrl-R result runs it immediately
+// (Atuin parity) rather than inserting it into the prompt for review.
+func (c Config) EnterExecutesOn() bool {
+	return c.EnterExecutes != nil && *c.EnterExecutes
 }
 
 func (c Config) KeyEpochD() time.Duration     { return durOr(c.KeyEpoch, 24*time.Hour) }
