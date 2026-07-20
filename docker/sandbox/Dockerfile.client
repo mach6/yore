@@ -1,0 +1,20 @@
+# A yore client container with both zsh and bash installed and the yore hooks
+# wired into each shell's rc. One image backs both the `zsh` and `bash` sandbox
+# services; you pick the shell when you `exec` in.
+FROM golang:1.26-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /yore ./cmd/yore
+
+FROM alpine:3.20
+RUN apk add --no-cache zsh bash ca-certificates
+COPY --from=build /yore /usr/local/bin/yore
+# Source the yore integration in each shell (mode comes from config.json).
+RUN printf 'eval "$(yore init zsh)"\n' >> /root/.zshrc \
+ && printf 'eval "$(yore init bash)"\n' >> /root/.bashrc
+COPY docker/sandbox/client-entrypoint.sh /usr/local/bin/client-entrypoint.sh
+RUN chmod +x /usr/local/bin/client-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/client-entrypoint.sh"]
+CMD ["sleep", "infinity"]

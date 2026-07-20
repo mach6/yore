@@ -1,0 +1,62 @@
+# yore sandbox — a self-contained 3-container playground:
+#   server   the sync server (ciphertext only), on the internal network
+#   zsh      a client with zsh + yore hooks (hostname zsh-box)
+#   bash     a client with bash + yore hooks (hostname bash-box)
+#
+# Clients reach the server over the internal Docker network (plain HTTP — no TLS
+# needed inside the sandbox; request signing still protects writes). Nothing is
+# published to the host, and `docker compose down -v` removes everything.
+#
+#   cd docker/sandbox
+#   docker compose up -d --build
+#   # then see README.md for the enroll + test walkthrough
+name: yore-sandbox
+
+services:
+  server:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile
+    # The distroless image runs as nonroot; a fresh named volume is root-owned,
+    # so run the sandbox server as root to write /data. (In production, give the
+    # volume nonroot ownership instead of running as root.)
+    user: "0:0"
+    environment:
+      YORE_TOKEN: sandbox-token
+    volumes:
+      - server-data:/data
+    networks: [yore]
+
+  zsh:
+    build:
+      context: ../..
+      dockerfile: docker/sandbox/Dockerfile.client
+    hostname: zsh-box
+    environment:
+      YORE_SERVER: http://server:8080
+      YORE_TOKEN: sandbox-token
+      YORE_INTEGRATION: takeover
+    depends_on: [server]
+    networks: [yore]
+    tty: true
+    stdin_open: true
+
+  bash:
+    build:
+      context: ../..
+      dockerfile: docker/sandbox/Dockerfile.client
+    hostname: bash-box
+    environment:
+      YORE_SERVER: http://server:8080
+      YORE_TOKEN: sandbox-token
+      YORE_INTEGRATION: takeover
+    depends_on: [server]
+    networks: [yore]
+    tty: true
+    stdin_open: true
+
+volumes:
+  server-data:
+
+networks:
+  yore:
