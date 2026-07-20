@@ -33,9 +33,14 @@ func ConfigPath(dir string) string { return filepath.Join(dir, "config.json") }
 // Config is ~/.config/yore/config.json. Zero values mean "use default";
 // accessor methods apply defaults so callers never branch.
 type Config struct {
-	ServerURL    string `json:"server_url,omitempty"`
-	Token        string `json:"token,omitempty"`
-	TokenFile    string `json:"token_file,omitempty"`
+	ServerURL string `json:"server_url,omitempty"`
+	Token     string `json:"token,omitempty"`
+	TokenFile string `json:"token_file,omitempty"`
+	// ServerPin, when set, pins the server's TLS certificate: the base64 SHA-256
+	// of its SubjectPublicKeyInfo. The syncer refuses to connect unless the
+	// leaf cert matches — defeating TLS-inspecting proxies (fail-closed) but
+	// also preventing sync through one. Captured at `yore setup --pin`.
+	ServerPin    string `json:"server_pin,omitempty"`
 	KeyEpoch     string `json:"key_epoch,omitempty"`     // default 24h
 	DaemonIdle   string `json:"daemon_idle,omitempty"`   // default 30m
 	SyncInterval string `json:"sync_interval,omitempty"` // default 5m

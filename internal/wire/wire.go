@@ -16,18 +16,20 @@ const (
 
 // Device is a machine enrolled (or enrolling) in the history group.
 type Device struct {
-	ID        string `json:"id"`   // client-generated ULID
-	Name      string `json:"name"` // human label, e.g. hostname (user-chosen; NOT secret)
-	PubKey    []byte `json:"pub_key"`
+	ID        string `json:"id"`       // client-generated ULID
+	Name      string `json:"name"`     // human label, e.g. hostname (user-chosen; NOT secret)
+	PubKey    []byte `json:"pub_key"`  // X25519 public key (HK wrapping)
+	SignKey   []byte `json:"sign_key"` // Ed25519 public key (request-signature verification)
 	Status    string `json:"status"`
 	CreatedMs int64  `json:"created_ms"`
 }
 
 // RegisterReq enrolls a new pending device.
 type RegisterReq struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	PubKey []byte `json:"pub_key"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	PubKey  []byte `json:"pub_key"`
+	SignKey []byte `json:"sign_key"`
 }
 
 // HKWrap is the History Key sealed to one device's public key.

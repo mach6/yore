@@ -9,10 +9,16 @@ are in `internal/wire`; the handlers are in `internal/server`.
 
 - **Base URL**: whatever you deploy behind your reverse proxy, e.g.
   `https://yore.example.com`. All paths are under `/v1`.
-- **Auth**: every endpoint except `GET /v1/health` requires
-  `Authorization: Bearer <token>`, compared in constant time. The token is a
-  single static secret (`$YORE_TOKEN` / `$YORE_TOKEN_FILE` on the server).
-  Missing/incorrect → `401`.
+- **Auth (two layers)**: every endpoint except `GET /v1/health` requires
+  `Authorization: Bearer <token>` (single static secret, constant-time compared;
+  `$YORE_TOKEN` / `$YORE_TOKEN_FILE` on the server). In addition, every
+  **mutating** endpoint (all POSTs — records push, device register/activate/
+  revoke, keys dek/rotate) requires a **per-device Ed25519 signature** so a
+  captured token alone cannot push or revoke. See "Request signing" below.
+  Missing/incorrect token or signature → `401`.
+- **Certificate pinning (optional)**: a client enrolled with `yore setup --pin`
+  pins the server's TLS SPKI and refuses any other certificate — defeating a
+  TLS-inspecting proxy, at the cost of not syncing through one.
 - **Encoding**: request and response bodies are JSON. Binary fields (`blob`,
   `pub_key`) are Go `[]byte`, i.e. **base64** in JSON. Request bodies are capped
   at 10 MiB.
@@ -20,6 +26,27 @@ are in `internal/wire`; the handlers are in `internal/server`.
 - **Model**: append-only per-host record streams with **client-assigned**
   sequence numbers; merge is a set-union by record ULID; deletions are appended
   tombstone records. Conflict-free, eventually consistent.
+
+## Request signing
+
+Mutating requests carry four headers (see `internal/reqsign`):
+
+```
+X-Yore-Device:    <device id>
+X-Yore-Timestamp: <unix seconds>
+X-Yore-Nonce:     <random, single-use>
+X-Yore-Signature: <base64url Ed25519 signature>
+```
+
+The signature covers the canonical string
+`method \n RequestURI \n timestamp \n nonce \n hex(sha256(body))`, made with the
+device's Ed25519 private key (never on the wire). The server looks up the
+device's registered `sign_key` (self-verified against `sign_key` for `register`),
+verifies the signature, requires the signer to be **active** (except `register`,
+which is self-signed by a pending/new device), checks the timestamp is within
+±5 min, and rejects a repeated `(device, nonce)` from a small replay cache. So a
+TLS-inspecting proxy that captures traffic can neither forge a new mutation nor
+replay a captured one; reads (GETs) remain token-only.
 
 ## Sync algorithm (how a client uses these)
 
@@ -74,13 +101,18 @@ Returns records with `seq > after`, ascending. `limit` default/cap 1000.
 time (informational). Errors: `400` (invalid after/limit).
 
 ### `POST /v1/devices` — register (enroll)
-Request `wire.RegisterReq` `{"id","name","pub_key":"<base64 32B>"}`.
+Request `wire.RegisterReq`
+`{"id","name","pub_key":"<base64 32B X25519>","sign_key":"<base64 32B Ed25519>"}`.
+**Self-signed**: must carry a valid signature made with the private key for
+`sign_key`, and `X-Yore-Device` must equal `id`.
 → `200 wire.Device` with `"status":"pending"`.
-Errors: `400` (empty id / pub_key ≠ 32 bytes), `409` (id already registered).
+Errors: `400` (empty id / keys wrong length / device-id mismatch), `401` (bad
+signature), `409` (id already registered).
 
 ### `GET /v1/devices` — list
 → `200 [wire.Device, …]` (all statuses), sorted by id. `Device` =
-`{id, name, pub_key, status, created_ms}`; `status` ∈ `pending|active|revoked`.
+`{id, name, pub_key, sign_key, status, created_ms}`; `status` ∈
+`pending|active|revoked`.
 
 ### `POST /v1/devices/{id}/activate` — approve
 Request `wire.ActivateReq` `{"wrap": <HKWrap>}` where `HKWrap` =

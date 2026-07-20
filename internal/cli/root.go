@@ -279,19 +279,24 @@ func newInitCmd() *cobra.Command {
 
 func newSetupCmd() *cobra.Command {
 	var server, token, name string
+	var pin bool
 	cmd := &cobra.Command{
 		Use:   "setup",
 		Short: "Enroll this machine with a sync server",
 		Long: "setup records the server URL and token, ensures a device key, and either\n" +
 			"bootstraps a new history group (first machine) or registers this machine as\n" +
-			"pending approval from one that's already enrolled.",
+			"pending approval from one that's already enrolled.\n\n" +
+			"--pin captures and pins the server's TLS certificate (do it on a trusted\n" +
+			"network): thereafter the client refuses any other cert, defeating a\n" +
+			"TLS-inspecting proxy — but it also won't sync through one.",
 		RunE: func(*cobra.Command, []string) error {
-			return code(runSetup(server, token, name))
+			return code(runSetup(server, token, name, pin))
 		},
 	}
 	cmd.Flags().StringVar(&server, "server", "", "server URL")
 	cmd.Flags().StringVar(&token, "token", "", "auth token")
 	cmd.Flags().StringVar(&name, "name", "", "device name (default: hostname)")
+	cmd.Flags().BoolVar(&pin, "pin", false, "pin the server's TLS certificate (capture it now)")
 	return cmd
 }
 

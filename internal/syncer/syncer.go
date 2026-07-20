@@ -66,6 +66,8 @@ type Syncer struct {
 // callers pass config.KeyEpochD().
 func New(st *store.Store, http *HTTPClient, dev cryptobox.DeviceKey, epoch time.Duration) *Syncer {
 	id := st.HostID()
+	// Sign this device's mutating requests with its Ed25519 key.
+	http.SetSigner(id, dev.Sign)
 	return &Syncer{
 		st:          st,
 		http:        http,

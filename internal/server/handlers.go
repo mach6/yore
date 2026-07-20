@@ -9,6 +9,7 @@ import (
 
 	"go.etcd.io/bbolt"
 
+	"yore/internal/reqsign"
 	"yore/internal/wire"
 )
 
@@ -48,6 +49,13 @@ func (s *Server) handleHosts(w http.ResponseWriter, r *http.Request) {
 
 // POST /v1/records
 func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) {
+	body, ok := readBody(w, r)
+	if !ok {
+		return
+	}
+	if !s.requireSignature(w, r, body, nil) {
+		return
+	}
 	var req wire.PushReq
 	if err := decodeJSON(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "malformed JSON: "+err.Error())
@@ -160,6 +168,10 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 
 // POST /v1/devices
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
+	body, ok := readBody(w, r)
+	if !ok {
+		return
+	}
 	var req wire.RegisterReq
 	if err := decodeJSON(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "malformed JSON: "+err.Error())
@@ -173,11 +185,25 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "pub_key must be 32 bytes")
 		return
 	}
+	if len(req.SignKey) != 32 {
+		writeErr(w, http.StatusBadRequest, "sign_key must be 32 bytes")
+		return
+	}
+	// Registration is self-signed: the device proves it holds the private key
+	// for the sign_key it is registering, and must claim that same id.
+	if reqsign.Device(r.Header) != req.ID {
+		s.denySig(w, r, errDeviceMismatch)
+		return
+	}
+	if !s.requireSignature(w, r, body, req.SignKey) {
+		return
+	}
 
 	dev := wire.Device{
 		ID:        req.ID,
 		Name:      req.Name,
 		PubKey:    req.PubKey,
+		SignKey:   req.SignKey,
 		Status:    wire.DevicePending,
 		CreatedMs: time.Now().UnixMilli(),
 	}
@@ -220,9 +246,54 @@ func (s *Server) handleListDevices(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, devices)
 }
 
+// bootstrapSelfKey returns the pending signer's own SignKey when this activate
+// is the group-forming bootstrap — the device named in the path signs its own
+// activation and no device is active yet (matching syncer.Bootstrap, where the
+// first device self-activates while still pending). It returns nil in every
+// other case, so ordinary activations fall through to requireSignature's
+// active-signer requirement (any active device may approve any pending device).
+func (s *Server) bootstrapSelfKey(r *http.Request, pathID string) []byte {
+	signer := reqsign.Device(r.Header)
+	if signer == "" || signer != pathID {
+		return nil
+	}
+	var selfKey []byte
+	_ = s.db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket(bucketDevices)
+		active := false
+		_ = b.ForEach(func(_, v []byte) error {
+			var d wire.Device
+			if json.Unmarshal(v, &d) == nil && d.Status == wire.DeviceActive {
+				active = true
+			}
+			return nil
+		})
+		if active {
+			return nil // not a bootstrap: an approver already exists
+		}
+		raw := b.Get([]byte(signer))
+		if raw == nil {
+			return nil
+		}
+		var d wire.Device
+		if json.Unmarshal(raw, &d) == nil && d.Status == wire.DevicePending {
+			selfKey = d.SignKey
+		}
+		return nil
+	})
+	return selfKey
+}
+
 // POST /v1/devices/{id}/activate
 func (s *Server) handleActivate(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	body, ok := readBody(w, r)
+	if !ok {
+		return
+	}
+	if !s.requireSignature(w, r, body, s.bootstrapSelfKey(r, id)) {
+		return
+	}
 	var req wire.ActivateReq
 	if err := decodeJSON(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "malformed JSON: "+err.Error())
@@ -285,6 +356,13 @@ func (s *Server) handleActivate(w http.ResponseWriter, r *http.Request) {
 
 // POST /v1/devices/{id}/revoke
 func (s *Server) handleRevoke(w http.ResponseWriter, r *http.Request) {
+	body, ok := readBody(w, r)
+	if !ok {
+		return
+	}
+	if !s.requireSignature(w, r, body, nil) {
+		return
+	}
 	id := r.PathValue("id")
 	err := s.db.Update(func(tx *bbolt.Tx) error {
 		devB := tx.Bucket(bucketDevices)
@@ -384,6 +462,13 @@ func (s *Server) handleListDEK(w http.ResponseWriter, r *http.Request) {
 
 // POST /v1/keys/dek
 func (s *Server) handlePostDEK(w http.ResponseWriter, r *http.Request) {
+	body, ok := readBody(w, r)
+	if !ok {
+		return
+	}
+	if !s.requireSignature(w, r, body, nil) {
+		return
+	}
 	var wraps []wire.DEKWrap
 	if err := decodeJSON(r, &wraps); err != nil {
 		writeErr(w, http.StatusBadRequest, "malformed JSON: "+err.Error())
@@ -429,6 +514,13 @@ func (s *Server) handlePostDEK(w http.ResponseWriter, r *http.Request) {
 
 // POST /v1/keys/rotate
 func (s *Server) handleRotate(w http.ResponseWriter, r *http.Request) {
+	body, ok := readBody(w, r)
+	if !ok {
+		return
+	}
+	if !s.requireSignature(w, r, body, nil) {
+		return
+	}
 	var req wire.RotateReq
 	if err := decodeJSON(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "malformed JSON: "+err.Error())

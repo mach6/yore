@@ -65,9 +65,10 @@ func (s *Syncer) Register(ctx context.Context, deviceName string) (string, error
 func (s *Syncer) registerSelf(ctx context.Context, deviceName string) (wire.Device, error) {
 	pub := s.dev.Public()
 	return s.http.RegisterDevice(ctx, wire.RegisterReq{
-		ID:     s.deviceID,
-		Name:   deviceName,
-		PubKey: pub[:],
+		ID:      s.deviceID,
+		Name:    deviceName,
+		PubKey:  pub[:],
+		SignKey: s.dev.SignPublic(),
 	})
 }
 

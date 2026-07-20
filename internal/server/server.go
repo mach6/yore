@@ -5,21 +5,25 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
 	"go.etcd.io/bbolt"
 
+	"yore/internal/reqsign"
 	"yore/internal/wire"
 )
 
@@ -48,8 +52,9 @@ type Options struct {
 
 // Server is an open sync server backed by a bbolt database.
 type Server struct {
-	db    *bbolt.DB
-	token string
+	db     *bbolt.DB
+	token  string
+	nonces *nonceCache
 }
 
 // storedRecord is the on-disk value of a record in a host stream bucket. The
@@ -70,6 +75,116 @@ type apiError struct {
 func (e *apiError) Error() string { return e.msg }
 
 func fail(status int, msg string) *apiError { return &apiError{status: status, msg: msg} }
+
+// Signature-check failure causes. These are logged server-side only; the client
+// always receives a generic 401 so it never learns which check failed.
+var (
+	errNoSigner       = errors.New("missing device header")
+	errInactiveSigner = errors.New("signer is not an active device")
+	errReplay         = errors.New("replayed request")
+	errDeviceMismatch = errors.New("signer device id != registration id")
+)
+
+// ---- signature verification ----
+
+// nonceCache rejects a repeated (device, nonce) pair within reqsign.Skew. A
+// TLS-inspecting proxy that captures a fully valid signed request can otherwise
+// replay it verbatim; the signature stays valid, so replay defence lives here.
+// It is keyed by device+"\x00"+nonce and, because a nonce is only meaningful for
+// reqsign.Skew (after which reqsign.Verify rejects the stale timestamp anyway),
+// stays bounded by the request rate over that 5-minute window — tiny for a
+// single-user fleet. Expired entries are swept lazily on each insert.
+type nonceCache struct {
+	mu   sync.Mutex
+	seen map[string]time.Time
+}
+
+func newNonceCache() *nonceCache { return &nonceCache{seen: make(map[string]time.Time)} }
+
+// checkAndRecord records (device, nonce) and returns true when it is fresh; it
+// returns false without recording anything when the pair was already seen within
+// reqsign.Skew.
+func (n *nonceCache) checkAndRecord(device, nonce string, now time.Time) bool {
+	key := device + "\x00" + nonce
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for k, ts := range n.seen {
+		if now.Sub(ts) > reqsign.Skew {
+			delete(n.seen, k)
+		}
+	}
+	if _, ok := n.seen[key]; ok {
+		return false
+	}
+	n.seen[key] = now
+	return true
+}
+
+// readBody reads the (already size-capped) request body once so it can be both
+// signature-verified and JSON-decoded, then restores r.Body so the handler's
+// decodeJSON still works. The 10 MiB cap is enforced upstream by limitBody's
+// MaxBytesReader.
+func readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "unable to read body")
+		return nil, false
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	return body, true
+}
+
+// denySig logs the specific signature failure for operators and returns a
+// generic 401, leaking nothing about which check failed.
+func (s *Server) denySig(w http.ResponseWriter, r *http.Request, cause error) {
+	log.Printf("signature rejected: %s %s device=%q: %v", r.Method, r.URL.Path, reqsign.Device(r.Header), cause)
+	writeErr(w, http.StatusUnauthorized, "unauthorized")
+}
+
+// requireSignature verifies a mutating request's Ed25519 signature and records
+// its nonce, on top of the bearer token already checked by the auth middleware.
+// The verification key is selfKey when non-nil — a self-signed registration, or
+// the first device forming the group (see bootstrapSelfKey); otherwise the
+// signer named in the headers is looked up in the devices bucket and must be
+// active. On any failure it writes a 401 and returns false. `target` is always
+// r.URL.RequestURI(), matching the client and reqsign's canonical string.
+func (s *Server) requireSignature(w http.ResponseWriter, r *http.Request, body, selfKey []byte) bool {
+	deviceID := reqsign.Device(r.Header)
+	if deviceID == "" {
+		s.denySig(w, r, errNoSigner)
+		return false
+	}
+	pub := selfKey
+	if pub == nil {
+		var dev wire.Device
+		found := false
+		if err := s.db.View(func(tx *bbolt.Tx) error {
+			raw := tx.Bucket(bucketDevices).Get([]byte(deviceID))
+			if raw == nil {
+				return nil
+			}
+			found = true
+			return json.Unmarshal(raw, &dev)
+		}); err != nil {
+			writeErr(w, http.StatusInternalServerError, "internal error")
+			return false
+		}
+		if !found || dev.Status != wire.DeviceActive {
+			s.denySig(w, r, errInactiveSigner)
+			return false
+		}
+		pub = dev.SignKey
+	}
+	if err := reqsign.Verify(r.Header, r.Method, r.URL.RequestURI(), body, pub, time.Now()); err != nil {
+		s.denySig(w, r, err)
+		return false
+	}
+	if !s.nonces.checkAndRecord(deviceID, reqsign.Nonce(r.Header), time.Now()) {
+		s.denySig(w, r, errReplay)
+		return false
+	}
+	return true
+}
 
 // New opens (creating if needed) the database and ensures the fixed buckets.
 // An empty token is refused so the server is never accidentally open.
@@ -93,7 +208,7 @@ func New(opts Options) (*Server, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Server{db: db, token: opts.Token}, nil
+	return &Server{db: db, token: opts.Token, nonces: newNonceCache()}, nil
 }
 
 // Close releases the database and its lock.

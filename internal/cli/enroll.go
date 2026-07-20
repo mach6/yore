@@ -92,14 +92,14 @@ func buildSyncer(dir string) (*syncer.Syncer, *syncer.HTTPClient, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	http := syncer.NewHTTPClient(cfg.ServerURL, token)
+	http := syncer.NewHTTPClient(cfg.ServerURL, token, cfg.ServerPin)
 	return syncer.New(st, http, key, cfg.KeyEpochD()), http, nil
 }
 
 // runSetup enrolls this machine: it records the server URL + token, ensures a
 // device key, and either bootstraps a new history group (first machine) or
 // registers as pending for approval from an already-enrolled machine.
-func runSetup(server, token, name string) int {
+func runSetup(server, token, name string, pin bool) int {
 	dir := stateDir()
 	url, tok, err := resolveServer(dir, server, token)
 	if err != nil {
@@ -110,6 +110,15 @@ func runSetup(server, token, name string) int {
 	// Persist server + token so the daemon can sync unattended.
 	cfg, _ := config.Load(dir)
 	cfg.ServerURL, cfg.Token = url, tok
+	if pin {
+		p, err := syncer.ServerPin(url)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "yore setup: cannot capture server certificate to pin:", err)
+			return 1
+		}
+		cfg.ServerPin = p
+		fmt.Printf("Pinned server certificate (SPKI %s…). Sync will refuse any other cert.\n", p[:12])
+	}
 	if err := config.Save(dir, cfg); err != nil {
 		fmt.Fprintln(os.Stderr, "yore setup:", err)
 		return 1

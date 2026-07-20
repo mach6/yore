@@ -44,7 +44,7 @@ const (
 	dekWrapDomain = "yore/dek-wrap/v1" // DEK wrapped under HK
 	recSealDomain = "yore/rec/v1"      // history record sealed under a DEK
 
-	devicePrefix = "yore-device1." // device.key line prefix (format v1)
+	devicePrefix = "yore-device2." // device.key line prefix (format v2: adds Ed25519 signing seed)
 )
 
 // Byte sizes shared across the package.

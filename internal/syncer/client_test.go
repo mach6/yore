@@ -8,11 +8,45 @@ import (
 	"path/filepath"
 	"testing"
 
+	"yore/internal/cryptobox"
+	"yore/internal/rec"
 	"yore/internal/server"
 	"yore/internal/wire"
 )
 
 const testToken = "test-token"
+
+// enroll registers and self-activates a fresh ACTIVE device on the server (the
+// server's first-device bootstrap path), returning a request-signing client for
+// it. Mutating endpoints now require an active device's signature, so transport
+// tests that push/etc. need this.
+func enroll(t *testing.T, url string) *HTTPClient {
+	t.Helper()
+	ctx := context.Background()
+	dk, err := cryptobox.GenerateDeviceKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := rec.NewID()
+	c := NewHTTPClient(url, testToken, "")
+	c.SetSigner(id, dk.Sign)
+	pub := dk.Public()
+	if _, err := c.RegisterDevice(ctx, wire.RegisterReq{ID: id, Name: "test", PubKey: pub[:], SignKey: dk.SignPublic()}); err != nil {
+		t.Fatalf("enroll register: %v", err)
+	}
+	hk, err := cryptobox.NewHistoryKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob, err := cryptobox.WrapHK(hk, pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.ActivateDevice(ctx, id, wire.ActivateReq{Wrap: wire.HKWrap{DeviceID: id, Blob: blob, HKVersion: 1}}); err != nil {
+		t.Fatalf("enroll activate: %v", err)
+	}
+	return c
+}
 
 // newServer spins up a real sync server behind httptest and returns its base
 // URL. The server and its temp DB are torn down at test end.
@@ -32,7 +66,7 @@ func newServer(t *testing.T) string {
 }
 
 func TestHTTPClientHealth(t *testing.T) {
-	c := NewHTTPClient(newServer(t), testToken)
+	c := NewHTTPClient(newServer(t), testToken, "")
 	if err := c.Health(context.Background()); err != nil {
 		t.Fatalf("Health: %v", err)
 	}
@@ -40,7 +74,7 @@ func TestHTTPClientHealth(t *testing.T) {
 
 func TestHTTPClientBadTokenIsAPIError(t *testing.T) {
 	ctx := context.Background()
-	c := NewHTTPClient(newServer(t), "wrong-token")
+	c := NewHTTPClient(newServer(t), "wrong-token", "")
 
 	// Health needs no token: it still succeeds.
 	if err := c.Health(ctx); err != nil {
@@ -63,12 +97,20 @@ func TestHTTPClientBadTokenIsAPIError(t *testing.T) {
 
 func TestHTTPClientDeviceLifecycle(t *testing.T) {
 	ctx := context.Background()
-	c := NewHTTPClient(newServer(t), testToken)
+	url := newServer(t)
 
-	// Register.
-	pub := make([]byte, 32)
-	pub[0] = 7
-	dev, err := c.RegisterDevice(ctx, wire.RegisterReq{ID: "dev-1", Name: "laptop", PubKey: pub})
+	// A self-signed registration (device stays pending until approved).
+	dk, err := cryptobox.GenerateDeviceKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := rec.NewID()
+	c := NewHTTPClient(url, testToken, "")
+	c.SetSigner(id, dk.Sign)
+	pub := dk.Public()
+	req := wire.RegisterReq{ID: id, Name: "laptop", PubKey: pub[:], SignKey: dk.SignPublic()}
+
+	dev, err := c.RegisterDevice(ctx, req)
 	if err != nil {
 		t.Fatalf("RegisterDevice: %v", err)
 	}
@@ -77,7 +119,7 @@ func TestHTTPClientDeviceLifecycle(t *testing.T) {
 	}
 
 	// Duplicate register is a typed 409.
-	_, err = c.RegisterDevice(ctx, wire.RegisterReq{ID: "dev-1", Name: "laptop", PubKey: pub})
+	_, err = c.RegisterDevice(ctx, req)
 	var ae *APIError
 	if !errors.As(err, &ae) || ae.Status != http.StatusConflict {
 		t.Fatalf("duplicate register: want APIError 409, got %v", err)
@@ -88,12 +130,12 @@ func TestHTTPClientDeviceLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListDevices: %v", err)
 	}
-	if len(devs) != 1 || devs[0].ID != "dev-1" {
+	if len(devs) != 1 || devs[0].ID != id {
 		t.Fatalf("ListDevices: unexpected %+v", devs)
 	}
 
 	// No HK wrap yet: found=false, no error.
-	_, found, err := c.GetHKWrap(ctx, "dev-1")
+	_, found, err := c.GetHKWrap(ctx, id)
 	if err != nil {
 		t.Fatalf("GetHKWrap: %v", err)
 	}
@@ -104,7 +146,7 @@ func TestHTTPClientDeviceLifecycle(t *testing.T) {
 
 func TestHTTPClientPushPull(t *testing.T) {
 	ctx := context.Background()
-	c := NewHTTPClient(newServer(t), testToken)
+	c := enroll(t, newServer(t)) // push requires an active, signing device
 
 	push, err := c.PushRecords(ctx, wire.PushReq{
 		HostID: "host-A",

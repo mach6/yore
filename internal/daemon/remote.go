@@ -98,7 +98,7 @@ func newRemote(dir string, st *store.Store) *remoteCache {
 	if err != nil {
 		return rc
 	}
-	rc.sy = syncer.New(st, syncer.NewHTTPClient(cfg.ServerURL, token), key, cfg.KeyEpochD())
+	rc.sy = syncer.New(st, syncer.NewHTTPClient(cfg.ServerURL, token, cfg.ServerPin), key, cfg.KeyEpochD())
 	rc.state = proto.RemoteUnavailable // until the first successful sync
 	return rc
 }

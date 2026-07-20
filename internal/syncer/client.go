@@ -15,15 +15,20 @@ package syncer
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"time"
 
+	"yore/internal/reqsign"
 	"yore/internal/wire"
 )
 
@@ -44,24 +49,81 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("yore server: http %d: %s", e.Status, e.Msg)
 }
 
-// HTTPClient is a thin transport over the sync server's HTTP JSON API. It is
-// safe for concurrent use: it holds no mutable state beyond the shared
-// *http.Client.
+// HTTPClient is a thin transport over the sync server's HTTP JSON API. The
+// signer (set once via SetSigner) is used to sign mutating (POST) requests with
+// the device key so a captured bearer token can't push or revoke.
 type HTTPClient struct {
-	baseURL string
-	token   string
-	hc      *http.Client
+	baseURL  string
+	token    string
+	hc       *http.Client
+	deviceID string
+	sign     func([]byte) []byte // nil until SetSigner; signs POSTs
 }
 
 // NewHTTPClient returns a client for the server at baseURL authenticating with
-// the given bearer token. baseURL should have no trailing slash (e.g.
-// "https://sync.example.com").
-func NewHTTPClient(baseURL, token string) *HTTPClient {
-	return &HTTPClient{
-		baseURL: baseURL,
-		token:   token,
-		hc:      &http.Client{Timeout: requestTimeout},
+// the given bearer token. baseURL should have no trailing slash. If pin is
+// non-empty (base64 SHA-256 of the server's SubjectPublicKeyInfo), the client
+// pins the server's TLS certificate and refuses any other — defeating a
+// TLS-inspecting proxy at the cost of not syncing through one.
+func NewHTTPClient(baseURL, token, pin string) *HTTPClient {
+	hc := &http.Client{Timeout: requestTimeout}
+	if pin != "" {
+		hc.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{VerifyConnection: pinVerifier(pin)},
+		}
 	}
+	return &HTTPClient{baseURL: baseURL, token: token, hc: hc}
+}
+
+// SetSigner installs the device's request signer (deviceID + Ed25519 sign
+// function). Call once at Syncer construction; it makes every POST carry a
+// reqsign signature.
+func (c *HTTPClient) SetSigner(deviceID string, sign func([]byte) []byte) {
+	c.deviceID = deviceID
+	c.sign = sign
+}
+
+// pinVerifier returns a TLS VerifyConnection callback enforcing that the leaf
+// certificate's SPKI SHA-256 equals the pinned value.
+func pinVerifier(pin string) func(tls.ConnectionState) error {
+	return func(cs tls.ConnectionState) error {
+		if len(cs.PeerCertificates) == 0 {
+			return errors.New("syncer: no server certificate to pin")
+		}
+		sum := sha256.Sum256(cs.PeerCertificates[0].RawSubjectPublicKeyInfo)
+		got := base64.StdEncoding.EncodeToString(sum[:])
+		if got != pin {
+			return fmt.Errorf("syncer: server certificate pin mismatch (got %s) — refusing (TLS interception or changed cert?)", got)
+		}
+		return nil
+	}
+}
+
+// ServerPin fetches the server's current certificate SPKI pin (base64 SHA-256),
+// for `yore setup --pin` to capture. It performs a TLS handshake to baseURL's
+// host and does NOT verify the chain (we're capturing whatever cert is present);
+// run it on a trusted network so you don't pin an interceptor.
+func ServerPin(baseURL string) (string, error) {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return "", err
+	}
+	host := u.Host
+	if u.Port() == "" {
+		host += ":443"
+	}
+	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", host,
+		&tls.Config{InsecureSkipVerify: true}) //nolint:gosec // capturing the cert to pin, not trusting it
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+	certs := conn.ConnectionState().PeerCertificates
+	if len(certs) == 0 {
+		return "", errors.New("no server certificate")
+	}
+	sum := sha256.Sum256(certs[0].RawSubjectPublicKeyInfo)
+	return base64.StdEncoding.EncodeToString(sum[:]), nil
 }
 
 // do performs one request. It marshals body (if non-nil) as JSON, sends the
@@ -73,16 +135,16 @@ func (c *HTTPClient) do(ctx context.Context, method, path string, query url.Valu
 		u += "?" + query.Encode()
 	}
 
-	var reqBody io.Reader
+	var bodyBytes []byte
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
 			return fmt.Errorf("syncer: marshal request: %w", err)
 		}
-		reqBody = bytes.NewReader(b)
+		bodyBytes = b
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, u, reqBody)
+	req, err := http.NewRequestWithContext(ctx, method, u, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return fmt.Errorf("syncer: build request: %w", err)
 	}
@@ -91,6 +153,17 @@ func (c *HTTPClient) do(ctx context.Context, method, path string, query url.Valu
 	}
 	if auth {
 		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	// Sign mutating requests (all POSTs) with the device key, so the bearer
+	// token alone can't push or revoke. reqsign binds to method+target+body.
+	if c.sign != nil && method == http.MethodPost {
+		hdrs, err := reqsign.Sign(c.deviceID, c.sign, method, req.URL.RequestURI(), bodyBytes, time.Now())
+		if err != nil {
+			return fmt.Errorf("syncer: sign request: %w", err)
+		}
+		for k, v := range hdrs {
+			req.Header.Set(k, v)
+		}
 	}
 
 	resp, err := c.hc.Do(req)

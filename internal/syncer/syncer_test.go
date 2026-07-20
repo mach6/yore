@@ -28,7 +28,7 @@ func newDevice(t *testing.T, url string) (*Syncer, *store.Store) {
 	if err != nil {
 		t.Fatalf("GenerateDeviceKey: %v", err)
 	}
-	return New(st, NewHTTPClient(url, testToken), key, testEpoch), st
+	return New(st, NewHTTPClient(url, testToken, ""), key, testEpoch), st
 }
 
 // enrollPair returns two enrolled machines sharing one server: A has

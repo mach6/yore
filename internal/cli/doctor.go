@@ -74,7 +74,7 @@ func runDoctor() int {
 			ok("device key present")
 		}
 		token := firstNonEmpty(cfg.Token, os.Getenv("YORE_TOKEN"))
-		http := syncer.NewHTTPClient(cfg.ServerURL, token)
+		http := syncer.NewHTTPClient(cfg.ServerURL, token, cfg.ServerPin)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := http.Health(ctx); err != nil {

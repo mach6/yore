@@ -132,6 +132,10 @@ device X25519 keypair    per machine, private half never leaves it
   surviving devices; **records are never re-encrypted**.
 - **AAD**: every sealed record is bound to `recordID|hostID|seq|keyID`, so a
   compromised server cannot reorder, replay, or substitute blobs undetected.
+- **Request signing** (`reqsign`): the device's Ed25519 key also signs every
+  mutating sync request, so a captured bearer token (e.g. via a TLS-inspecting
+  proxy) can't push garbage or revoke a device. Optional TLS cert pinning
+  (`yore setup --pin`) hardens further, fail-closed, against such proxies.
 
 ## Sync protocol
 
@@ -145,9 +149,10 @@ documented in **[`protocol.md`](protocol.md)**.
 
 ## Config (`~/.config/yore/config.json`)
 
-`server_url`, `token` / `token_file`, `key_epoch` (24h), `daemon_idle` (30m),
-`sync_interval` (5m), `auto_deepen`, `enter_executes`, `bind_up_arrow`, `keymap`
-(emacs|vim), `ignore_patterns`, `ignore_dirs`, `record_space_prefixed`.
+`server_url`, `token` / `token_file`, `server_pin`, `key_epoch` (24h),
+`daemon_idle` (30m), `sync_interval` (5m), `auto_deepen`, `enter_executes`,
+`bind_up_arrow`, `keymap` (emacs|vim), `ignore_patterns`, `ignore_dirs`,
+`record_space_prefixed`.
 
 ## Invariants
 
