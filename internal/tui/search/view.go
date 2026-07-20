@@ -120,7 +120,7 @@ func (m Model) renderRow(r rec.Record, q match.Query, selected bool, w int, nowM
 		styledSeg{text: " ", raw: true},
 	)
 
-	avail := w - prefixW
+	avail := w - prefixW - 2 // 2 cols reserved for the selection marker gutter
 	if avail < 1 {
 		avail = 1
 	}
@@ -163,24 +163,30 @@ func (m Model) exitMarker(r rec.Record) (string, lipgloss.Style) {
 	return "✗" + strconv.Itoa(*r.Exit), m.th.ExitErr
 }
 
-// composeLine joins the segments. A selected row is drawn as a solid,
-// full-width selection bar (theme.Sel); an unselected row keeps each segment's
-// own style.
+// composeLine joins the segments behind a 2-column selection gutter. The
+// selected row shows a bold accent "❯ " marker (always visible, independent of
+// background rendering) followed by a reverse-video bar; unselected rows get a
+// blank gutter so columns stay aligned.
 func (m Model) composeLine(segs []styledSeg, selected bool, w int) string {
+	body := w - 2
+	if body < 0 {
+		body = 0
+	}
 	if selected {
 		var plain strings.Builder
 		for _, s := range segs {
 			plain.WriteString(s.text)
 		}
 		line := plain.String()
-		if width := runewidth.StringWidth(line); width < w {
-			line += strings.Repeat(" ", w-width)
-		} else if width > w {
-			line = truncCols(line, w)
+		if width := runewidth.StringWidth(line); width < body {
+			line += strings.Repeat(" ", body-width)
+		} else if width > body {
+			line = truncCols(line, body)
 		}
-		return m.th.Sel.Render(line)
+		return m.th.Prompt.Render("❯ ") + m.th.Sel.Render(line)
 	}
 	var b strings.Builder
+	b.WriteString("  ") // gutter, keeps unselected rows aligned with the marker
 	for _, s := range segs {
 		if s.raw {
 			b.WriteString(s.text)

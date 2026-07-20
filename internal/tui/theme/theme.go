@@ -47,8 +47,6 @@ var (
 	cAccent = lipgloss.AdaptiveColor{Light: "#0066cc", Dark: "#5fafff"} // blue
 	cNorm   = lipgloss.AdaptiveColor{Light: "#1c1c1c", Dark: "#dadada"}
 	cDim    = lipgloss.AdaptiveColor{Light: "#8a8a8a", Dark: "#6c6c6c"}
-	cSelBg  = lipgloss.AdaptiveColor{Light: "#d7e6ff", Dark: "#25384f"}
-	cSelFg  = lipgloss.AdaptiveColor{Light: "#003a75", Dark: "#eaf2ff"}
 	cMatch  = lipgloss.AdaptiveColor{Light: "#b35a00", Dark: "#ffb454"} // amber, not red/green
 	cOK     = lipgloss.AdaptiveColor{Light: "#207520", Dark: "#5fd75f"} // green
 	cErr    = lipgloss.AdaptiveColor{Light: "#c02020", Dark: "#ff6b6b"} // red
@@ -83,11 +81,14 @@ var hostPalette = [8]lipgloss.AdaptiveColor{
 func New() *Theme {
 	base := lipgloss.NewStyle()
 	t := &Theme{
-		Accent:  base.Foreground(cAccent),
-		Prompt:  base.Foreground(cAccent).Bold(true),
-		Input:   base.Foreground(cNorm),
-		Norm:    base.Foreground(cNorm),
-		Sel:     base.Foreground(cSelFg).Background(cSelBg).Bold(true),
+		Accent: base.Foreground(cAccent),
+		Prompt: base.Foreground(cAccent).Bold(true),
+		Input:  base.Foreground(cNorm),
+		Norm:   base.Foreground(cNorm),
+		// Reverse video (terminal-native) so the selected row is unmistakable
+		// even when adaptive light/dark detection is wrong or the terminal does
+		// not render truecolor backgrounds. Paired with a ❯ marker in the rows.
+		Sel:     base.Reverse(true).Bold(true),
 		Dim:     base.Foreground(cDim),
 		Match:   base.Foreground(cMatch).Bold(true),
 		ExitOK:  base.Foreground(cOK),
