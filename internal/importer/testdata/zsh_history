@@ -1,0 +1,9 @@
+: 1600000000:5;echo hello
+: 1600000100:0;git status
+plain command without timestamp
+: > /tmp/truncate
+
+: 1600000200:12;echo line1\
+line2\
+line3
+: 1600000300:0;ls -la

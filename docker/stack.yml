@@ -1,0 +1,41 @@
+# Docker Swarm stack for the yore sync server.
+#
+#   docker stack deploy -c docker/stack.yml yore
+#
+# The server stores only ciphertext + device public keys; TLS terminates at
+# your existing reverse proxy (attach this service to its network and add
+# your proxy's labels/config under deploy.labels).
+#
+# Create the auth token secret once:
+#   openssl rand -base64 32 | docker secret create yore_token -
+version: "3.8"
+
+services:
+  yore:
+    image: yore:latest
+    environment:
+      YORE_TOKEN_FILE: /run/secrets/yore_token
+    secrets:
+      - yore_token
+    volumes:
+      - yore-data:/data
+    networks:
+      - proxy
+    healthcheck:
+      test: ["CMD", "/yore", "healthcheck", "--url", "http://localhost:8080/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      replicas: 1 # bbolt is single-owner: exactly one replica, ever
+
+volumes:
+  yore-data:
+
+secrets:
+  yore_token:
+    external: true
+
+networks:
+  proxy:
+    external: true

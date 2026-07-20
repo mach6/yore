@@ -1,0 +1,11 @@
+#1600000000
+echo first
+echo no timestamp
+#1600000100
+#1600000200
+echo last wins
+#notatimestamp comment
+#1600000300
+git status
+
+echo after blank
