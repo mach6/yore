@@ -78,7 +78,7 @@ func headlessSearch(q, scope, tag string, limit int) int {
 	switch scope {
 	case proto.ScopeSession:
 		req.Session = os.Getenv("YORE_SESSION")
-	case proto.ScopeCwd:
+	case proto.ScopeCwd, proto.ScopeWorkspace:
 		if wd, err := os.Getwd(); err == nil {
 			req.Cwd = wd
 		}

@@ -1,7 +1,10 @@
 package daemon
 
 import (
+	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 
 	"yore/internal/match"
 	"yore/internal/proto"
@@ -33,6 +36,14 @@ func (s *server) runQuery(f *match.Filter, q proto.QueryReq) proto.QueryResp {
 		nudge(s.syncWake)
 	}
 
+	// Workspace scope is local-only: commands run anywhere under the current
+	// git repo root. Resolve the root once (empty if q.Cwd isn't in a repo,
+	// in which case nothing matches).
+	var wsRoot string
+	if scope == proto.ScopeWorkspace {
+		wsRoot = gitRoot(q.Cwd)
+	}
+
 	// Local corpus contributes unless the scope targets a specific remote host.
 	local := s.store.Hostname()
 	wantLocal := !(scope == proto.ScopeHost && q.Host != "" && q.Host != local)
@@ -47,7 +58,7 @@ func (s *server) runQuery(f *match.Filter, q proto.QueryReq) proto.QueryResp {
 		matched := f.Apply(q.Q, cmds)
 		n := 0
 		for _, idx := range matched {
-			if scopeMatch(scope, corpus[idx], q) {
+			if scopeMatch(scope, corpus[idx], q, wsRoot) {
 				matched[n] = idx
 				n++
 			}
@@ -132,13 +143,16 @@ func (s *server) runQuery(f *match.Filter, q proto.QueryReq) proto.QueryResp {
 }
 
 // scopeMatch reports whether a LOCAL-corpus record belongs to the requested
-// scope. Remote records are filtered separately in remoteCache.search.
-func scopeMatch(scope string, r rec.Record, q proto.QueryReq) bool {
+// scope. Remote records are filtered separately in remoteCache.search. wsRoot
+// is the resolved git-repo root for ScopeWorkspace (ignored otherwise).
+func scopeMatch(scope string, r rec.Record, q proto.QueryReq, wsRoot string) bool {
 	switch scope {
 	case proto.ScopeSession:
 		return r.Session == q.Session
 	case proto.ScopeCwd:
 		return r.Cwd == q.Cwd
+	case proto.ScopeWorkspace:
+		return underDir(r.Cwd, wsRoot)
 	case proto.ScopeHost:
 		// Local corpus is all one host; include it only when the filter names
 		// this host (empty host = no restriction).
@@ -146,4 +160,30 @@ func scopeMatch(scope string, r rec.Record, q proto.QueryReq) bool {
 	default:
 		return true
 	}
+}
+
+// gitRoot walks up from dir to the nearest directory containing a .git entry,
+// returning that directory, or "" if dir is empty or not inside a repo.
+func gitRoot(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "" // reached the filesystem root
+		}
+		dir = parent
+	}
+}
+
+// underDir reports whether path is root or nested beneath it (segment-aware).
+func underDir(path, root string) bool {
+	if root == "" || path == "" {
+		return false
+	}
+	return path == root || strings.HasPrefix(path, root+string(filepath.Separator))
 }

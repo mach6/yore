@@ -229,7 +229,7 @@ func (m Model) buildReq() proto.QueryReq {
 	switch m.scope {
 	case proto.ScopeSession:
 		req.Session = m.opts.Session
-	case proto.ScopeCwd:
+	case proto.ScopeCwd, proto.ScopeWorkspace:
 		req.Cwd = m.opts.Cwd
 	}
 	return req
@@ -317,12 +317,14 @@ func scopeLabel(s string) string {
 		return "sess"
 	case proto.ScopeCwd:
 		return "cwd"
+	case proto.ScopeWorkspace:
+		return "repo"
 	default:
 		return ""
 	}
 }
 
-// nextScope cycles local -> all -> session -> cwd -> local.
+// nextScope cycles local -> all -> session -> cwd -> workspace -> local.
 func nextScope(s string) string {
 	switch s {
 	case proto.ScopeLocal:
@@ -331,6 +333,8 @@ func nextScope(s string) string {
 		return proto.ScopeSession
 	case proto.ScopeSession:
 		return proto.ScopeCwd
+	case proto.ScopeCwd:
+		return proto.ScopeWorkspace
 	default:
 		return proto.ScopeLocal
 	}

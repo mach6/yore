@@ -26,11 +26,12 @@ const (
 
 // Query scopes.
 const (
-	ScopeLocal   = "local"   // this host only (shallow)
-	ScopeAll     = "all"     // every host (deep)
-	ScopeHost    = "host"    // one specific host (deep unless it is this host)
-	ScopeSession = "session" // this shell session
-	ScopeCwd     = "cwd"     // commands run in a given directory, any host
+	ScopeLocal     = "local"     // this host only (shallow)
+	ScopeAll       = "all"       // every host (deep)
+	ScopeHost      = "host"      // one specific host (deep unless it is this host)
+	ScopeSession   = "session"   // this shell session
+	ScopeCwd       = "cwd"       // commands run in a given directory, any host
+	ScopeWorkspace = "workspace" // commands run anywhere in the current git repo (local)
 )
 
 // Remote states for RemoteInfo.State.

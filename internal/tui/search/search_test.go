@@ -196,7 +196,7 @@ func TestCtrlRCyclesScopes(t *testing.T) {
 	f := &fakeQuerier{resp: mkResp(mkRows("ls"))}
 	m := NewModel(f, Options{})
 
-	want := []string{proto.ScopeAll, proto.ScopeSession, proto.ScopeCwd, proto.ScopeLocal}
+	want := []string{proto.ScopeAll, proto.ScopeSession, proto.ScopeCwd, proto.ScopeWorkspace, proto.ScopeLocal}
 	if m.scope != proto.ScopeLocal {
 		t.Fatalf("start scope = %q, want local", m.scope)
 	}
