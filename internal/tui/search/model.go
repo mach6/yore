@@ -55,6 +55,7 @@ type Model struct {
 	scope    string // one of proto.Scope*
 	dedupe   bool
 	frecency bool // alt+f: rank by frequency×recency instead of recency
+	fuzzy    bool // alt+z: subsequence matching instead of substring
 
 	rows      []rec.Record
 	total     int
@@ -188,6 +189,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.applyLayout()
 		return m.issueQuery()
 
+	case "alt+z":
+		m.fuzzy = !m.fuzzy
+		m.applyLayout()
+		return m.issueQuery()
+
 	case "up", "ctrl+p":
 		m.moveSel(-1)
 		return m, nil
@@ -235,6 +241,7 @@ func (m Model) buildReq() proto.QueryReq {
 	if m.frecency {
 		req.Sort = proto.SortFrecency
 	}
+	req.Fuzzy = m.fuzzy
 	switch m.scope {
 	case proto.ScopeSession:
 		req.Session = m.opts.Session

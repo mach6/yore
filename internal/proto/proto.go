@@ -57,6 +57,7 @@ type QueryReq struct {
 	Cwd     string `json:"cwd,omitempty"`     // directory for ScopeCwd
 	Tag     string `json:"tag,omitempty"`     // executor filter, e.g. "claude-code"; "" = any
 	Sort    string `json:"sort,omitempty"`    // "" = recency (newest first); "frecency" = frequency×recency
+	Fuzzy   bool   `json:"fuzzy,omitempty"`   // subsequence (fzf-style) matching instead of substring
 	Limit   int    `json:"limit,omitempty"`   // 0 = server default (200)
 	Offset  int    `json:"offset,omitempty"`
 	Dedupe  bool   `json:"dedupe,omitempty"` // collapse identical commands, newest wins

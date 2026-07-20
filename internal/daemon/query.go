@@ -56,7 +56,14 @@ func (s *server) runQuery(f *match.Filter, q proto.QueryReq) proto.QueryResp {
 		cmds := s.cmds
 		s.mu.RUnlock()
 
-		matched := f.Apply(q.Q, cmds)
+		var matched []int
+		if q.Fuzzy {
+			// Fuzzy matching is a full subsequence scan (no substring-prefix
+			// incremental shortcut applies); the per-connection Filter is skipped.
+			matched = fuzzyMatch(q.Q, cmds)
+		} else {
+			matched = f.Apply(q.Q, cmds)
+		}
 		n := 0
 		for _, idx := range matched {
 			if scopeMatch(scope, corpus[idx], q, wsRoot) {
@@ -168,6 +175,17 @@ func scopeMatch(scope string, r rec.Record, q proto.QueryReq, wsRoot string) boo
 }
 
 func (s *server) nowMs() int64 { return time.Now().UnixMilli() }
+
+// fuzzyMatch returns the ascending indices of cmds that fuzzy-match query.
+func fuzzyMatch(query string, cmds []string) []int {
+	var out []int
+	for i, c := range cmds {
+		if ok, _ := match.Fuzzy(query, c); ok {
+			out = append(out, i)
+		}
+	}
+	return out
+}
 
 // frecencyRank collapses rows to one per command and orders them by a
 // frequency×recency score with a boost for commands last run in the query's
