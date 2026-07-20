@@ -460,6 +460,19 @@ if _yore_enter_executes; then
 else
 	bind '"\C-r": "\eyore"'
 fi
+# Optionally also bind the Up arrow to search (config bind_up_arrow), Atuin
+# style. Decided at source time; honors $YORE_DIR.
+_yore_bind_up_arrow() {
+	local f="${YORE_DIR:-$HOME/.config/yore}/config.json"
+	[[ -r $f ]] && grep -q '"bind_up_arrow"[[:space:]]*:[[:space:]]*true' "$f"
+}
+if _yore_bind_up_arrow; then
+	if _yore_enter_executes; then
+		bind '"\e[A": "\eyore\C-m"'
+	else
+		bind '"\e[A": "\eyore"'
+	fi
+fi
 
 # Convenience aliases (Options.Aliases). Drop any pre-existing h/hs aliases
 # (the common `history` / `history | grep` pattern) so our versions win and a

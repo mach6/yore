@@ -73,7 +73,17 @@ _yore_search_widget() {
 	fi
 	zle reset-prompt
 }
+# Optionally also bind the Up arrow to search (config bind_up_arrow), Atuin
+# style. Decided at source time (bindings are static); honors $YORE_DIR.
+_yore_bind_up_arrow() {
+	local f="${YORE_DIR:-$HOME/.config/yore}/config.json"
+	[[ -r $f ]] && grep -q '"bind_up_arrow"[[:space:]]*:[[:space:]]*true' "$f"
+}
 if [[ -o interactive ]]; then
 	zle -N _yore_search_widget
 	bindkey '^r' _yore_search_widget
+	if _yore_bind_up_arrow; then
+		bindkey '^[[A' _yore_search_widget  # Up (normal cursor keys)
+		bindkey '^[OA' _yore_search_widget  # Up (application cursor keys)
+	fi
 fi

@@ -47,6 +47,11 @@ type Config struct {
 	// integration; see internal/shell/assets.
 	EnterExecutes *bool `json:"enter_executes,omitempty"` // default false
 
+	// BindUpArrow, when true, also binds the Up arrow to the search TUI (in
+	// addition to Ctrl-R), Atuin-style. Off by default because it changes a
+	// very muscle-memoried key. Read by the emitted shell integration.
+	BindUpArrow *bool `json:"bind_up_arrow,omitempty"` // default false
+
 	// Recording filters (see internal/redact). Commands matching a built-in
 	// secret pattern or any of these user regexes are never recorded; commands
 	// run under an ignored directory are never recorded; a leading space skips
@@ -71,6 +76,7 @@ func (c Config) KeyEpochD() time.Duration     { return durOr(c.KeyEpoch, 24*time
 func (c Config) DaemonIdleD() time.Duration   { return durOr(c.DaemonIdle, 30*time.Minute) }
 func (c Config) SyncIntervalD() time.Duration { return durOr(c.SyncInterval, 5*time.Minute) }
 func (c Config) AutoDeepenOn() bool           { return c.AutoDeepen == nil || *c.AutoDeepen }
+func (c Config) BindUpArrowOn() bool          { return c.BindUpArrow != nil && *c.BindUpArrow }
 
 func durOr(s string, def time.Duration) time.Duration {
 	if d, err := time.ParseDuration(s); err == nil && d > 0 {
