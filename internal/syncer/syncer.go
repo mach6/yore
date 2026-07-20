@@ -56,8 +56,8 @@ type Syncer struct {
 	hk         [32]byte
 	hkVersion  int
 
-	deksByEpoch map[int64]dekEntry     // push side: epoch start -> DEK
-	deksByKeyID map[string][32]byte    // pull side: keyID -> unwrapped DEK
+	deksByEpoch map[int64]dekEntry      // push side: epoch start -> DEK
+	deksByKeyID map[string][32]byte     // pull side: keyID -> unwrapped DEK
 	dekWraps    map[string]wire.DEKWrap // pull side: keyID -> wrap metadata
 }
 

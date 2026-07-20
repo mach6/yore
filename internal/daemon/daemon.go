@@ -77,11 +77,13 @@ type server struct {
 	wake        chan struct{} // "spool has data" -> debounced ingest
 	activity    chan struct{} // "a request arrived" -> reset idle timer
 	shutdownReq chan struct{} // OpShutdown -> graceful stop
+	syncWake    chan struct{} // "sync now" -> push/pull cycle
 	sigCh       chan os.Signal
 	done        chan struct{} // closed once, signals all workers to stop
 
 	wg           sync.WaitGroup
 	shutdownOnce sync.Once
+	syncMu       sync.Mutex // serializes sync cycles (periodic loop vs explicit OpSync)
 }
 
 // Run opens the store and serves until idle, a signal, or OpShutdown. If
@@ -115,11 +117,12 @@ func Run(dir string, opts Options) error {
 		logger:      logger,
 		idleTimeout: idle,
 		startTime:   time.Now(),
-		remote:      &remoteCache{},
+		remote:      newRemote(dir, st),
 		conns:       make(map[net.Conn]struct{}),
 		wake:        make(chan struct{}, 1),
 		activity:    make(chan struct{}, 1),
 		shutdownReq: make(chan struct{}, 1),
+		syncWake:    make(chan struct{}, 1),
 		done:        make(chan struct{}),
 	}
 
@@ -171,6 +174,11 @@ func Run(dir string, opts Options) error {
 	go s.acceptLoop()
 	go s.ingestLoop()
 	go s.snapshotLoop()
+	if s.remote.enabled() {
+		s.wg.Add(1)
+		go s.syncLoop()
+		s.logf("sync enabled")
+	}
 
 	return s.serve()
 }
@@ -325,7 +333,11 @@ func (s *server) dispatch(req *proto.Request, f *match.Filter) (proto.Response, 
 		return proto.Response{OK: true, Status: &st}, false
 
 	case proto.OpSync:
-		// Sync is a later milestone; acknowledge as a no-op for now.
+		// Explicit sync is synchronous: run a full cycle and respond after it
+		// finishes, so `yore sync` reflects the real outcome.
+		if s.remote.enabled() {
+			s.doSync()
+		}
 		return proto.Response{OK: true}, false
 
 	case proto.OpShutdown:
@@ -563,9 +575,3 @@ func openLog(dir string) (*os.File, *log.Logger) {
 	}
 	return f, log.New(f, "", log.LstdFlags)
 }
-
-// remoteCache is the seam for the future cross-host sync layer. For now it is
-// a stub that reports "off": no server is contacted and no rows are cached.
-type remoteCache struct{}
-
-func (*remoteCache) info() proto.RemoteInfo { return proto.RemoteInfo{State: proto.RemoteOff} }

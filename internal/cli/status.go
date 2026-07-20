@@ -4,11 +4,34 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"os"
 	"time"
 
 	"yore/internal/config"
+	"yore/internal/daemon"
 	"yore/internal/proto"
 )
+
+// cmdSync forces an immediate push/pull cycle and prints the result.
+func cmdSync([]string) int {
+	c, err := daemon.EnsureRunning(stateDir())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "yore sync:", err)
+		return 1
+	}
+	defer c.Close()
+	if err := c.Sync(); err != nil {
+		fmt.Fprintln(os.Stderr, "yore sync:", err)
+		return 1
+	}
+	st, err := c.Status()
+	if err == nil {
+		fmt.Printf("sync complete — remote: %s (%d hosts)\n", st.Remote.State, st.Remote.Hosts)
+	} else {
+		fmt.Println("sync complete")
+	}
+	return 0
+}
 
 // cmdStatus reports on the daemon and state directory.
 func cmdStatus([]string) int {

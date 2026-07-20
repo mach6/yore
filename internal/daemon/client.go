@@ -17,7 +17,7 @@ const (
 	dialTimeout   = 100 * time.Millisecond
 	opDeadline    = 2 * time.Second // ping/status/shutdown
 	queryDeadline = 2 * time.Second
-	syncDeadline  = 5 * time.Second
+	syncDeadline  = 35 * time.Second // explicit sync runs a full push/pull cycle
 
 	spawnBudget = 2500 * time.Millisecond // total wait for a spawned daemon
 )

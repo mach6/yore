@@ -25,27 +25,47 @@ func (s *server) runQuery(f *match.Filter, q proto.QueryReq) proto.QueryResp {
 	// its [0,len) prefix is never mutated in place, so the snapshot is a stable
 	// view and we can scan it after releasing the lock. corpus and cmds are
 	// appended together under the same lock, so their lengths agree.
-	s.mu.RLock()
-	corpus := s.corpus
-	cmds := s.cmds
-	s.mu.RUnlock()
+	// Deep scopes (all hosts, or a specific remote host) also draw on the RAM
+	// remote cache and, if it's cold or stale, kick a background sync so the
+	// next query is richer — the request itself never blocks on the network.
+	deep := scope == proto.ScopeAll || scope == proto.ScopeHost
+	if deep && s.remote.enabled() {
+		nudge(s.syncWake)
+	}
 
-	matched := f.Apply(q.Q, cmds)
+	// Local corpus contributes unless the scope targets a specific remote host.
+	local := s.store.Hostname()
+	wantLocal := !(scope == proto.ScopeHost && q.Host != "" && q.Host != local)
 
-	// Scope predicate over matched indices (Apply returned a private copy we
-	// may filter in place).
-	n := 0
-	for _, idx := range matched {
-		if scopeMatch(scope, corpus[idx], q) {
-			matched[n] = idx
-			n++
+	var rows []rec.Record
+	if wantLocal {
+		s.mu.RLock()
+		corpus := s.corpus
+		cmds := s.cmds
+		s.mu.RUnlock()
+
+		matched := f.Apply(q.Q, cmds)
+		n := 0
+		for _, idx := range matched {
+			if scopeMatch(scope, corpus[idx], q) {
+				matched[n] = idx
+				n++
+			}
+		}
+		matched = matched[:n]
+		rows = make([]rec.Record, 0, len(matched))
+		for _, idx := range matched {
+			rows = append(rows, corpus[idx])
 		}
 	}
-	matched = matched[:n]
 
-	rows := make([]rec.Record, len(matched))
-	for i, idx := range matched {
-		rows[i] = corpus[idx]
+	// Merge in remote records for deep scopes.
+	if deep && s.remote.enabled() {
+		host := "" // ScopeAll = every remote host
+		if scope == proto.ScopeHost {
+			host = q.Host
+		}
+		rows = append(rows, s.remote.search(q.Q, host)...)
 	}
 
 	// Newest-first: descending StartMs, ties broken by descending Seq. (Seq
@@ -100,15 +120,18 @@ func (s *server) runQuery(f *match.Filter, q proto.QueryReq) proto.QueryResp {
 	}
 }
 
-// scopeMatch reports whether r belongs to the requested scope. "all" and
-// "host" behave like "local" for now (the sync layer is a later milestone);
-// unknown scopes also fall through to local.
+// scopeMatch reports whether a LOCAL-corpus record belongs to the requested
+// scope. Remote records are filtered separately in remoteCache.search.
 func scopeMatch(scope string, r rec.Record, q proto.QueryReq) bool {
 	switch scope {
 	case proto.ScopeSession:
 		return r.Session == q.Session
 	case proto.ScopeCwd:
 		return r.Cwd == q.Cwd
+	case proto.ScopeHost:
+		// Local corpus is all one host; include it only when the filter names
+		// this host (empty host = no restriction).
+		return q.Host == "" || q.Host == r.Hostname
 	default:
 		return true
 	}
