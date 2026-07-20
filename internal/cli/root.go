@@ -393,7 +393,7 @@ func newHealthcheckCmd() *cobra.Command {
 			return code(runHealthcheck(url))
 		},
 	}
-	cmd.Flags().StringVar(&url, "url", "http://localhost:8080/v1/health", "health endpoint")
+	cmd.Flags().StringVar(&url, "url", "", "health endpoint (default: the configured server, else http://localhost:8080/v1/health)")
 	return cmd
 }
 

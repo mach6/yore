@@ -7,6 +7,7 @@ import (
 	"strings"
 	"syscall"
 
+	"yore/internal/config"
 	"yore/internal/server"
 )
 
@@ -101,7 +102,19 @@ func trimNL(b []byte) []byte {
 // HEALTHCHECK (distroless has no curl) but also runs interactively, so it prints
 // a one-line result — "healthy: …" to stdout, "unhealthy: …" to stderr — and
 // returns the exit code the container probe reads (0 = 2xx).
+//
+// With no url it defaults to the configured server (like `yore doctor`), so a
+// bare `yore healthcheck` probes the server you actually sync with; it falls back
+// to the local server address only when no server is configured (the container
+// self-check). Pass --url only to probe somewhere else.
 func runHealthcheck(url string) int {
+	if url == "" {
+		if cfg, err := config.Load(stateDir()); err == nil && cfg.ServerURL != "" {
+			url = strings.TrimRight(cfg.ServerURL, "/") + "/v1/health"
+		} else {
+			url = "http://localhost:8080/v1/health"
+		}
+	}
 	code, detail := server.HealthCheck(url)
 	if code == 0 {
 		fmt.Printf("healthy: %s (%s)\n", url, detail)
