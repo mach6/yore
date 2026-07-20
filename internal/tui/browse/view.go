@@ -28,10 +28,14 @@ func (m Model) View() string {
 	}
 
 	var top, mid string
-	if m.view == viewStats {
+	switch m.view {
+	case viewStats:
 		top = m.statsTitle(w)
 		mid = m.renderStats(w, m.midHeight)
-	} else {
+	case viewDevices:
+		top = m.devicesTitle(w)
+		mid = m.renderDevices(w, m.midHeight)
+	default:
 		top = m.searchLine(w)
 		mid = m.renderPanes(w)
 	}

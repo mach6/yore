@@ -23,6 +23,9 @@ type Backend interface {
 	Query(proto.QueryReq) (proto.QueryResp, error)
 	Hosts() (proto.HostsInfo, error)
 	Delete(id string) error
+	Devices() (proto.DevicesInfo, error)
+	Approve(id string) error
+	Revoke(id string) error
 }
 
 // Options configures a browse session.
@@ -57,6 +60,7 @@ type viewMode int
 const (
 	viewBrowse viewMode = iota
 	viewStats
+	viewDevices
 )
 
 // hostItem is one row of the host sidebar. The first real host reported by the
@@ -140,6 +144,13 @@ type Model struct {
 	flash         string
 	flashID       int
 	quitting      bool
+
+	// devices pane
+	devices    []proto.DeviceInfo
+	devSel     int
+	devErr     error
+	gotDevices bool
+	devConfirm string // pending "revoke <id>" awaiting y/n; "" = none
 
 	// query sequencing
 	seq        uint64
@@ -238,6 +249,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case flashExpireMsg:
 		if msg.id == m.flashID {
 			m.flash = ""
+		}
+		return m, nil
+
+	case devicesResultMsg:
+		m.gotDevices = true
+		m.devErr = msg.err
+		m.devices = msg.info.Devices
+		if m.devSel >= len(m.devices) {
+			m.devSel = 0
 		}
 		return m, nil
 
@@ -394,6 +414,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	// Devices view swallows its own keys.
+	if m.view == viewDevices {
+		return m.handleDevicesKey(s)
+	}
+
 	// Global keys (both views).
 	switch s {
 	case "q", "ctrl+c":
@@ -407,6 +432,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "s":
 		return m.toggleStats()
+	case "D":
+		m.view = viewDevices
+		m.devConfirm = ""
+		return m, m.devicesCmd()
 	}
 
 	if m.view == viewStats {

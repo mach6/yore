@@ -18,12 +18,15 @@ import (
 // --- test doubles & helpers ---------------------------------------------
 
 type fakeBackend struct {
-	mu      sync.Mutex
-	reqs    []proto.QueryReq
-	resp    proto.QueryResp
-	hosts   proto.HostsInfo
-	deleted []string
-	delErr  error
+	mu       sync.Mutex
+	reqs     []proto.QueryReq
+	resp     proto.QueryResp
+	hosts    proto.HostsInfo
+	deleted  []string
+	delErr   error
+	devices  proto.DevicesInfo
+	approved []string
+	revoked  []string
 }
 
 func (f *fakeBackend) Query(req proto.QueryReq) (proto.QueryResp, error) {
@@ -46,6 +49,26 @@ func (f *fakeBackend) Delete(id string) error {
 		return f.delErr
 	}
 	f.deleted = append(f.deleted, id)
+	return nil
+}
+
+func (f *fakeBackend) Devices() (proto.DevicesInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.devices, nil
+}
+
+func (f *fakeBackend) Approve(id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.approved = append(f.approved, id)
+	return nil
+}
+
+func (f *fakeBackend) Revoke(id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.revoked = append(f.revoked, id)
 	return nil
 }
 
@@ -550,3 +573,62 @@ func TestEmacsCtrlDStillDeletes(t *testing.T) {
 
 // compile-time assurance the interface matches what daemon.Client provides.
 var _ Backend = (*fakeBackend)(nil)
+
+func TestDevicesPane(t *testing.T) {
+	f := &fakeBackend{
+		resp: mkResp(mkRows("ls")),
+		devices: proto.DevicesInfo{Devices: []proto.DeviceInfo{
+			{ID: "01AAAAAAAAAAAAAAAAAAAAAAAA", Name: "laptop", Status: "active", Self: true},
+			{ID: "01BBBBBBBBBBBBBBBBBBBBBBBB", Name: "server", Status: "pending", Code: "AB12-CD34"},
+		}},
+	}
+	m := ready(t, f, 120, 30)
+
+	// Enter the devices view; it fetches asynchronously.
+	m, cmd := step(t, m, press("D"))
+	if m.view != viewDevices {
+		t.Fatalf("view = %v, want viewDevices", m.view)
+	}
+	if cmd == nil {
+		t.Fatal("entering devices view did not fetch")
+	}
+	m, _ = step(t, m, cmd())
+	if len(m.devices) != 2 {
+		t.Fatalf("devices = %d, want 2", len(m.devices))
+	}
+	out := strip(m.View())
+	if !strings.Contains(out, "laptop") || !strings.Contains(out, "AB12-CD34") {
+		t.Errorf("devices view missing device/code:\n%s", out)
+	}
+
+	// Move to the pending device and approve it.
+	m, _ = step(t, m, press("j"))
+	m, acmd := step(t, m, press("a"))
+	if acmd == nil {
+		t.Fatal("approve produced no command")
+	}
+	acmd()
+	if len(f.approved) != 1 || f.approved[0] != "01BBBBBBBBBBBBBBBBBBBBBBBB" {
+		t.Errorf("approved = %v, want the pending device id", f.approved)
+	}
+
+	// Revoke needs confirmation: x then y.
+	m, _ = step(t, m, press("x"))
+	if m.devConfirm == "" {
+		t.Fatal("x did not arm a revoke confirmation")
+	}
+	m, rcmd := step(t, m, press("y"))
+	if rcmd == nil {
+		t.Fatal("y did not trigger revoke")
+	}
+	rcmd()
+	if len(f.revoked) != 1 {
+		t.Errorf("revoked = %v, want one", f.revoked)
+	}
+
+	// Esc leaves the devices view.
+	m, _ = step(t, m, press("esc"))
+	if m.view != viewBrowse {
+		t.Errorf("esc did not leave devices view (view=%v)", m.view)
+	}
+}
