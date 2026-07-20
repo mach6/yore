@@ -153,14 +153,14 @@ func newSearchCmd() *cobra.Command {
 			if headless {
 				return code(headlessSearch(q, scope, tag, sortMode, fuzzy, limit, !noHost))
 			}
-			return code(interactiveSearch(q))
+			return code(interactiveSearch(q, scope))
 		},
 	}
 	cmd.Flags().StringVar(&query, "query", "", "initial query")
 	cmd.Flags().BoolVar(&headless, "headless", false, "print matches to stdout instead of the TUI")
 	cmd.Flags().IntVar(&limit, "limit", 0, "headless: max results (default 200)")
 	cmd.Flags().BoolVar(&noHost, "no-host", false, "headless: hide the host column")
-	cmd.Flags().StringVar(&scope, "scope", proto.ScopeLocal, "headless: local|all|host|session|cwd|workspace")
+	cmd.Flags().StringVar(&scope, "scope", proto.ScopeLocal, "search scope: local|all|host|session|cwd|workspace")
 	cmd.Flags().StringVar(&tag, "tag", "", "filter by executor tag (e.g. claude-code)")
 	cmd.Flags().StringVar(&sortMode, "sort", "", "sort: recency (default) or frecency")
 	cmd.Flags().BoolVar(&fuzzy, "fuzzy", false, "subsequence (fzf-style) matching")

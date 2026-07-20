@@ -21,6 +21,7 @@ type Querier interface {
 // Options configures a search session.
 type Options struct {
 	InitialQuery string
+	Scope        string // initial scope (proto.Scope*); empty = local
 	Session      string // current shell session id ($YORE_SESSION), for scope cycling
 	Cwd          string // current directory, for scope cycling
 	Version      string
@@ -109,7 +110,7 @@ func NewModel(q Querier, opts Options) Model {
 		opts:        opts,
 		th:          th,
 		ti:          ti,
-		scope:       proto.ScopeLocal,
+		scope:       initialScope(opts.Scope),
 		dedupe:      true,
 		vim:         opts.Keymap == "vim",
 		width:       80,
@@ -421,6 +422,18 @@ func scopeLabel(s string) string {
 		return "repo"
 	default:
 		return ""
+	}
+}
+
+// initialScope validates a requested starting scope, falling back to local when
+// it is empty or not one the search TUI cycles through. ScopeHost is deliberately
+// rejected: it targets a specific host and is not part of the scope cycle.
+func initialScope(s string) string {
+	switch s {
+	case proto.ScopeLocal, proto.ScopeAll, proto.ScopeSession, proto.ScopeCwd, proto.ScopeWorkspace:
+		return s
+	default:
+		return proto.ScopeLocal
 	}
 }
 

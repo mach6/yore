@@ -124,18 +124,31 @@ fi
 {{- end}}
 {{- if .Aliases}}
 
-# Convenience aliases (Options.Aliases). You may already use h/hs as aliases
-# (the common `history` / `history | grep` pattern). Remove those first so our
-# versions win at runtime, and escape the hs function name (\hs) so zsh does
-# not alias-expand it at PARSE time — an unescaped hs() would abort sourcing
-# the whole script with "defining function based on alias".
-unalias h hs 2>/dev/null
+# Convenience aliases (Options.Aliases). `h` opens the browser; `hs` searches
+# (the common `history` / `history | grep` pattern), with scoped siblings hsa
+# (all hosts), hss (this session), hsc (this cwd), and hsw (this git repo). You
+# may already use h/hs as aliases, so remove any first at runtime, and escape
+# each function name (\hs, \hsa, …) so zsh does not alias-expand it at PARSE
+# time — an unescaped hs() would abort sourcing the whole script with "defining
+# function based on alias".
+unalias h hs hsa hss hsc hsw 2>/dev/null
 alias h='{{.Bin}} browse'
-\hs() {
+\_yore_hs() {  # $1 = scope, rest = query
+	local scope=$1; shift
 	if [[ -t 1 ]]; then
-		command {{.Bin}} search --query "$*"
+		# Interactive: capture the pick and push it onto the editor buffer stack
+		# (print -z) so it lands on the NEXT prompt, editable — same as the Ctrl-R
+		# and Up widgets. The TUI still draws in color: it renders on /dev/tty, so
+		# capturing its stdout here does not strip styling.
+		local __sel
+		__sel=$(command {{.Bin}} search --scope "$scope" --query "$*") && [[ -n $__sel ]] && print -z -- "$__sel"
 	else
-		command {{.Bin}} search --headless "$*"
+		command {{.Bin}} search --headless --scope "$scope" "$*"
 	fi
 }
+\hs()  { _yore_hs local "$@"; }
+\hsa() { _yore_hs all "$@"; }
+\hss() { _yore_hs session "$@"; }
+\hsc() { _yore_hs cwd "$@"; }
+\hsw() { _yore_hs workspace "$@"; }
 {{- end}}

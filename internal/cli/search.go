@@ -14,7 +14,7 @@ import (
 // interactiveSearch runs the inline TUI. Contract with the shell widgets:
 // the accepted command is the ONLY thing printed to stdout (exit 0); cancel
 // prints nothing and exits 1. Falls back to headless when no TTY exists.
-func interactiveSearch(initialQuery string) int {
+func interactiveSearch(initialQuery, scope string) int {
 	c, err := daemon.EnsureRunning(stateDir())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "yore: daemon unavailable:", err)
@@ -26,6 +26,7 @@ func interactiveSearch(initialQuery string) int {
 	cfg, _ := config.Load(stateDir())
 	cmd, ok, err := search.Run(c, search.Options{
 		InitialQuery: initialQuery,
+		Scope:        scope,
 		Session:      os.Getenv("YORE_SESSION"),
 		Cwd:          cwd,
 		Version:      Version,

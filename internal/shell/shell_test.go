@@ -104,7 +104,7 @@ func TestAbsoluteBin(t *testing.T) {
 				"command " + bin + " record",
 				"command " + bin + ` search --query "`,
 				"alias h='" + bin + " browse'",
-				"command " + bin + ` search --headless "$*"`,
+				"command " + bin + ` search --headless --scope "$scope" "$*"`,
 			} {
 				require.Contains(t, got, w, "missing invocation")
 			}

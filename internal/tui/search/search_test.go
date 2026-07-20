@@ -175,6 +175,29 @@ func TestOutOfOrderResponseDiscarded(t *testing.T) {
 	require.NotContainsf(t, out, "stale-one", "view contains discarded stale-one:\n%s", out)
 }
 
+func TestNewModelInitialScope(t *testing.T) {
+	tests := []struct {
+		name string
+		opt  string
+		want string
+	}{
+		{"empty defaults to local", "", proto.ScopeLocal},
+		{"all", proto.ScopeAll, proto.ScopeAll},
+		{"session", proto.ScopeSession, proto.ScopeSession},
+		{"cwd", proto.ScopeCwd, proto.ScopeCwd},
+		{"workspace", proto.ScopeWorkspace, proto.ScopeWorkspace},
+		{"local", proto.ScopeLocal, proto.ScopeLocal},
+		{"host is not a search scope", proto.ScopeHost, proto.ScopeLocal},
+		{"bogus falls back to local", "bogus", proto.ScopeLocal},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewModel(&fakeQuerier{}, Options{Scope: tc.opt})
+			require.Equal(t, tc.want, m.scope)
+		})
+	}
+}
+
 func TestCtrlRCyclesScopes(t *testing.T) {
 	f := &fakeQuerier{resp: mkResp(mkRows("ls"))}
 	m := NewModel(f, Options{})

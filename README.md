@@ -110,8 +110,9 @@ your own `HISTFILE`/`SAVEHIST` settings so takeover wins.
 - **`!N` / `!!` / `!$`** → native shell history expansion — still works, against
   yore's history in takeover and native history in coexist.
 - **`h`** → the full-screen browser; **`hs <query>`** → CLI search (plain
-  matching lines when piped, e.g. `hs docker | grep build`). Omit both with
-  `yore init zsh --no-aliases`.
+  matching lines when piped, e.g. `hs docker | grep build`). Scoped siblings:
+  **`hsa`** (all hosts), **`hss`** (this session), **`hsc`** (this cwd), and
+  **`hsw`** (this git repo). Omit them all with `yore init zsh --no-aliases`.
 
 ### Shell completions
 

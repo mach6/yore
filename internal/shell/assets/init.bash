@@ -142,16 +142,24 @@ fi
 {{- end}}
 {{- if .Aliases}}
 
-# Convenience aliases (Options.Aliases). Drop any pre-existing h/hs aliases
-# (the common `history` / `history | grep` pattern) so our versions win and a
-# leftover `hs` alias can't break the function definition below.
-unalias h hs 2>/dev/null
+# Convenience aliases (Options.Aliases). `h` opens the browser; `hs` searches
+# (the common `history` / `history | grep` pattern), with scoped siblings hsa
+# (all hosts), hss (this session), hsc (this cwd), and hsw (this git repo). Drop
+# any pre-existing h/hs aliases so our versions win and a leftover alias can't
+# break the function definitions below.
+unalias h hs hsa hss hsc hsw 2>/dev/null
 alias h='{{.Bin}} browse'
-hs() {
+_yore_hs() {  # $1 = scope, rest = query
+	local scope=$1; shift
 	if [[ -t 1 ]]; then
-		command {{.Bin}} search --query "$*"
+		command {{.Bin}} search --scope "$scope" --query "$*"
 	else
-		command {{.Bin}} search --headless "$*"
+		command {{.Bin}} search --headless --scope "$scope" "$*"
 	fi
 }
+hs()  { _yore_hs local "$@"; }
+hsa() { _yore_hs all "$@"; }
+hss() { _yore_hs session "$@"; }
+hsc() { _yore_hs cwd "$@"; }
+hsw() { _yore_hs workspace "$@"; }
 {{- end}}
