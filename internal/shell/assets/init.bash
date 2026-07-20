@@ -74,7 +74,10 @@ __yore_search() {
 bind -x '"\C-r": __yore_search'
 {{- if .Aliases}}
 
-# Convenience aliases (Options.Aliases).
+# Convenience aliases (Options.Aliases). Drop any pre-existing h/hs aliases
+# (the common `history` / `history | grep` pattern) so our versions win and a
+# leftover `hs` alias can't break the function definition below.
+unalias h hs 2>/dev/null
 alias h='{{.Bin}} browse'
 hs() {
 	if [[ -t 1 ]]; then

@@ -65,9 +65,14 @@ if [[ -o interactive ]]; then
 fi
 {{- if .Aliases}}
 
-# Convenience aliases (Options.Aliases).
+# Convenience aliases (Options.Aliases). You may already use h/hs as aliases
+# (the common `history` / `history | grep` pattern). Remove those first so our
+# versions win at runtime, and escape the hs function name (\hs) so zsh does
+# not alias-expand it at PARSE time — an unescaped hs() would abort sourcing
+# the whole script with "defining function based on alias".
+unalias h hs 2>/dev/null
 alias h='{{.Bin}} browse'
-hs() {
+\hs() {
 	if [[ -t 1 ]]; then
 		command {{.Bin}} search --query "$*"
 	else
