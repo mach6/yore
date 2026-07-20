@@ -5,6 +5,7 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // Run drives the interactive search. It opens /dev/tty for both input and
@@ -22,6 +23,14 @@ func Run(q Querier, opts Options) (string, bool, error) {
 		return "", false, fmt.Errorf("search: open /dev/tty: %w", err)
 	}
 	defer tty.Close()
+
+	// Bind a renderer to the tty so color-profile and dark-background detection
+	// use the real terminal, not os.Stdout (a pipe under command substitution).
+	renderer := lipgloss.NewRenderer(tty)
+	// Resolve the background once up front, before Bubble Tea switches the tty to
+	// raw mode, so the terminal's response query doesn't race the input reader.
+	_ = renderer.HasDarkBackground()
+	opts.Renderer = renderer
 
 	p := tea.NewProgram(
 		NewModel(q, opts),

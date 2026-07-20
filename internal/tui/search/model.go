@@ -4,6 +4,7 @@ import (
 	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 
 	"yore/internal/proto"
@@ -24,6 +25,10 @@ type Options struct {
 	Cwd          string // current directory, for scope cycling
 	Version      string
 	Keymap       string // "vim" enables an insert/normal sub-mode; "" / "emacs" = default
+
+	// Renderer is bound to the output tty so color detection ignores a piped
+	// os.Stdout; nil = default renderer.
+	Renderer *lipgloss.Renderer
 }
 
 // Panel geometry.
@@ -86,6 +91,9 @@ type Model struct {
 // NewModel builds the search Model, constructing the Theme once.
 func NewModel(q Querier, opts Options) Model {
 	th := theme.New()
+	if opts.Renderer != nil {
+		th = theme.NewWithRenderer(opts.Renderer)
+	}
 
 	ti := textinput.New()
 	ti.Prompt = "" // the panel draws its own scope-aware prompt

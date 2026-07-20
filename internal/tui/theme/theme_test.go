@@ -1,13 +1,44 @@
 package theme
 
 import (
+	"io"
 	"testing"
 	"time"
 	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 	"github.com/stretchr/testify/require"
 )
+
+// TestRendererColorProfile proves NewWithRenderer's styles carry ANSI color
+// exactly when the bound renderer's profile supports it. This is the core of
+// the inline-search fix: styles must follow the renderer (the tty), not the
+// default renderer's (possibly piped) os.Stdout.
+func TestRendererColorProfile(t *testing.T) {
+	tests := []struct {
+		name      string
+		profile   termenv.Profile
+		wantColor bool
+	}{
+		{"truecolor keeps ANSI", termenv.TrueColor, true},
+		{"ascii strips ANSI", termenv.Ascii, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := lipgloss.NewRenderer(io.Discard)
+			r.SetColorProfile(tc.profile)
+			th := NewWithRenderer(r)
+			out := th.SynFlag.Render("--flag")
+			if tc.wantColor {
+				require.Contains(t, out, "\x1b[", "expected an ANSI escape under %v", tc.profile)
+			} else {
+				require.NotContains(t, out, "\x1b[", "expected no ANSI escape under %v", tc.profile)
+				require.Equal(t, "--flag", out, "ascii profile must render the raw string")
+			}
+		})
+	}
+}
 
 func TestHostStable(t *testing.T) {
 	th := New()

@@ -77,9 +77,17 @@ var hostPalette = [8]lipgloss.AdaptiveColor{
 	{Light: "#0a6ea0", Dark: "#5fc7ff"}, // cyan
 }
 
-// New builds the Theme. Call it once at startup.
+// New builds the Theme with the default renderer. Call it once at startup.
 func New() *Theme {
-	base := lipgloss.NewStyle()
+	return NewWithRenderer(lipgloss.DefaultRenderer())
+}
+
+// NewWithRenderer builds the Theme with styles bound to renderer r, so color
+// and background detection follow r's output rather than the default
+// renderer's os.Stdout. The inline search TUI passes a renderer bound to
+// /dev/tty for this reason; New uses the default renderer.
+func NewWithRenderer(r *lipgloss.Renderer) *Theme {
+	base := r.NewStyle()
 	t := &Theme{
 		Accent: base.Foreground(cAccent),
 		Prompt: base.Foreground(cAccent).Bold(true),
