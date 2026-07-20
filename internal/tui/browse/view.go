@@ -385,16 +385,31 @@ func (m Model) statusBar(w int) string {
 		pieces = append(pieces, th.ExitErr.Render("daemon unreachable"))
 	}
 
-	pos := 0
-	if len(m.rows) > 0 {
-		pos = m.sel + 1
-	}
-	pieces = append(pieces, th.Dim.Render(fmt.Sprintf("row %d/%d", pos, m.total)))
-	pieces = append(pieces, th.Dim.Render(scopeWord(m.hosts[m.hostSel])))
+	// Row position and scope are browse-table concepts; in the aggregate Stats
+	// view and the Devices view there is no table row, so surface a summary that
+	// actually fits the view instead of a meaningless "row N/M".
+	switch m.view {
+	case viewStats:
+		// Stats are self-describing (the panels show totals + per-host), so the
+		// bar stays minimal — just any flash/error above.
+	case viewDevices:
+		unit := "devices"
+		if len(m.devices) == 1 {
+			unit = "device"
+		}
+		pieces = append(pieces, th.Dim.Render(fmt.Sprintf("%d %s", len(m.devices), unit)))
+	default:
+		pos := 0
+		if len(m.rows) > 0 {
+			pos = m.sel + 1
+		}
+		pieces = append(pieces, th.Dim.Render(fmt.Sprintf("row %d/%d", pos, m.total)))
+		pieces = append(pieces, th.Dim.Render(scopeWord(m.hosts[m.hostSel])))
 
-	if m.remote.State == proto.RemoteOff &&
-		(m.hosts[m.hostSel].scope == proto.ScopeAll || m.hosts[m.hostSel].scope == proto.ScopeHost) {
-		pieces = append(pieces, th.Dim.Render("remote sync not configured — showing local only"))
+		if m.remote.State == proto.RemoteOff &&
+			(m.hosts[m.hostSel].scope == proto.ScopeAll || m.hosts[m.hostSel].scope == proto.ScopeHost) {
+			pieces = append(pieces, th.Dim.Render("remote sync not configured — showing local only"))
+		}
 	}
 
 	left := strings.Join(pieces, th.Dim.Render("  •  "))
