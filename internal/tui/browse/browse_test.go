@@ -1,6 +1,7 @@
 package browse
 
 import (
+	"bytes"
 	"encoding/base64"
 	"regexp"
 	"strconv"
@@ -297,16 +298,47 @@ func TestDeleteConfirmNo(t *testing.T) {
 	require.Len(t, m.rows, 2)
 }
 
-func TestCopyFlash(t *testing.T) {
+func TestAcceptOnEnter(t *testing.T) {
 	f := &fakeBackend{}
 	m := ready(t, f, 120, 30)
 	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("echo hi"))})
 
 	m, cmd := step(t, m, press("enter"))
-	require.Contains(t, strip(m.View()), "copied")
-	if cmd != nil {
-		cmd() // out is nil under test: the OSC 52 write is a silent no-op
+	require.Equal(t, "echo hi", m.accepted, "enter should record the selected command for recall")
+	require.True(t, m.quitting, "enter should quit so Run can return the pick")
+	require.NotNil(t, cmd, "enter should issue a command")
+	_, ok := cmd().(tea.QuitMsg)
+	require.True(t, ok, "enter should return tea.Quit")
+}
+
+func TestCopyOnY(t *testing.T) {
+	// Stub the local clipboard tool: without this the batched copy would spawn
+	// wl-copy/xclip and overwrite the developer's real clipboard on every run.
+	prev := localClipboardCopy
+	localClipboardCopy = func(string) {}
+	t.Cleanup(func() { localClipboardCopy = prev })
+
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("echo hi"))})
+
+	var buf bytes.Buffer
+	m.out = &buf
+	m, cmd := step(t, m, press("y"))
+	require.Contains(t, strip(m.View()), "copied", "y should flash the copied indicator")
+	require.Empty(t, m.accepted, "y copies; it must not accept the command")
+	require.NotNil(t, cmd, "y should issue the copy command")
+
+	// copySelected batches the clipboard write with the flash tick; run each
+	// batched command so the OSC 52 write actually reaches out.
+	batch, ok := cmd().(tea.BatchMsg)
+	require.Truef(t, ok, "copy command yielded %T, want tea.BatchMsg", cmd())
+	for _, c := range batch {
+		if c != nil {
+			c()
+		}
 	}
+	require.Contains(t, buf.String(), osc52("echo hi"), "y should write the OSC 52 sequence to out")
 }
 
 func TestStatsViewRenders(t *testing.T) {
@@ -409,6 +441,35 @@ func TestOSC52RoundTrip(t *testing.T) {
 	got, err := base64.StdEncoding.DecodeString(b64)
 	require.NoError(t, err)
 	require.Equal(t, payload, string(got))
+}
+
+// TestOSC52Seq covers the copy sequence framing: a bare OSC 52 when not in tmux,
+// and tmux's passthrough wrapping (every inner ESC doubled, wrapped in
+// \ePtmux;…\e\\) when it is.
+func TestOSC52Seq(t *testing.T) {
+	const payload = "echo hi"
+	b64 := base64.StdEncoding.EncodeToString([]byte(payload))
+	tests := []struct {
+		name string
+		tmux bool
+		want string
+	}{
+		{
+			name: "plain OSC 52 without tmux",
+			tmux: false,
+			want: "\x1b]52;c;" + b64 + "\x07",
+		},
+		{
+			name: "tmux passthrough doubles ESCs and wraps",
+			tmux: true,
+			want: "\x1bPtmux;\x1b" + "\x1b\x1b]52;c;" + b64 + "\x07" + "\x1b\\",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, osc52Seq(payload, tc.tmux))
+		})
+	}
 }
 
 // readyVim is ready() but with the vim keymap enabled.

@@ -17,6 +17,7 @@ type keyMap struct {
 	Jump    key.Binding
 	Focus   key.Binding
 	Search  key.Binding
+	Accept  key.Binding
 	Copy    key.Binding
 	Delete  key.Binding
 	Stats   key.Binding
@@ -42,7 +43,8 @@ func defaultKeyMap(vim bool) keyMap {
 		Jump:    key.NewBinding(key.WithKeys("g", "G"), key.WithHelp("g/G", "top/bottom")),
 		Focus:   focus,
 		Search:  key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),
-		Copy:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "copy")),
+		Accept:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "insert")),
+		Copy:    key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "copy")),
 		Delete:  key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
 		Stats:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "stats")),
 		Help:    key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
@@ -54,7 +56,7 @@ func defaultKeyMap(vim bool) keyMap {
 
 // ShortHelp implements help.KeyMap: the compact one-line hint bar.
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Focus, k.Search, k.Copy, k.Delete, k.Stats, k.Help, k.Quit}
+	return []key.Binding{k.Focus, k.Search, k.Accept, k.Copy, k.Delete, k.Stats, k.Help, k.Quit}
 }
 
 // FullHelp implements help.KeyMap: the expanded ? menu.
@@ -65,7 +67,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	}
 	return [][]key.Binding{
 		nav,
-		{k.Focus, k.Search, k.Copy, k.Delete},
+		{k.Focus, k.Search, k.Accept, k.Copy, k.Delete},
 		{k.Stats, k.Help, k.Quit},
 	}
 }

@@ -9,12 +9,23 @@ import (
 // Run drives the full-screen browser on the controlling terminal. Unlike the
 // inline Ctrl-R search, `yore browse` is invoked directly (not through command
 // substitution), so os.Stdin/os.Stdout are the real tty; it uses the alternate
-// screen. OSC 52 clipboard writes go to os.Stdout, which reaches the terminal
-// even over SSH. It returns any program error.
-func Run(b Backend, opts Options) error {
+// screen. OSC 52 clipboard writes (the `y` key) go to os.Stdout, which reaches
+// the terminal even over SSH.
+//
+// It returns the command the user accepted with Enter ("" if they quit without
+// accepting) and any program error. The caller delivers that command back to the
+// shell (recall-to-prompt), mirroring the Ctrl-R search.
+func Run(b Backend, opts Options) (string, error) {
 	m := NewModel(b, opts)
 	m.out = os.Stdout
 	p := tea.NewProgram(m, tea.WithAltScreen())
-	_, err := p.Run()
-	return err
+	final, err := p.Run()
+	if err != nil {
+		return "", err
+	}
+	res, ok := final.(Model)
+	if !ok {
+		return "", nil
+	}
+	return res.accepted, nil
 }

@@ -2,6 +2,7 @@ package browse
 
 import (
 	"io"
+	"os"
 	"sort"
 	"time"
 
@@ -147,6 +148,7 @@ type Model struct {
 	flash         string
 	flashID       int
 	quitting      bool
+	accepted      string // command the user chose with enter; read by Run on exit
 
 	// devices pane
 	devices    []proto.DeviceInfo
@@ -547,6 +549,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.clampWindow()
 			m.syncDetail()
 		case "enter":
+			// Hand the picked command back to the shell (recall-to-prompt);
+			// Run returns it and the `h` function drops it on the next prompt.
+			return m.acceptSelected()
+		case "y":
 			return m.copySelected()
 		case "d":
 			// Delete stays a single-key action (with y/n confirm) in both
@@ -592,20 +598,40 @@ func (m Model) moveHost(d int) (tea.Model, tea.Cmd) {
 	return m.issueQuery()
 }
 
-func (m Model) copySelected() (tea.Model, tea.Cmd) {
-	if len(m.rows) == 0 {
+// acceptSelected records the highlighted command and quits so Run can return
+// it: this is the recall-to-prompt path (Enter), mirroring the Ctrl-R search.
+func (m Model) acceptSelected() (tea.Model, tea.Cmd) {
+	r, ok := m.selected()
+	if !ok {
 		return m, nil
 	}
-	cmd := m.rows[m.sel].Cmd
+	m.accepted = r.Cmd
+	m.quitting = true
+	return m, tea.Quit
+}
+
+// copySelected copies the highlighted command to the clipboard (the `y` path).
+// It emits OSC 52 to the tty (tmux-wrapped when inside tmux) so the copy works
+// over SSH, AND best-effort pipes to a local clipboard tool, since many
+// terminals silently ignore OSC 52. Both are fire-and-forget in a tea.Cmd, so
+// neither blocks the UI.
+func (m Model) copySelected() (tea.Model, tea.Cmd) {
+	cmd, ok := m.selected()
+	if !ok {
+		return m, nil
+	}
+	text := cmd.Cmd
 	m.flash = "✓ copied"
 	m.flashID++
 	id := m.flashID
 	out := m.out
+	tmux := os.Getenv("TMUX") != ""
 	return m, tea.Batch(
 		func() tea.Msg {
 			if out != nil {
-				_, _ = io.WriteString(out, osc52(cmd))
+				_, _ = io.WriteString(out, osc52Seq(text, tmux))
 			}
+			localClipboardCopy(text)
 			return nil
 		},
 		flashTick(id),

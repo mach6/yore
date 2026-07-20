@@ -124,15 +124,22 @@ fi
 {{- end}}
 {{- if .Aliases}}
 
-# Convenience aliases (Options.Aliases). `h` opens the browser; `hs` searches
-# (the common `history` / `history | grep` pattern), with scoped siblings hsa
-# (all hosts), hss (this session), hsc (this cwd), and hsw (this git repo). You
-# may already use h/hs as aliases, so remove any first at runtime, and escape
-# each function name (\hs, \hsa, …) so zsh does not alias-expand it at PARSE
-# time — an unescaped hs() would abort sourcing the whole script with "defining
-# function based on alias".
+# Convenience aliases (Options.Aliases). `h` opens the browser and drops the
+# command you pick onto your NEXT prompt (print -z), like hs — Enter inserts, y
+# copies to the clipboard. `hs` searches (the common `history` / `history | grep`
+# pattern), with scoped siblings hsa (all hosts), hss (this session), hsc (this
+# cwd), and hsw (this git repo). You may already use h/hs as aliases, so remove
+# any first at runtime, and escape each function name (\h, \hs, \hsa, …) so zsh
+# does not alias-expand it at PARSE time — an unescaped hs() would abort sourcing
+# the whole script with "defining function based on alias".
 unalias h hs hsa hss hsc hsw 2>/dev/null
-alias h='{{.Bin}} browse'
+\h() {  # browse; drop the picked command onto the next prompt (print -z), like hs
+	local __f __sel
+	__f=$(mktemp) || return
+	command {{.Bin}} browse --accept-file "$__f"
+	__sel=$(cat "$__f"); command rm -f "$__f"
+	[[ -n $__sel ]] && print -z -- "$__sel"
+}
 \_yore_hs() {  # $1 = scope, rest = query
 	local scope=$1; shift
 	if [[ -t 1 ]]; then

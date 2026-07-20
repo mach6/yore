@@ -109,10 +109,12 @@ your own `HISTFILE`/`SAVEHIST` settings so takeover wins.
   set `bind_up_arrow`).
 - **`!N` / `!!` / `!$`** → native shell history expansion — still works, against
   yore's history in takeover and native history in coexist.
-- **`h`** → the full-screen browser; **`hs <query>`** → CLI search (plain
-  matching lines when piped, e.g. `hs docker | grep build`). Scoped siblings:
-  **`hsa`** (all hosts), **`hss`** (this session), **`hsc`** (this cwd), and
-  **`hsw`** (this git repo). Omit them all with `yore init zsh --no-aliases`.
+- **`h`** → the full-screen browser; the command you pick is dropped onto your
+  next prompt to edit (zsh) — `Enter` inserts it, `y` copies it to the clipboard.
+  **`hs <query>`** → CLI search (plain matching lines when piped, e.g. `hs docker
+  | grep build`). Scoped siblings: **`hsa`** (all hosts), **`hss`** (this
+  session), **`hsc`** (this cwd), and **`hsw`** (this git repo). Omit them all
+  with `yore init zsh --no-aliases`.
 
 ### Shell completions
 
@@ -169,7 +171,7 @@ It reports how many secret-bearing lines it skipped.
 | Re-run an event by number | `!N`, `!!`, `!$` — native, works against yore's history |
 | Cycle search scope (host / all / session / dir / repo) | `Ctrl-R` again inside the search |
 | Rank by frequency×recency, or fuzzy match | `Alt-f` / `Alt-z` inside the search |
-| Browse, filter, inspect, get stats, manage devices | `h` (then `D` for devices) |
+| Browse, filter, inspect, get stats, manage devices | `h` — `Enter` recalls the pick to your prompt, `y` copies it (then `D` for devices) |
 | See only what an agent ran | `yore search --tag claude-code` |
 | Grep history in a script | `hs <query>` \| … or `yore search --headless <query>` |
 | See daemon / sync status, or diagnose | `yore status` / `yore doctor` |

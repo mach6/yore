@@ -103,13 +103,12 @@ func TestAbsoluteBin(t *testing.T) {
 				"command " + bin + " gen-id",
 				"command " + bin + " record",
 				"command " + bin + ` search --query "`,
-				"alias h='" + bin + " browse'",
+				"command " + bin + " browse",
 				"command " + bin + ` search --headless --scope "$scope" "$*"`,
 			} {
 				require.Contains(t, got, w, "missing invocation")
 			}
 			require.NotContains(t, got, "command yore ", "leaked bare default binary")
-			require.NotContains(t, got, "alias h='yore ", "leaked bare default binary")
 		})
 	}
 }
@@ -121,8 +120,8 @@ func TestAliasToggle(t *testing.T) {
 			require.NoError(t, err)
 			off, err := shell.Init(sh, shell.Options{Aliases: false, Bin: "yore"})
 			require.NoError(t, err)
-			require.Contains(t, on, "alias h=", "aliases:true should emit the alias block")
-			require.NotContains(t, off, "alias h=", "aliases:false must not emit the alias block")
+			require.Contains(t, on, "command yore browse", "aliases:true should emit the alias block")
+			require.NotContains(t, off, "command yore browse", "aliases:false must not emit the alias block")
 		})
 	}
 }

@@ -173,14 +173,18 @@ func newSearchCmd() *cobra.Command {
 }
 
 func newBrowseCmd() *cobra.Command {
-	return &cobra.Command{
+	var acceptFile string
+	cmd := &cobra.Command{
 		Use:   "browse",
 		Short: "Full-screen history browser",
 		Args:  cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
-			return code(runBrowse())
+			return code(runBrowse(acceptFile))
 		},
 	}
+	cmd.Flags().StringVar(&acceptFile, "accept-file", "",
+		"write the accepted command to this file instead of stdout (used by the `h` shell function)")
+	return cmd
 }
 
 // --- daemon ----------------------------------------------------------------
