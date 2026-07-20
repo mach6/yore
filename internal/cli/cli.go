@@ -31,6 +31,7 @@ func commands() []command {
 		{"sync", "force an immediate push/pull with the server", cmdSync},
 		{"gen-id", "print a fresh ULID (used for session ids)", cmdGenID},
 		{"status", "show daemon and store status", cmdStatus},
+		{"doctor", "run environment diagnostics", cmdDoctor},
 		{"version", "print version", func([]string) int { fmt.Println("yore " + Version); return 0 }},
 	}
 }
