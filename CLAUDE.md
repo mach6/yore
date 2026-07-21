@@ -29,8 +29,9 @@ Core design invariants (do not break):
 
 ## Commands
 
+Requires Go 1.26+.
+
 ```bash
-source ~/.gobrew        # go1.26.2 on PATH (this machine)
 make build              # -> ./bin/yore  (CGO-free static binary)
 make test               # go test with gotestfmt: a coverage pass + a -race pass
 make lint               # golangci-lint (covers gofmt/goimports/vet)

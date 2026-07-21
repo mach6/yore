@@ -1,6 +1,4 @@
-# yore — build/test entry points.
-# NOTE (this machine): Go is installed via gobrew; run `source ~/.gobrew` first
-# if `go` is not on your PATH.
+# yore — build/test entry points. Requires Go 1.26+.
 
 GO         ?= go
 BIN        := bin/yore

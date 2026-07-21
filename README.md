@@ -46,9 +46,11 @@ do, that's exactly what `yore` is for.
 
 ## Install
 
+Requires Go 1.26+.
+
 ```bash
 git clone <your-fork> && cd yore
-make build          # -> ./bin/yore   (run `source ~/.gobrew` first if needed)
+make build          # -> ./bin/yore
 sudo install -m755 bin/yore /usr/local/bin/yore
 ```
 
