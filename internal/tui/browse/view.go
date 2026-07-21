@@ -150,19 +150,25 @@ func (m Model) hostLine(i, w int) string {
 // --- results table ------------------------------------------------------
 
 type colLayout struct {
-	relW, hostW, exitW, durW, cmdW int
-	showHost                       bool
+	relW, hostW, exitW, durW, tagW, cmdW int
+	showHost, showTag                    bool
 }
 
 // colLayout distributes the table content width across fixed columns, dropping
-// optional columns (duration, host, exit) when the terminal is too narrow so
-// the command always keeps room and the row never overflows.
+// optional columns (tag, duration, host, exit) when the terminal is too narrow
+// so the command always keeps room and the row never overflows. The tag column
+// only appears when the result set actually carries tags, and it sheds first so
+// it never crowds out host/exit on a narrow terminal.
 func (m Model) colLayout() colLayout {
 	w := m.tableWidth
 	showHost := m.hosts[m.hostSel].scope == proto.ScopeAll
-	relW, exitW, durW, hostW := 8, 4, 7, 0
+	showTag := m.hasTags
+	relW, exitW, durW, hostW, tagW := 8, 4, 7, 0, 0
 	if showHost {
 		hostW = 14
+	}
+	if showTag {
+		tagW = 12
 	}
 	prefix := func() int {
 		p := 0
@@ -178,7 +184,13 @@ func (m Model) colLayout() colLayout {
 		if durW > 0 {
 			p += durW + 1
 		}
+		if tagW > 0 {
+			p += tagW + 1
+		}
 		return p
+	}
+	if prefix()+5 > w {
+		tagW, showTag = 0, false
 	}
 	if prefix()+5 > w {
 		durW = 0
@@ -196,7 +208,7 @@ func (m Model) colLayout() colLayout {
 	if cmdW < 0 {
 		cmdW = 0
 	}
-	return colLayout{relW: relW, hostW: hostW, exitW: exitW, durW: durW, cmdW: cmdW, showHost: showHost}
+	return colLayout{relW: relW, hostW: hostW, exitW: exitW, durW: durW, tagW: tagW, cmdW: cmdW, showHost: showHost, showTag: showTag}
 }
 
 func (m Model) tableInner(w, h int) string {
@@ -253,6 +265,9 @@ func (m Model) tableHeader(l colLayout, w int) string {
 	}
 	add("exit", l.exitW, true)
 	add("dur", l.durW, false)
+	if l.showTag {
+		add("tag", l.tagW, true)
+	}
 	if l.cmdW > 0 {
 		segs = append(segs, styledSeg{text: padRight("command", l.cmdW), style: m.th.Dim})
 	}
@@ -283,6 +298,11 @@ func (m Model) renderRow(r rec.Record, l colLayout, q match.Query, selected bool
 			dur = theme.Duration(*r.DurMs)
 		}
 		segs = append(segs, styledSeg{text: padLeft(dur, l.durW), style: th.Dim})
+		sep()
+	}
+	if l.showTag {
+		// Tagged cells stand out (accent); interactive rows render blank.
+		segs = append(segs, styledSeg{text: padRight(truncCols(r.Tag, l.tagW), l.tagW), style: th.Accent})
 		sep()
 	}
 	if l.cmdW > 0 {
@@ -405,6 +425,9 @@ func (m Model) statusBar(w int) string {
 		}
 		pieces = append(pieces, th.Dim.Render(fmt.Sprintf("row %d/%d", pos, m.total)))
 		pieces = append(pieces, th.Dim.Render(scopeWord(m.hosts[m.hostSel])))
+		if m.tagFilter != "" {
+			pieces = append(pieces, th.Accent.Render("tag: "+m.tagFilter))
+		}
 
 		if m.remote.State == proto.RemoteOff &&
 			(m.hosts[m.hostSel].scope == proto.ScopeAll || m.hosts[m.hostSel].scope == proto.ScopeHost) {

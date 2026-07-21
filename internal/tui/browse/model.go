@@ -130,6 +130,7 @@ type Model struct {
 	remote    proto.RemoteInfo
 	lastErr   error
 	gotResult bool
+	hasTags   bool // any current row carries a Tag (gates the tag column)
 
 	// table window
 	sel int
@@ -149,6 +150,7 @@ type Model struct {
 	searching     bool
 	confirmDelete bool
 	showHelp      bool
+	tagFilter     string // active executor-tag filter (the t key); "" = no filter
 	flash         string
 	flashID       int
 	quitting      bool
@@ -305,12 +307,35 @@ func (m Model) applyResult(msg queryResultMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.lastErr = nil
+	// Preserve the cursor across a refresh by record identity: a background
+	// warm-loop / remote-cache refetch delivers the SAME result set, so keep the
+	// cursor on the command it was on rather than yanking it to row 0. A genuine
+	// new search/filter (the selected record is gone) still resets to the top.
+	var selID string
+	if m.sel >= 0 && m.sel < len(m.rows) {
+		selID = m.rows[m.sel].ID
+	}
 	rows := append([]rec.Record(nil), msg.resp.Rows...)
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].StartMs > rows[j].StartMs })
 	m.rows = rows
 	m.total = msg.resp.Total
 	m.remote = msg.resp.Remote
+	m.hasTags = false
+	for _, r := range m.rows {
+		if r.Tag != "" {
+			m.hasTags = true
+			break
+		}
+	}
 	m.sel = 0
+	if selID != "" {
+		for i, r := range m.rows {
+			if r.ID == selID {
+				m.sel = i
+				break
+			}
+		}
+	}
 	m.top = 0
 	m.clampWindow()
 	m.syncDetail()
@@ -439,6 +464,7 @@ func (m Model) buildReq() proto.QueryReq {
 		Q:      m.ti.Value(),
 		Scope:  it.scope,
 		Host:   it.host,
+		Tag:    m.tagFilter,
 		Limit:  queryLimit,
 		Dedupe: false, // browse shows the real timeline, newest first
 	}
@@ -525,6 +551,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.searching = true
 		m.ti.Focus()
 		return m, nil
+	case "t":
+		return m.toggleTagFilter()
 	case "tab":
 		m.cycleFocus(1)
 		return m, nil
@@ -609,6 +637,29 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	return m, nil
+}
+
+// toggleTagFilter flips the executor-tag filter (the t key). With a filter
+// active it clears it; otherwise it adopts the selected row's Tag if it has one
+// (flashing "no tag" and doing nothing when it doesn't). Either change re-issues
+// the query and flashes the new state.
+func (m Model) toggleTagFilter() (tea.Model, tea.Cmd) {
+	if m.tagFilter != "" {
+		m.tagFilter = ""
+		m.flash = "tag filter cleared"
+	} else {
+		r, ok := m.selected()
+		if !ok || r.Tag == "" {
+			m.flash = "no tag"
+			m.flashID++
+			return m, flashTick(m.flashID)
+		}
+		m.tagFilter = r.Tag
+		m.flash = "tag: " + r.Tag
+	}
+	m.flashID++
+	mm, qcmd := m.issueQuery()
+	return mm, tea.Batch(qcmd, flashTick(mm.flashID))
 }
 
 func (m Model) toggleStats() (tea.Model, tea.Cmd) {

@@ -654,6 +654,72 @@ func TestWarmLoopStopsAtHardCap(t *testing.T) {
 	require.Nil(t, tcmd, "no reschedule once the cap is hit")
 }
 
+func TestRefreshPreservesCursor(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 40)
+	rows := mkRows("a", "b", "c", "d", "e", "f")
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(rows)})
+
+	// Move the cursor down onto the 4th record.
+	for i := 0; i < 3; i++ {
+		m, _ = step(t, m, press("down"))
+	}
+	require.Equal(t, 3, m.sel)
+	selID := m.rows[m.sel].ID
+
+	// A background warm-loop refresh delivers the SAME result set: the cursor must
+	// stay on its command rather than snapping back to row 0.
+	m, _ = step(t, m, queryResultMsg{seq: 2, resp: mkResp(rows)})
+	require.Equalf(t, selID, m.rows[m.sel].ID, "refresh with same rows must keep the cursor on its record (sel=%d)", m.sel)
+	require.Equal(t, 3, m.sel, "refresh should preserve the row index for an unchanged result set")
+
+	// A genuinely new result set that no longer contains the selected record
+	// resets the cursor to the top.
+	m, _ = step(t, m, queryResultMsg{seq: 3, resp: mkResp(mkRows("x", "y", "z"))})
+	require.Equal(t, 0, m.sel, "a result missing the selected record resets to row 0")
+}
+
+func TestTagFilter(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 40)
+	rows := mkRows("agent-run", "ls", "vim")
+	rows[0].Tag = "claude-code"
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(rows)})
+
+	// The tag column appears once a row carries a tag; the header advertises it.
+	require.True(t, m.hasTags, "a tagged row should set hasTags")
+	require.True(t, m.colLayout().showTag, "the tag column should show when the result set has tags")
+	out := strip(m.View())
+	require.Containsf(t, out, "tag", "table header should show the tag column:\n%s", out)
+	require.Containsf(t, out, "claude-code", "the tag cell should render the row's tag:\n%s", out)
+
+	// t on the tagged row (row 0 selected) adopts its tag; buildReq carries it.
+	m, cmd := step(t, m, press("t"))
+	require.Equal(t, "claude-code", m.tagFilter, "t should adopt the selected row's tag")
+	require.NotNil(t, cmd, "toggling the tag filter should re-issue the query")
+	require.Equal(t, "claude-code", m.buildReq().Tag, "buildReq should carry the active tag filter")
+	require.Containsf(t, strip(m.View()), "tag: claude-code", "status bar should show the active tag filter")
+
+	// t again clears the filter.
+	m, _ = step(t, m, press("t"))
+	require.Equal(t, "", m.tagFilter, "second t should clear the tag filter")
+	require.Equal(t, "", m.buildReq().Tag, "a cleared filter sends an empty Tag")
+}
+
+func TestTagFilterNoTag(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 40)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("ls", "vim"))})
+	require.False(t, m.hasTags, "no rows carry a tag")
+	require.False(t, m.colLayout().showTag, "the tag column stays hidden without tags")
+
+	// t on an untagged row flashes "no tag" and leaves the filter empty.
+	m, cmd := step(t, m, press("t"))
+	require.Equal(t, "", m.tagFilter, "t on an untagged row must not set a filter")
+	require.NotNil(t, cmd, "the no-tag flash should still schedule its expiry tick")
+	require.Containsf(t, strip(m.View()), "no tag", "t on an untagged row should flash 'no tag'")
+}
+
 // compile-time assurance the interface matches what daemon.Client provides.
 var _ Backend = (*fakeBackend)(nil)
 
