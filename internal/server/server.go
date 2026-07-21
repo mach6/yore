@@ -1,7 +1,9 @@
 // Package server is yore's sync server. It stores ONLY ciphertext (sealed
 // record blobs, HK wraps, DEK wraps) and device public keys; it can never
-// decrypt anything. Storage is a single bbolt file owned solely by this
-// process. The HTTP API is defined by package internal/wire.
+// decrypt anything. It is multi-tenant: the bearer token selects a tenant, and
+// each tenant is an isolated bbolt file owned solely by this process (the
+// default tenant uses Options.DBPath; named tenants shard beside it), so tenants
+// never see each other's data. The HTTP API is defined by package internal/wire.
 package server
 
 import (
@@ -11,11 +13,14 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"sync"
 	"syscall"
@@ -44,17 +49,87 @@ const metaHKVersion = "hk_version"
 // maxBody caps every request body.
 const maxBody = 10 << 20 // 10 MiB
 
+// defaultTenant is the reserved name of the tenant backed by Options.DBPath. It
+// is also the subdirectory its rolling backups land in.
+const defaultTenant = "default"
+
+// defaultBackupKeep is used when backups are enabled but BackupKeep is unset.
+const defaultBackupKeep = 3
+
+// tenantNameRE constrains named tenants: they become filenames, so no path
+// separators, dots, or other surprises are allowed.
+var tenantNameRE = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
 // Options configures a Server.
 type Options struct {
-	DBPath string
-	Token  string // bearer token; empty = refuse to start
+	DBPath  string            // the default tenant's bbolt file
+	Token   string            // the default tenant's bearer token; empty = refuse to start
+	Tenants map[string]string // named tenant -> bearer token (sharded under dir(DBPath)/tenants/)
+
+	BackupInterval time.Duration // rolling per-tenant backups every interval; 0 disables
+	BackupKeep     int           // backups retained per tenant (default 3 when enabled)
 }
 
-// Server is an open sync server backed by a bbolt database.
+// tenant is one isolated group's storage: its own bbolt file holding that
+// group's devices, HK wraps, DEK wraps, and record streams. Tenants never share
+// a file, so they can never see each other's data.
+type tenant struct {
+	name string
+	db   *bbolt.DB
+}
+
+// tokenTenant binds a full "Bearer <token>" header value to the tenant it
+// selects. Tokens are matched with a constant-time compare in the auth
+// middleware, one entry per tenant.
+type tokenTenant struct {
+	header []byte
+	tenant *tenant
+}
+
+// Server is an open sync server. Each tenant has its own bbolt file; the bearer
+// token on a request selects which one every handler operates on.
 type Server struct {
-	db     *bbolt.DB
-	token  string
-	nonces *nonceCache
+	tenants        []*tenant     // all open tenants, default first
+	byToken        []tokenTenant // token header -> tenant (constant-time matched)
+	dbPath         string        // Options.DBPath; roots the backups/ and tenants/ dirs
+	backupInterval time.Duration
+	backupKeep     int
+	nonces         *nonceCache // shared: device IDs are globally-unique ULIDs
+}
+
+// ctxKey is the private type for request-context values so no other package can
+// collide with (or read) the per-request tenant binding.
+type ctxKey int
+
+const (
+	ctxKeyDB     ctxKey = iota // the tenant's *bbolt.DB
+	ctxKeyTenant               // the tenant's name (string)
+)
+
+// dbFromContext returns the tenant db the auth middleware bound to r, or nil if
+// none (which must be treated as an error, never a fallback — see mustDB).
+func dbFromContext(r *http.Request) *bbolt.DB {
+	db, _ := r.Context().Value(ctxKeyDB).(*bbolt.DB)
+	return db
+}
+
+// tenantFromContext returns the tenant name bound to r (empty if none).
+func tenantFromContext(r *http.Request) string {
+	name, _ := r.Context().Value(ctxKeyTenant).(string)
+	return name
+}
+
+// mustDB returns the tenant db bound to r by the auth middleware. Past auth it
+// is always present; a nil db would be a bug, so it fails the request 500 rather
+// than silently reaching for another tenant's storage — a cross-tenant leak
+// would be far worse than an error.
+func mustDB(w http.ResponseWriter, r *http.Request) (*bbolt.DB, bool) {
+	db := dbFromContext(r)
+	if db == nil {
+		writeErr(w, http.StatusInternalServerError, "internal error")
+		return nil, false
+	}
+	return db, true
 }
 
 // storedRecord is the on-disk value of a record in a host stream bucket. The
@@ -137,7 +212,8 @@ func readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 // denySig logs the specific signature failure for operators and returns a
 // generic 401, leaking nothing about which check failed.
 func (s *Server) denySig(w http.ResponseWriter, r *http.Request, cause error) {
-	log.Printf("signature rejected: %s %s device=%q: %v", r.Method, r.URL.Path, reqsign.Device(r.Header), cause)
+	log.Printf("signature rejected: tenant=%q %s %s device=%q: %v",
+		tenantFromContext(r), r.Method, r.URL.Path, reqsign.Device(r.Header), cause)
 	writeErr(w, http.StatusUnauthorized, "unauthorized")
 }
 
@@ -148,7 +224,7 @@ func (s *Server) denySig(w http.ResponseWriter, r *http.Request, cause error) {
 // signer named in the headers is looked up in the devices bucket and must be
 // active. On any failure it writes a 401 and returns false. `target` is always
 // r.URL.RequestURI(), matching the client and reqsign's canonical string.
-func (s *Server) requireSignature(w http.ResponseWriter, r *http.Request, body, selfKey []byte) bool {
+func (s *Server) requireSignature(w http.ResponseWriter, r *http.Request, db *bbolt.DB, body, selfKey []byte) bool {
 	deviceID := reqsign.Device(r.Header)
 	if deviceID == "" {
 		s.denySig(w, r, errNoSigner)
@@ -158,7 +234,7 @@ func (s *Server) requireSignature(w http.ResponseWriter, r *http.Request, body, 
 	if pub == nil {
 		var dev wire.Device
 		found := false
-		if err := s.db.View(func(tx *bbolt.Tx) error {
+		if err := db.View(func(tx *bbolt.Tx) error {
 			raw := tx.Bucket(bucketDevices).Get([]byte(deviceID))
 			if raw == nil {
 				return nil
@@ -186,33 +262,108 @@ func (s *Server) requireSignature(w http.ResponseWriter, r *http.Request, body, 
 	return true
 }
 
-// New opens (creating if needed) the database and ensures the fixed buckets.
-// An empty token is refused so the server is never accidentally open.
-func New(opts Options) (*Server, error) {
-	if opts.Token == "" {
-		return nil, errors.New("server: empty token; refusing to start")
+// validateTenantName rejects anything that would be unsafe as a filename or
+// collide with the reserved default tenant. Named tenants become
+// dir(DBPath)/tenants/<name>.db, so only [A-Za-z0-9_-]+ is allowed.
+func validateTenantName(name string) error {
+	if name == "" {
+		return errors.New("server: empty tenant name")
 	}
-	db, err := bbolt.Open(opts.DBPath, 0o600, &bbolt.Options{Timeout: time.Second})
+	if name == defaultTenant {
+		return fmt.Errorf("server: tenant name %q is reserved", name)
+	}
+	if !tenantNameRE.MatchString(name) {
+		return fmt.Errorf("server: invalid tenant name %q (allowed: A-Za-z0-9_-)", name)
+	}
+	return nil
+}
+
+// openTenantDB opens (creating if needed) one tenant's bbolt file and ensures
+// the fixed buckets.
+func openTenantDB(path string) (*bbolt.DB, error) {
+	db, err := bbolt.Open(path, 0o600, &bbolt.Options{Timeout: time.Second})
 	if err != nil {
 		return nil, err
 	}
-	err = db.Update(func(tx *bbolt.Tx) error {
+	if err := db.Update(func(tx *bbolt.Tx) error {
 		for _, name := range [][]byte{bucketDevices, bucketHKWraps, bucketDEKWraps, bucketMeta} {
 			if _, err := tx.CreateBucketIfNotExists(name); err != nil {
 				return err
 			}
 		}
 		return nil
-	})
-	if err != nil {
+	}); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
-	return &Server{db: db, token: opts.Token, nonces: newNonceCache()}, nil
+	return db, nil
 }
 
-// Close releases the database and its lock.
-func (s *Server) Close() error { return s.db.Close() }
+// New opens every tenant's database (creating and initialising each), and maps
+// each bearer token to its tenant. The default tenant is Options.DBPath keyed by
+// Options.Token; every entry of Options.Tenants is a named tenant sharded at
+// dir(DBPath)/tenants/<name>.db. An empty default token is refused so the server
+// is never accidentally open. Tenant dbs are opened eagerly (the count is small)
+// so the backup loop can cover every one and no request pays an open cost.
+func New(opts Options) (*Server, error) {
+	if opts.Token == "" {
+		return nil, errors.New("server: empty token; refusing to start")
+	}
+
+	// Build the tenant table up front, validating names and rejecting duplicate
+	// tokens (two tenants sharing a token would be indistinguishable — a leak).
+	type spec struct{ name, path, token string }
+	specs := []spec{{name: defaultTenant, path: opts.DBPath, token: opts.Token}}
+	seenTokens := map[string]bool{opts.Token: true}
+	baseDir := filepath.Dir(opts.DBPath)
+	for name, token := range opts.Tenants {
+		if err := validateTenantName(name); err != nil {
+			return nil, err
+		}
+		if token == "" {
+			return nil, fmt.Errorf("server: tenant %q has an empty token", name)
+		}
+		if seenTokens[token] {
+			return nil, fmt.Errorf("server: tenant %q reuses another tenant's token", name)
+		}
+		seenTokens[token] = true
+		specs = append(specs, spec{name: name, path: filepath.Join(baseDir, "tenants", name+".db"), token: token})
+	}
+	if len(opts.Tenants) > 0 {
+		if err := os.MkdirAll(filepath.Join(baseDir, "tenants"), 0o700); err != nil {
+			return nil, err
+		}
+	}
+
+	s := &Server{
+		dbPath:         opts.DBPath,
+		backupInterval: opts.BackupInterval,
+		backupKeep:     opts.BackupKeep,
+		nonces:         newNonceCache(),
+	}
+	for _, sp := range specs {
+		db, err := openTenantDB(sp.path)
+		if err != nil {
+			_ = s.Close() // close any tenants already opened
+			return nil, err
+		}
+		t := &tenant{name: sp.name, db: db}
+		s.tenants = append(s.tenants, t)
+		s.byToken = append(s.byToken, tokenTenant{header: []byte("Bearer " + sp.token), tenant: t})
+	}
+	return s, nil
+}
+
+// Close releases every tenant database and its lock, returning the first error.
+func (s *Server) Close() error {
+	var firstErr error
+	for _, t := range s.tenants {
+		if err := t.db.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
 
 // Handler returns the full mux with logging + auth + body-limit middleware.
 func (s *Server) Handler() http.Handler {
@@ -245,6 +396,22 @@ func Run(opts Options, listen string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Optional rolling per-tenant backups. A single goroutine, stopped before the
+	// dbs are closed so a snapshot never races Close.
+	var wg sync.WaitGroup
+	backupDone := make(chan struct{})
+	if s.backupInterval > 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.backupLoop(backupDone)
+		}()
+	}
+	stopBackups := func() {
+		close(backupDone)
+		wg.Wait()
+	}
+
 	errCh := make(chan error, 1)
 	go func() {
 		err := srv.ListenAndServe()
@@ -256,8 +423,10 @@ func Run(opts Options, listen string) error {
 
 	select {
 	case err := <-errCh:
+		stopBackups()
 		return err
 	case <-ctx.Done():
+		stopBackups()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
@@ -295,19 +464,30 @@ func (s *Server) limitBody(next http.Handler) http.Handler {
 	})
 }
 
+// auth resolves the bearer token to a tenant and binds that tenant's db (and
+// name) into the request context for the handlers. /v1/health stays open. The
+// token is compared constant-time against every tenant's token without an early
+// break, so a match leaks nothing about which tenant (or how many) exist.
 func (s *Server) auth(next http.Handler) http.Handler {
-	want := []byte("Bearer " + s.token)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/health" {
 			next.ServeHTTP(w, r)
 			return
 		}
 		got := []byte(r.Header.Get("Authorization"))
-		if subtle.ConstantTimeCompare(got, want) != 1 {
+		var matched *tenant
+		for i := range s.byToken {
+			if subtle.ConstantTimeCompare(got, s.byToken[i].header) == 1 {
+				matched = s.byToken[i].tenant
+			}
+		}
+		if matched == nil {
 			writeErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		next.ServeHTTP(w, r)
+		ctx := context.WithValue(r.Context(), ctxKeyDB, matched.db)
+		ctx = context.WithValue(ctx, ctxKeyTenant, matched.name)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

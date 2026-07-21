@@ -58,7 +58,12 @@ recording survives the daemon being down (the spool is drained at next start).
   can't push or revoke). Used identically by client and server.
 - **redact** — the recording gate: never spool/store/sync a command that carries
   a secret. Runs on live capture, on import, and on the shell-history gate.
-- **server** — the sync server; stores only ciphertext + device public keys.
+- **server** — the sync server; stores only ciphertext + device public keys. It
+  is **multi-tenant**: the bearer token selects a tenant, and each tenant is a
+  separate bbolt file (the default `$YORE_TOKEN` uses `--db`; named tenants shard
+  to `<dir(--db)>/tenants/<name>.db`), so tenants never see each other's data.
+  The wire protocol is unchanged — only the server routes per token. It can also
+  write rolling per-tenant backups under `<dir(--db)>/backups/<tenant>/`.
 - **syncer** — the client engine: encrypt+push local records, pull+decrypt
   remote ones, and the device enroll / approve / revoke+rotate primitives.
 

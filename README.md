@@ -206,6 +206,36 @@ service and give it a hostname; the health endpoint is `GET /v1/health`. For a
 local, non-Swarm playground (server + a zsh and a bash client, all in
 containers) see [`docker/sandbox/`](docker/sandbox/).
 
+#### Multiple tenants (optional)
+
+One server can host several **isolated tenants** — each its own group of
+machines with their own devices, keys, and history in a **separate database
+file**. The client and wire protocol are unchanged: a machine still just sends
+its bearer token, and the server routes by which token it matches.
+
+- `$YORE_TOKEN` / `$YORE_TOKEN_FILE` is the **default** tenant (its db is `--db`,
+  e.g. `/data/yore.db`) — a single-token server behaves exactly as before.
+- `$YORE_TOKENS_FILE` points at a JSON object of **named** tenants
+  (`name → token`); each shards to `<dir(--db)>/tenants/<name>.db`. Names are
+  restricted to `[A-Za-z0-9_-]+`, and `default` is reserved.
+
+```json
+{ "alice": "<token>", "bob": "<token>" }
+```
+
+Generate a token per tenant the same way (`openssl rand -base64 32`). A tenant
+never sees another tenant's data.
+
+#### Server backups (optional)
+
+The server writes rolling per-tenant snapshots to
+`<dir(--db)>/backups/<tenant>/data-<unixMillis>.db` (atomic; safe to copy):
+
+- `$YORE_BACKUP_INTERVAL` — a Go duration between snapshots (default `1h`; set
+  `0` to disable).
+- `$YORE_BACKUP_KEEP` — how many snapshots to retain per tenant, newest first
+  (default `3`).
+
 ### 2. Enroll your first machine
 
 ```bash

@@ -10,12 +10,13 @@ are in `internal/wire`; the handlers are in `internal/server`.
 - **Base URL**: whatever you deploy behind your reverse proxy, e.g.
   `https://yore.example.com`. All paths are under `/v1`.
 - **Auth (two layers)**: every endpoint except `GET /v1/health` requires
-  `Authorization: Bearer <token>` (single static secret, constant-time compared;
-  `$YORE_TOKEN` / `$YORE_TOKEN_FILE` on the server). In addition, every
-  **mutating** endpoint (all POSTs — records push, device register/activate/
-  revoke, keys dek/rotate) requires a **per-device Ed25519 signature** so a
-  captured token alone cannot push or revoke. See "Request signing" below.
-  Missing/incorrect token or signature → `401`.
+  `Authorization: Bearer <token>` (a static secret, constant-time compared;
+  `$YORE_TOKEN` / `$YORE_TOKEN_FILE` on the server). The token also **selects the
+  tenant** whose data the request operates on — see "Multi-tenancy" below. In
+  addition, every **mutating** endpoint (all POSTs — records push, device
+  register/activate/revoke, keys dek/rotate) requires a **per-device Ed25519
+  signature** so a captured token alone cannot push or revoke. See "Request
+  signing" below. Missing/incorrect token or signature → `401`.
 - **Certificate pinning (optional)**: a client enrolled with `yore setup --pin`
   pins the server's TLS SPKI and refuses any other certificate — defeating a
   TLS-inspecting proxy, at the cost of not syncing through one.
@@ -159,7 +160,28 @@ all DEK wraps overwritten under the new HK, version bumped. Records untouched.
 
 ---
 
+## Multi-tenancy
+
+One server can host several isolated **tenants** — each its own user/group with
+their own devices, keys, and record streams. **The wire protocol is unchanged**:
+clients still send only `Authorization: Bearer <token>`; the server routes each
+request to a tenant purely by which token it matches.
+
+- **Token → tenant**: the auth middleware compares the bearer token
+  constant-time against every configured token; the match selects that tenant's
+  database, which every handler then operates on. No match → `401`.
+- **Per-tenant isolation**: each tenant is a **separate bbolt file**, so a query
+  under one token can never see another tenant's devices, hosts, keys, or
+  records. There is no shared fallback db — if a request somehow arrives without
+  a resolved tenant it fails `500` rather than touch another tenant's data.
+- **Sharded files**: the **default** tenant (the single `$YORE_TOKEN`) keeps
+  using the server's `--db` path unchanged — a single-token server is exactly as
+  before. Named tenants (from `$YORE_TOKENS_FILE`) live at
+  `<dir(--db)>/tenants/<name>.db`; names are restricted to `[A-Za-z0-9_-]+`.
+
 ## Server storage (bbolt, ciphertext only)
+
+Each tenant's db holds:
 
 - `devices`: device_id → `Device`
 - `hk_wraps`: device_id → `HKWrap`
@@ -169,4 +191,6 @@ all DEK wraps overwritten under the new HK, version bumped. Records untouched.
 
 `max_seq` per host is the last key of its stream bucket — no separate index to
 keep consistent. Exactly one server replica (bbolt is single-owner); TLS
-terminates at your reverse proxy.
+terminates at your reverse proxy. The server can write rolling per-tenant
+snapshots to `<dir(--db)>/backups/<tenant>/data-<unixMillis>.db` (see the deploy
+docs for the interval/keep env vars).

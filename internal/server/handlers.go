@@ -26,8 +26,12 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 // GET /v1/hosts
 func (s *Server) handleHosts(w http.ResponseWriter, r *http.Request) {
+	db, ok := mustDB(w, r)
+	if !ok {
+		return
+	}
 	var hosts []wire.HostInfo
-	err := s.db.View(func(tx *bbolt.Tx) error {
+	err := db.View(func(tx *bbolt.Tx) error {
 		return tx.ForEach(func(name []byte, b *bbolt.Bucket) error {
 			n := string(name)
 			if len(n) <= len(recordsPrefix) || n[:len(recordsPrefix)] != recordsPrefix {
@@ -49,11 +53,15 @@ func (s *Server) handleHosts(w http.ResponseWriter, r *http.Request) {
 
 // POST /v1/records
 func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) {
+	db, ok := mustDB(w, r)
+	if !ok {
+		return
+	}
 	body, ok := readBody(w, r)
 	if !ok {
 		return
 	}
-	if !s.requireSignature(w, r, body, nil) {
+	if !s.requireSignature(w, r, db, body, nil) {
 		return
 	}
 	var req wire.PushReq
@@ -78,7 +86,7 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now().UnixMilli()
 	var resp wire.PushResp
-	err := s.db.Update(func(tx *bbolt.Tx) error {
+	err := db.Update(func(tx *bbolt.Tx) error {
 		b, err := tx.CreateBucketIfNotExists([]byte(recordsPrefix + req.HostID))
 		if err != nil {
 			return err
@@ -116,6 +124,10 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) {
 
 // GET /v1/records?host_id=X&after=N&limit=M
 func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
+	db, ok := mustDB(w, r)
+	if !ok {
+		return
+	}
 	hostID := r.URL.Query().Get("host_id")
 	after, err := parseUint(r.URL.Query().Get("after"), 0)
 	if err != nil {
@@ -129,7 +141,7 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := wire.PullResp{Records: []wire.PullRecord{}}
-	err = s.db.View(func(tx *bbolt.Tx) error {
+	err = db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(recordsPrefix + hostID))
 		if b == nil {
 			return nil // unknown host is not an error
@@ -168,6 +180,10 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 
 // POST /v1/devices
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
+	db, ok := mustDB(w, r)
+	if !ok {
+		return
+	}
 	body, ok := readBody(w, r)
 	if !ok {
 		return
@@ -195,7 +211,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		s.denySig(w, r, errDeviceMismatch)
 		return
 	}
-	if !s.requireSignature(w, r, body, req.SignKey) {
+	if !s.requireSignature(w, r, db, body, req.SignKey) {
 		return
 	}
 
@@ -207,16 +223,16 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		Status:    wire.DevicePending,
 		CreatedMs: time.Now().UnixMilli(),
 	}
-	err := s.db.Update(func(tx *bbolt.Tx) error {
-		db := tx.Bucket(bucketDevices)
-		if db.Get([]byte(req.ID)) != nil {
+	err := db.Update(func(tx *bbolt.Tx) error {
+		devB := tx.Bucket(bucketDevices)
+		if devB.Get([]byte(req.ID)) != nil {
 			return fail(http.StatusConflict, "device already registered")
 		}
 		val, err := json.Marshal(dev)
 		if err != nil {
 			return err
 		}
-		return db.Put([]byte(req.ID), val)
+		return devB.Put([]byte(req.ID), val)
 	})
 	if err != nil {
 		writeAPIErr(w, err)
@@ -227,8 +243,12 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 
 // GET /v1/devices
 func (s *Server) handleListDevices(w http.ResponseWriter, r *http.Request) {
+	db, ok := mustDB(w, r)
+	if !ok {
+		return
+	}
 	devices := []wire.Device{}
-	err := s.db.View(func(tx *bbolt.Tx) error {
+	err := db.View(func(tx *bbolt.Tx) error {
 		return tx.Bucket(bucketDevices).ForEach(func(_, v []byte) error {
 			var d wire.Device
 			if err := json.Unmarshal(v, &d); err != nil {
@@ -252,13 +272,13 @@ func (s *Server) handleListDevices(w http.ResponseWriter, r *http.Request) {
 // first device self-activates while still pending). It returns nil in every
 // other case, so ordinary activations fall through to requireSignature's
 // active-signer requirement (any active device may approve any pending device).
-func (s *Server) bootstrapSelfKey(r *http.Request, pathID string) []byte {
+func (s *Server) bootstrapSelfKey(db *bbolt.DB, r *http.Request, pathID string) []byte {
 	signer := reqsign.Device(r.Header)
 	if signer == "" || signer != pathID {
 		return nil
 	}
 	var selfKey []byte
-	_ = s.db.View(func(tx *bbolt.Tx) error {
+	_ = db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket(bucketDevices)
 		active := false
 		_ = b.ForEach(func(_, v []byte) error {
@@ -286,12 +306,16 @@ func (s *Server) bootstrapSelfKey(r *http.Request, pathID string) []byte {
 
 // POST /v1/devices/{id}/activate
 func (s *Server) handleActivate(w http.ResponseWriter, r *http.Request) {
+	db, ok := mustDB(w, r)
+	if !ok {
+		return
+	}
 	id := r.PathValue("id")
 	body, ok := readBody(w, r)
 	if !ok {
 		return
 	}
-	if !s.requireSignature(w, r, body, s.bootstrapSelfKey(r, id)) {
+	if !s.requireSignature(w, r, db, body, s.bootstrapSelfKey(db, r, id)) {
 		return
 	}
 	var req wire.ActivateReq
@@ -304,7 +328,7 @@ func (s *Server) handleActivate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := s.db.Update(func(tx *bbolt.Tx) error {
+	err := db.Update(func(tx *bbolt.Tx) error {
 		devB := tx.Bucket(bucketDevices)
 		raw := devB.Get([]byte(id))
 		if raw == nil {
@@ -356,15 +380,19 @@ func (s *Server) handleActivate(w http.ResponseWriter, r *http.Request) {
 
 // POST /v1/devices/{id}/revoke
 func (s *Server) handleRevoke(w http.ResponseWriter, r *http.Request) {
+	db, ok := mustDB(w, r)
+	if !ok {
+		return
+	}
 	body, ok := readBody(w, r)
 	if !ok {
 		return
 	}
-	if !s.requireSignature(w, r, body, nil) {
+	if !s.requireSignature(w, r, db, body, nil) {
 		return
 	}
 	id := r.PathValue("id")
-	err := s.db.Update(func(tx *bbolt.Tx) error {
+	err := db.Update(func(tx *bbolt.Tx) error {
 		devB := tx.Bucket(bucketDevices)
 		raw := devB.Get([]byte(id))
 		if raw == nil {
@@ -393,10 +421,14 @@ func (s *Server) handleRevoke(w http.ResponseWriter, r *http.Request) {
 
 // GET /v1/keys/hk?device_id=X
 func (s *Server) handleGetHK(w http.ResponseWriter, r *http.Request) {
+	db, ok := mustDB(w, r)
+	if !ok {
+		return
+	}
 	deviceID := r.URL.Query().Get("device_id")
 	var wrap wire.HKWrap
 	found := false
-	err := s.db.View(func(tx *bbolt.Tx) error {
+	err := db.View(func(tx *bbolt.Tx) error {
 		v := tx.Bucket(bucketHKWraps).Get([]byte(deviceID))
 		if v == nil {
 			return nil
@@ -417,6 +449,10 @@ func (s *Server) handleGetHK(w http.ResponseWriter, r *http.Request) {
 
 // GET /v1/keys/dek?cursor=K&limit=M
 func (s *Server) handleListDEK(w http.ResponseWriter, r *http.Request) {
+	db, ok := mustDB(w, r)
+	if !ok {
+		return
+	}
 	cursor := r.URL.Query().Get("cursor")
 	limit, err := parseLimit(r.URL.Query().Get("limit"))
 	if err != nil {
@@ -425,7 +461,7 @@ func (s *Server) handleListDEK(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := wire.DEKListResp{Wraps: []wire.DEKWrap{}}
-	err = s.db.View(func(tx *bbolt.Tx) error {
+	err = db.View(func(tx *bbolt.Tx) error {
 		c := tx.Bucket(bucketDEKWraps).Cursor()
 		var k, v []byte
 		if cursor == "" {
@@ -462,11 +498,15 @@ func (s *Server) handleListDEK(w http.ResponseWriter, r *http.Request) {
 
 // POST /v1/keys/dek
 func (s *Server) handlePostDEK(w http.ResponseWriter, r *http.Request) {
+	db, ok := mustDB(w, r)
+	if !ok {
+		return
+	}
 	body, ok := readBody(w, r)
 	if !ok {
 		return
 	}
-	if !s.requireSignature(w, r, body, nil) {
+	if !s.requireSignature(w, r, db, body, nil) {
 		return
 	}
 	var wraps []wire.DEKWrap
@@ -476,7 +516,7 @@ func (s *Server) handlePostDEK(w http.ResponseWriter, r *http.Request) {
 	}
 
 	stored := 0
-	err := s.db.Update(func(tx *bbolt.Tx) error {
+	err := db.Update(func(tx *bbolt.Tx) error {
 		current := getHKVersion(tx)
 		for _, dw := range wraps {
 			if dw.KeyID == "" {
@@ -514,11 +554,15 @@ func (s *Server) handlePostDEK(w http.ResponseWriter, r *http.Request) {
 
 // POST /v1/keys/rotate
 func (s *Server) handleRotate(w http.ResponseWriter, r *http.Request) {
+	db, ok := mustDB(w, r)
+	if !ok {
+		return
+	}
 	body, ok := readBody(w, r)
 	if !ok {
 		return
 	}
-	if !s.requireSignature(w, r, body, nil) {
+	if !s.requireSignature(w, r, db, body, nil) {
 		return
 	}
 	var req wire.RotateReq
@@ -527,7 +571,7 @@ func (s *Server) handleRotate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := s.db.Update(func(tx *bbolt.Tx) error {
+	err := db.Update(func(tx *bbolt.Tx) error {
 		current := getHKVersion(tx)
 		if req.HKVersion != current+1 {
 			return fail(http.StatusBadRequest, "hk_version must be current+1")
