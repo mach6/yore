@@ -10,11 +10,11 @@ compiles to linux/darwin/freebsd × amd64/arm64 with no toolchain.
                     redact gate (secrets / ignore-dirs / leading-space)
                           │ drop
 shell hook ─(append,<1ms)─┴▶ spool file ─▶ ┌─ yore daemon (unix socket) ─────────┐
-                                           │  owns local bbolt (this host only)   │
-Ctrl-R / h / hs ◀── unix socket ──────────▶│  RAM corpus (warm gob snapshot)      │◀─HTTPS─▶ yore server
-   (thin TUI clients)                      │  RAM remote cache (never on disk)    │  (bbolt: ciphertext
-                                           │  background sync loop (push/pull)     │   records, wrapped
-                                           └──────────────────────────────────────┘   keys, device pubkeys)
+                                           │  owns local bbolt (this host only)  │
+Ctrl-R / h / hs ◀── unix socket ──────────▶│  RAM corpus (warm gob snapshot)     │◀─HTTPS─▶ yore server
+   (thin TUI clients)                      │  RAM remote cache (never on disk)   │  (bbolt: ciphertext
+                                           │  background sync loop (push/pull)   │   records, wrapped
+                                           └─────────────────────────────────────┘   keys, device pubkeys)
 ```
 
 The prompt path is `record` → redact gate → one fsync'd spool append → a

@@ -15,6 +15,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -53,9 +54,10 @@ type Options struct {
 type server struct {
 	dir         string
 	opts        Options
+	cfg         config.Config
 	store       *store.Store
 	ln          net.Listener
-	logFile     *os.File
+	logFile     io.Closer
 	logger      *log.Logger
 	idleTimeout time.Duration
 	startTime   time.Time
@@ -98,20 +100,23 @@ func Run(dir string, opts Options) error {
 		return err
 	}
 
-	idle := opts.IdleTimeout
-	if idle == 0 {
-		if cfg, cerr := config.Load(dir); cerr == nil {
-			idle = cfg.DaemonIdleD()
-		} else {
-			idle = defaultIdle
-		}
+	// Load config once: idle timeout, logging, and backups all read from it.
+	cfg, cerr := config.Load(dir)
+	if cerr != nil {
+		cfg = config.Config{} // accessors supply defaults; a bad file never blocks startup
 	}
 
-	logFile, logger := openLog(dir)
+	idle := opts.IdleTimeout
+	if idle == 0 {
+		idle = cfg.DaemonIdleD()
+	}
+
+	logFile, logger := openLog(dir, cfg)
 
 	s := &server{
 		dir:         dir,
 		opts:        opts,
+		cfg:         cfg,
 		store:       st,
 		logFile:     logFile,
 		logger:      logger,
@@ -178,6 +183,11 @@ func Run(dir string, opts Options) error {
 		s.wg.Add(1)
 		go s.syncLoop()
 		s.logf("sync enabled")
+	}
+	if s.cfg.BackupIntervalD() > 0 {
+		s.wg.Add(1)
+		go s.backupLoop()
+		s.logf("backups enabled interval=%s keep=%d", s.cfg.BackupIntervalD(), s.cfg.BackupKeepN())
 	}
 
 	s.serve()
@@ -621,11 +631,27 @@ func (s *server) logf(format string, args ...any) {
 	}
 }
 
-// openLog opens $YORE_DIR/daemon.log for append (0600). A failure to open is
-// non-fatal: the daemon runs without logging rather than refusing to start.
-func openLog(dir string) (*os.File, *log.Logger) {
-	f, err := os.OpenFile(filepath.Join(dir, "daemon.log"),
-		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+// openLog prepares $YORE_DIR/daemon.log. Three modes, driven by config:
+//   - LogSilentOn: no file is created and a nil logger is returned, so s.logf
+//     is a no-op (and the returned closer is nil).
+//   - LogMaxBytes > 0: a size-capped rotating writer keeps the log bounded.
+//   - otherwise: a plain 0600 append file (unbounded).
+//
+// A failure to open is non-fatal: the daemon runs without logging rather than
+// refusing to start. The returned io.Closer is closed on shutdown (nil-safe).
+func openLog(dir string, cfg config.Config) (io.Closer, *log.Logger) {
+	if cfg.LogSilentOn() {
+		return nil, nil
+	}
+	path := filepath.Join(dir, "daemon.log")
+	if maxBytes := cfg.LogMaxBytes(); maxBytes > 0 {
+		w, err := newRotatingWriter(path, maxBytes, cfg.LogKeepN())
+		if err != nil {
+			return nil, nil
+		}
+		return w, log.New(w, "", log.LstdFlags)
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, nil
 	}

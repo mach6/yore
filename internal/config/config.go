@@ -9,6 +9,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -29,6 +31,7 @@ func KeyPath(dir string) string    { return filepath.Join(dir, "device.key") }
 func SpoolDir(dir string) string   { return filepath.Join(dir, "spool") }
 func SocketPath(dir string) string { return filepath.Join(dir, "daemon.sock") }
 func ConfigPath(dir string) string { return filepath.Join(dir, "config.json") }
+func BackupDir(dir string) string  { return filepath.Join(dir, "backups") }
 
 // Config is ~/.config/yore/config.json. Zero values mean "use default";
 // accessor methods apply defaults so callers never branch.
@@ -81,6 +84,19 @@ type Config struct {
 	IgnorePatterns      []string `json:"ignore_patterns,omitempty"`
 	IgnoreDirs          []string `json:"ignore_dirs,omitempty"`
 	RecordSpacePrefixed *bool    `json:"record_space_prefixed,omitempty"` // default false
+
+	// Rolling local-db backup. The daemon writes a consistent snapshot of
+	// data.db into BackupDir on BackupInterval, keeping the newest BackupKeep.
+	BackupInterval string `json:"backup_interval,omitempty"` // default 1h; "0" disables
+	BackupKeep     int    `json:"backup_keep,omitempty"`     // default 3
+
+	// daemon.log size cap. When LogMaxSize > 0 the log rotates once it would
+	// exceed that many bytes, keeping LogKeep old segments; "0" disables
+	// rotation (plain unbounded append). LogSilent suppresses the log entirely
+	// (no file is created and logging is a no-op).
+	LogMaxSize string `json:"log_max_size,omitempty"` // default "5MB"; "0" disables rotation
+	LogKeep    int    `json:"log_keep,omitempty"`     // default 1
+	LogSilent  *bool  `json:"log_silent,omitempty"`   // default false
 }
 
 // RecordSpacePrefixedOn reports whether space-prefixed commands are recorded.
@@ -114,11 +130,73 @@ func (c Config) SyncIntervalD() time.Duration { return durOr(c.SyncInterval, 5*t
 func (c Config) AutoDeepenOn() bool           { return c.AutoDeepen == nil || *c.AutoDeepen }
 func (c Config) BindUpArrowOn() bool          { return c.BindUpArrow != nil && *c.BindUpArrow }
 
+// BackupIntervalD is how often the daemon writes a db backup; an explicit "0"
+// disables backups. Default 1h. (durOr treats "0" as "use default", so the
+// disable case is handled here rather than in the shared helper.)
+func (c Config) BackupIntervalD() time.Duration {
+	if strings.TrimSpace(c.BackupInterval) == "0" {
+		return 0
+	}
+	return durOr(c.BackupInterval, time.Hour)
+}
+
+// BackupKeepN is how many backup files to retain, newest first. Default 3.
+func (c Config) BackupKeepN() int {
+	if c.BackupKeep > 0 {
+		return c.BackupKeep
+	}
+	return 3
+}
+
+// LogMaxBytes is the daemon.log rotation threshold in bytes: an empty value
+// means the 5MB default, "0" disables rotation, and any humanized size
+// ("5MB", "512KB", "1GB", case-insensitive) or plain byte count is honored.
+func (c Config) LogMaxBytes() int64 { return parseSize(c.LogMaxSize, 5*1024*1024) }
+
+// LogKeepN is how many rotated daemon.log segments to keep. Default 1.
+func (c Config) LogKeepN() int {
+	if c.LogKeep > 0 {
+		return c.LogKeep
+	}
+	return 1
+}
+
+// LogSilentOn reports whether daemon logging is suppressed entirely.
+func (c Config) LogSilentOn() bool { return c.LogSilent != nil && *c.LogSilent }
+
 func durOr(s string, def time.Duration) time.Duration {
 	if d, err := time.ParseDuration(s); err == nil && d > 0 {
 		return d
 	}
 	return def
+}
+
+// parseSize parses a humanized byte size: a bare integer is bytes, a "KB"/"MB"/
+// "GB" suffix (case-insensitive, binary multiples) scales it. An empty string
+// yields def; an explicit "0" yields 0 (used to disable). Anything unparseable
+// also yields def, so a typo never silently removes the size cap.
+func parseSize(s string, def int64) int64 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return def
+	}
+	up := strings.ToUpper(s)
+	mult := int64(1)
+	switch {
+	case strings.HasSuffix(up, "KB"):
+		mult, up = 1024, strings.TrimSpace(strings.TrimSuffix(up, "KB"))
+	case strings.HasSuffix(up, "MB"):
+		mult, up = 1024*1024, strings.TrimSpace(strings.TrimSuffix(up, "MB"))
+	case strings.HasSuffix(up, "GB"):
+		mult, up = 1024*1024*1024, strings.TrimSpace(strings.TrimSuffix(up, "GB"))
+	case strings.HasSuffix(up, "B"):
+		up = strings.TrimSpace(strings.TrimSuffix(up, "B"))
+	}
+	n, err := strconv.ParseInt(up, 10, 64)
+	if err != nil || n < 0 {
+		return def
+	}
+	return n * mult
 }
 
 // Load reads config.json from dir; a missing file yields the zero Config.

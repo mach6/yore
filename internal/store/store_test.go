@@ -185,6 +185,42 @@ func TestIngestSpoolEndToEnd(t *testing.T) {
 	assert.Equal(t, 0, added2, "second IngestSpool")
 }
 
+func TestBackupTo(t *testing.T) {
+	s := openTemp(t)
+	want := []rec.Record{
+		{ID: "b1", Cmd: "echo one", StartMs: 1},
+		{ID: "b2", Cmd: "echo two", StartMs: 2},
+	}
+	_, err := s.AppendBatch(want)
+	require.NoError(t, err, "seed AppendBatch")
+
+	// Snapshot to a standalone bbolt file in a fresh dir, at the path a Store
+	// there would use, so Open can adopt it directly.
+	backupDir := t.TempDir()
+	f, err := os.Create(config.DBPath(backupDir))
+	require.NoError(t, err, "create backup file")
+	n, err := s.BackupTo(f)
+	require.NoError(t, err, "BackupTo")
+	require.NoError(t, f.Close(), "close backup file")
+	assert.Positive(t, n, "BackupTo byte count")
+
+	// The backup is a complete bbolt file: opening a Store on that dir must see
+	// every record.
+	restored, err := Open(backupDir)
+	require.NoError(t, err, "Open restored")
+	defer func() { _ = restored.Close() }()
+
+	all, err := restored.All()
+	require.NoError(t, err, "restored All")
+	require.Len(t, all, len(want), "restored record count")
+	got := map[string]string{}
+	for _, r := range all {
+		got[r.ID] = r.Cmd
+	}
+	assert.Equal(t, "echo one", got["b1"], "restored b1")
+	assert.Equal(t, "echo two", got["b2"], "restored b2")
+}
+
 func BenchmarkAppend(b *testing.B) {
 	s, err := Open(b.TempDir())
 	if err != nil {

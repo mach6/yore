@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -88,6 +89,21 @@ func Open(dir string) (*Store, error) {
 
 // Close releases the store and its lock.
 func (s *Store) Close() error { return s.db.Close() }
+
+// BackupTo writes a consistent online snapshot of the whole database to w and
+// returns the number of bytes written. It runs inside a read transaction, so
+// it is a hot backup: safe to call while the store is being read and written
+// (bbolt's Tx.WriteTo is the hot-backup primitive). The output is a complete,
+// self-contained bbolt file that Open can be pointed at directly.
+func (s *Store) BackupTo(w io.Writer) (int64, error) {
+	var n int64
+	err := s.db.View(func(tx *bbolt.Tx) error {
+		var e error
+		n, e = tx.WriteTo(w)
+		return e
+	})
+	return n, err
+}
 
 // Dir returns the state directory backing this store.
 func (s *Store) Dir() string { return s.dir }

@@ -280,6 +280,11 @@ endpoint and crypto details are in [`docs/protocol.md`](docs/protocol.md).
   "key_epoch": "24h",
   "daemon_idle": "30m",
   "sync_interval": "5m",
+  "backup_interval": "1h",
+  "backup_keep": 3,
+  "log_max_size": "5MB",
+  "log_keep": 1,
+  "log_silent": false,
   "ignore_patterns": ["my-internal-secret-[a-z0-9]+"],
   "ignore_dirs": ["/home/me/secret-project"],
   "record_space_prefixed": false
@@ -291,6 +296,14 @@ endpoint and crypto details are in [`docs/protocol.md`](docs/protocol.md).
 - `keymap` — `emacs` (default) or `vim` for the TUIs.
 - `enter_executes` — run the picked command on Enter instead of inserting it.
 - `bind_up_arrow` — in coexist mode, also bind Up to search.
+- `backup_interval` — how often the daemon writes a consistent `data.db`
+  snapshot into `~/.config/yore/backups/` (default `1h`; `"0"` disables).
+- `backup_keep` — how many backups to retain, newest first (default `3`).
+- `log_max_size` — cap `daemon.log` at this size, rotating when exceeded
+  (`5MB` default; accepts `KB`/`MB`/`GB` or a plain byte count; `"0"` disables
+  rotation → plain unbounded append).
+- `log_keep` — how many rotated `daemon.log.N` segments to keep (default `1`).
+- `log_silent` — suppress `daemon.log` entirely (no file is written).
 
 The auth token may also come from `$YORE_TOKEN` or `$YORE_TOKEN_FILE` (the
 server reads `$YORE_TOKEN_FILE` for Swarm secrets). Override the whole state
@@ -305,6 +318,8 @@ directory with `$YORE_DIR`.
 ├── device.key      this device's private key (0600)
 ├── corpus.snap     warm-start search snapshot (derived, rebuildable)
 ├── daemon.sock     daemon control socket
+├── daemon.log      daemon log (size-capped/rotated; see log_* config)
+├── backups/        rolling data.db snapshots (see backup_* config)
 └── spool/          crash-safe capture queue
 ```
 
