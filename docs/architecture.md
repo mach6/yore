@@ -302,9 +302,11 @@ the server process; the bearer token selects the tenant every handler operates o
   the server.
 - **Bounded daemon log.** `~/.config/yore/daemon.log` rotates once it would
   exceed `log_max_size` (default 5MB; `"0"` = unbounded append), keeping
-  `log_keep` old segments (default 1). `log_silent` suppresses logging entirely
-  (no file is created). A log-open failure is non-fatal — the daemon runs without
-  logging rather than refusing to start.
+  `log_keep` old segments (default 1). `log_silent` (default **true**) suppresses
+  logging entirely — no file is created — so a fresh install writes no
+  `daemon.log`; set it `false` to get the rotating log for debugging. A log-open
+  failure is non-fatal — the daemon runs without logging rather than refusing to
+  start.
 - **Warm snapshots** (`corpus.snap`) keep restarts instant; they are derived data,
   always rebuildable from `data.db`, so a bad snapshot just triggers a full load.
 
@@ -350,7 +352,15 @@ Zero values mean "use default"; accessors apply defaults so callers never branch
 | `backup_keep` | `3` | local db backups retained |
 | `log_max_size` | `5MB` | daemon.log rotation threshold; `"0"` = unbounded append |
 | `log_keep` | `1` | rotated daemon.log segments kept |
-| `log_silent` | `false` | suppress daemon logging entirely |
+| `log_silent` | `true` | suppress daemon logging entirely (no `daemon.log`); set `false` to log for debugging |
+
+Defaults are applied the plain-Go way: `config.Load` starts from `config.Defaults()`
+and `json.Unmarshal`s the file over it, so an omitted key keeps its default and an
+explicit value — including `false` or `0` — overrides it. Booleans that default to
+`true` (`auto_deepen`, `enter_executes`, `log_silent`) are written without
+`omitempty` so an explicit `false` round-trips; there are no `*bool` "was it set?"
+fields. String-backed durations/sizes are stored verbatim and parsed by typed
+accessors that fall back to the default on a malformed value.
 
 Server-side settings are env vars, not config.json: `$YORE_TOKEN` /
 `$YORE_TOKEN_FILE`, `$YORE_TOKENS_FILE`, `$YORE_BACKUP_INTERVAL`,

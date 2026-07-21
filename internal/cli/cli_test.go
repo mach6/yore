@@ -9,9 +9,6 @@ import (
 	"yore/internal/rec"
 )
 
-// boolPtr is a tiny helper for setting *bool config fields in table rows.
-func boolPtr(b bool) *bool { return &b }
-
 // TestFilterDecision covers the keep/drop gate mirrored from runRecord.
 func TestFilterDecision(t *testing.T) {
 	tests := []struct {
@@ -51,7 +48,7 @@ func TestFilterDecision(t *testing.T) {
 		},
 		{
 			name: "space-prefixed kept when RecordSpacePrefixed=true",
-			cfg:  config.Config{RecordSpacePrefixed: boolPtr(true)},
+			cfg:  config.Config{RecordSpacePrefixed: true},
 			cmd:  " ls -la",
 			cwd:  "/home/user/project",
 			keep: true,

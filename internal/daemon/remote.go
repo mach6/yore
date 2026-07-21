@@ -262,7 +262,7 @@ func cloneCursors(m map[string]uint64) map[string]uint64 {
 // enabled. A single goroutine, so syncOnce never overlaps itself.
 func (s *server) syncLoop() {
 	defer s.wg.Done()
-	cfg, _ := config.Load(s.dir) // zero Config on error -> accessor defaults
+	cfg, _ := config.Load(s.dir) // Defaults() on error, never an empty Config
 	interval := cfg.SyncIntervalD()
 	pushDebounce := cfg.PushDebounceD() // 0 = experimental push-on-record disabled
 

@@ -34,8 +34,16 @@ func ConfigPath(dir string) string { return filepath.Join(dir, "config.json") }
 func RedactPath(dir string) string { return filepath.Join(dir, "redact.yml") }
 func BackupDir(dir string) string  { return filepath.Join(dir, "backups") }
 
-// Config is ~/.config/yore/config.json. Zero values mean "use default";
-// accessor methods apply defaults so callers never branch.
+// Config is ~/.config/yore/config.json.
+//
+// Defaults come from Defaults(), which Load() seeds *before* unmarshalling the
+// file over it — so an absent key keeps its default and an explicit value
+// (including false / 0) overrides it, using encoding/json's own semantics rather
+// than any *bool "was it set?" bookkeeping. Booleans therefore carry their
+// effective value directly (no accessor indirection). Duration and size settings
+// are stored as human strings ("24h", "5MB") and resolved by the typed accessors
+// below (KeyEpochD, LogMaxBytes, …), which also fall back to the default if the
+// stored value is malformed.
 type Config struct {
 	ServerURL string `json:"server_url,omitempty"`
 	Token     string `json:"token,omitempty"`
@@ -55,18 +63,23 @@ type Config struct {
 	// pushes. (Note: an agent that fires commands in bursts will push at up to one
 	// cycle per PushDebounce for the whole run — that's why it's opt-in.)
 	PushDebounce string `json:"push_debounce,omitempty"` // EXPERIMENTAL; default off
-	AutoDeepen   *bool  `json:"auto_deepen,omitempty"`   // default true
 
-	// EnterExecutes controls the Ctrl-R search widget: when true/unset, accepting
-	// a result with Enter runs it immediately (Atuin parity); set false to insert
-	// it into the prompt for review instead. Read directly by the emitted shell
-	// integration; see internal/shell/assets.
-	EnterExecutes *bool `json:"enter_executes,omitempty"` // default true
+	// AutoDeepen lets a shallow (local) search that finds little transparently
+	// extend to all hosts when the server is reachable. Defaults true — so it has
+	// no omitempty: an explicit false must survive a Save/Load round-trip.
+	AutoDeepen bool `json:"auto_deepen"` // default true
 
-	// BindUpArrow, when true, also binds the Up arrow to the search TUI (in
-	// addition to Ctrl-R), Atuin-style. Off by default because it changes a
-	// very muscle-memoried key. Read by the emitted shell integration.
-	BindUpArrow *bool `json:"bind_up_arrow,omitempty"` // default false
+	// EnterExecutes controls the Ctrl-R search widget: when true, accepting a
+	// result with Enter runs it immediately (Atuin parity); false inserts it into
+	// the prompt for review instead. Read directly by the emitted shell
+	// integration, which greps this key at runtime (see internal/shell/assets), so
+	// an explicit false must be written to the file — hence no omitempty.
+	EnterExecutes bool `json:"enter_executes"` // default true
+
+	// BindUpArrow also binds the Up arrow to the search TUI (in addition to
+	// Ctrl-R), Atuin-style. Off by default because it changes a very
+	// muscle-memoried key. Read by the emitted shell integration.
+	BindUpArrow bool `json:"bind_up_arrow,omitempty"` // default false
 
 	// Keymap selects the interactive key style for the TUIs (Atuin keymap_mode
 	// parity): "emacs" (default, also the empty value) or "vim". Vim mode adds
@@ -91,7 +104,7 @@ type Config struct {
 	// recording (histignorespace convention) unless RecordSpacePrefixed=true.
 	IgnorePatterns      []string `json:"ignore_patterns,omitempty"`
 	IgnoreDirs          []string `json:"ignore_dirs,omitempty"`
-	RecordSpacePrefixed *bool    `json:"record_space_prefixed,omitempty"` // default false
+	RecordSpacePrefixed bool     `json:"record_space_prefixed,omitempty"` // default false
 
 	// Rolling local-db backup. The daemon writes a consistent snapshot of
 	// data.db into BackupDir on BackupInterval, keeping the newest BackupKeep.
@@ -101,21 +114,27 @@ type Config struct {
 	// daemon.log size cap. When LogMaxSize > 0 the log rotates once it would
 	// exceed that many bytes, keeping LogKeep old segments; "0" disables
 	// rotation (plain unbounded append). LogSilent suppresses the log entirely
-	// (no file is created and logging is a no-op).
+	// (no file is created and logging is a no-op) — the default; set it false to
+	// write a rotating daemon.log for debugging. Defaults true, so no omitempty:
+	// an explicit false must round-trip.
 	LogMaxSize string `json:"log_max_size,omitempty"` // default "5MB"; "0" disables rotation
 	LogKeep    int    `json:"log_keep,omitempty"`     // default 1
-	LogSilent  *bool  `json:"log_silent,omitempty"`   // default false
+	LogSilent  bool   `json:"log_silent"`             // default true (no daemon.log)
 }
 
-// RecordSpacePrefixedOn reports whether space-prefixed commands are recorded.
-func (c Config) RecordSpacePrefixedOn() bool {
-	return c.RecordSpacePrefixed != nil && *c.RecordSpacePrefixed
-}
-
-// EnterExecutesOn reports whether accepting a Ctrl-R result runs it immediately
-// (Atuin parity) rather than inserting it into the prompt for review.
-func (c Config) EnterExecutesOn() bool {
-	return c.EnterExecutes == nil || *c.EnterExecutes
+// Defaults returns the configuration used when config.json is absent. Load()
+// seeds this before unmarshalling the file over it, so every setting the user
+// does not mention keeps the value here. Booleans whose default is true are the
+// reason this exists — encoding/json cannot distinguish "absent" from "false"
+// once seeded, which is exactly the behavior we want: absent → default, present
+// → override. String/int settings left at their zero value here are defaulted by
+// their typed accessors instead (single source of truth for those).
+func Defaults() Config {
+	return Config{
+		AutoDeepen:    true,
+		EnterExecutes: true,
+		LogSilent:     true,
+	}
 }
 
 // KeymapVim reports whether the vim keymap is selected (Atuin keymap_mode=vim
@@ -141,8 +160,6 @@ func (c Config) SyncIntervalD() time.Duration { return durOr(c.SyncInterval, 5*t
 // coalescing bursts. Empty/"0"/invalid all resolve to 0 (disabled), so only the
 // periodic SyncInterval tick pushes.
 func (c Config) PushDebounceD() time.Duration { return durOr(c.PushDebounce, 0) }
-func (c Config) AutoDeepenOn() bool           { return c.AutoDeepen == nil || *c.AutoDeepen }
-func (c Config) BindUpArrowOn() bool          { return c.BindUpArrow != nil && *c.BindUpArrow }
 
 // BackupIntervalD is how often the daemon writes a db backup; an explicit "0"
 // disables backups. Default 1h. (durOr treats "0" as "use default", so the
@@ -174,9 +191,6 @@ func (c Config) LogKeepN() int {
 	}
 	return 1
 }
-
-// LogSilentOn reports whether daemon logging is suppressed entirely.
-func (c Config) LogSilentOn() bool { return c.LogSilent != nil && *c.LogSilent }
 
 func durOr(s string, def time.Duration) time.Duration {
 	if d, err := time.ParseDuration(s); err == nil && d > 0 {
@@ -213,18 +227,23 @@ func parseSize(s string, def int64) int64 {
 	return n * mult
 }
 
-// Load reads config.json from dir; a missing file yields the zero Config.
+// Load reads config.json from dir over a Defaults() base: a missing file yields
+// Defaults(); a present file overrides only the keys it names. A read or parse
+// error returns Defaults() (plus the error) so callers that ignore it still get
+// a usable configuration rather than an empty one.
 func Load(dir string) (Config, error) {
-	var c Config
+	c := Defaults()
 	b, err := os.ReadFile(ConfigPath(dir))
 	if errors.Is(err, fs.ErrNotExist) {
 		return c, nil
 	}
 	if err != nil {
-		return c, err
+		return Defaults(), err
 	}
-	err = json.Unmarshal(b, &c)
-	return c, err
+	if err := json.Unmarshal(b, &c); err != nil {
+		return Defaults(), err
+	}
+	return c, nil
 }
 
 // Save writes config.json (0600).

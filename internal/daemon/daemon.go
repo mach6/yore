@@ -104,7 +104,7 @@ func Run(dir string, opts Options) error {
 	// Load config once: idle timeout, logging, and backups all read from it.
 	cfg, cerr := config.Load(dir)
 	if cerr != nil {
-		cfg = config.Config{} // accessors supply defaults; a bad file never blocks startup
+		cfg = config.Defaults() // a bad file never blocks startup
 	}
 
 	idle := opts.IdleTimeout
@@ -640,15 +640,15 @@ func (s *server) logf(format string, args ...any) {
 }
 
 // openLog prepares $YORE_DIR/daemon.log. Three modes, driven by config:
-//   - LogSilentOn: no file is created and a nil logger is returned, so s.logf
-//     is a no-op (and the returned closer is nil).
+//   - LogSilent (the default): no file is created and a nil logger is returned,
+//     so s.logf is a no-op (and the returned closer is nil).
 //   - LogMaxBytes > 0: a size-capped rotating writer keeps the log bounded.
 //   - otherwise: a plain 0600 append file (unbounded).
 //
 // A failure to open is non-fatal: the daemon runs without logging rather than
 // refusing to start. The returned io.Closer is closed on shutdown (nil-safe).
 func openLog(dir string, cfg config.Config) (io.Closer, *log.Logger) {
-	if cfg.LogSilentOn() {
+	if cfg.LogSilent {
 		return nil, nil
 	}
 	path := filepath.Join(dir, "daemon.log")
