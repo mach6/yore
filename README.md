@@ -1,52 +1,92 @@
 # yore
 
-**Your shell history — every machine, encrypted, searchable, fast.**
+**Your shell history — every machine, end-to-end encrypted, searchable, fast.**
 
-`yore` records every command you run (zsh and bash), keeps it in a rich TUI you
-reach with `Ctrl-R` or the `hb`/`hs` aliases, and — when you point it at a sync
-server you host — makes all of your machines' history available everywhere,
-end-to-end encrypted so the server never sees a single command in the clear.
-
-One static Go binary is the client, the background daemon, the TUI, the
-importer, **and** the sync server. No agents, no runtime deps, CGO-free.
+<!-- demo: paste the asciinema embed here, e.g.
+[![asciicast](https://asciinema.org/a/REPLACE.svg)](https://asciinema.org/a/REPLACE) -->
+<!-- (repo stays binary-free per house rules; a committed GIF works too) -->
 
 ---
 
-## Why another shell-history tool?
+`yore` records every command you run (zsh and bash), keeps this machine's history
+in a fast local store, and — pointed at a sync server you host — makes all of
+your machines' history searchable everywhere. It is **end-to-end encrypted**: the
+server only ever holds ciphertext and can never read a single command.
 
-`yore` exists for a specific threat model that Atuin and hiSHtory don't serve:
+It's for anyone who lives across several machines and wants one searchable
+history — without trusting a server, a proxy, or a copied master key with the
+plaintext of everything they've ever typed. Reach it with `Ctrl-R`, the `hb`/`hs`
+aliases, or the CLI. One static, CGO-free Go binary is the client, the background
+daemon, the TUIs, the importer, **and** the sync server. No agents, no runtime
+dependencies.
 
-- **The server never holds plaintext.** History is sealed client-side. The
-  server stores ciphertext blobs and device public keys — nothing it can read.
-- **No master key to copy between machines.** Each device has its own keypair.
-  A shared *History Key* is distributed **wrapped** per-device; enrolling a new
-  machine is a one-time approval from an existing one, and revoking a machine
-  takes effect without re-encrypting a single record.
-- **Your other machines' history never touches this machine's disk.** The local
-  database holds only *this* host's commands. Remote history is fetched into the
-  daemon's RAM on demand and never persisted.
-- **Nothing scattered across your home directory.** Everything lives under one
-  directory: `~/.config/yore/`.
-- **Built for years of history.** Every hot path — search, decrypt, enrolling a
-  device — is O(1) in how much history you've accumulated. It doesn't rot as the
-  archive grows.
-- **One source of truth.** By default yore *replaces* your shell's native
-  history: no second, unredacted `~/.zsh_history` on disk, and `!N` still works —
-  against yore's redacted history. (Atuin leaves native history recording
-  alongside its own store.)
+## Why yore
+
+yore is built for a specific threat model that most history tools don't serve:
+
+- **The server never holds plaintext.** History is sealed client-side; the server
+  stores ciphertext blobs and device public keys — nothing it can read.
+- **No master key to copy between machines.** Each device has its own keypair. The
+  shared *History Key* is distributed **wrapped** per-device; enrolling a machine
+  is a one-time approval from an existing one, and revoking a machine takes effect
+  **without re-encrypting a single record**.
+- **Per-device revocation.** Lose a laptop and revoke just that device; everything
+  else keeps working.
+- **Your other machines' history never touches this disk.** The local database
+  holds only *this* host's commands. Remote history is fetched into the daemon's
+  RAM on demand and never persisted.
+- **Secrets never get recorded — and never sync.** A default-on, editable
+  redaction gate drops commands that carry credentials before they're ever
+  written, so they can't leak into your store or up to your server.
 - **A captured token can't tamper.** Every mutating sync request is signed with
-  the device's key, so a leaked bearer token (e.g. from a TLS-inspecting
-  corporate proxy) can't push garbage or revoke your devices — only the device's
-  own private key can.
+  the device's private key, so a leaked bearer token (e.g. from a TLS-inspecting
+  corporate proxy) can't push garbage or revoke your devices.
+- **One source of truth.** By default yore *replaces* your shell's native history:
+  no second, unredacted `~/.zsh_history` on disk — and `!N` / `!!` / Up still
+  work, against yore's redacted history.
+- **Built to last years.** Every hot path — search, decrypt, enroll, revoke — is
+  O(1) in how much history you've accumulated. Nothing rots as the archive grows.
 
-If you don't need those properties, Atuin is excellent and more mature. If you
-do, that's exactly what `yore` is for.
+Everything lives under one directory (`~/.config/yore/`); uninstall is one
+`rm -rf`.
 
----
+## How it compares
 
-## Install
+Honest note up front: **[Atuin](https://atuin.sh) is more mature and a great
+choice** if you don't need yore's specific model. yore's differentiator is the
+cryptography and data-locality story below — E2E where the server can't read your
+history, per-device keys with no shared master key, per-device revocation, and
+keeping other machines' history off this disk.
 
-Requires Go 1.26+.
+| | **yore** | **Atuin** | **hiSHtory** | **mcfly** | **plain history** |
+|---|---|---|---|---|---|
+| Sync across machines | Yes | Yes | Yes | No | No |
+| E2E (server can't read history) | Yes | Yes | Yes | n/a | n/a |
+| No shared master key (per-device keys) | Yes | No — one key you copy | No — one secret you copy | n/a | n/a |
+| Per-device revocation | Yes | No | No | n/a | n/a |
+| Other hosts' history never stored locally | Yes | No — replicated to each | No — replicated to each | n/a | n/a |
+| Secrets redaction | Yes (default-on) | Opt-in filter | — | No | No |
+| …and it gates sync | Yes | — | — | n/a | n/a |
+| Per-device request signing | Yes | No | No | n/a | n/a |
+| Self-hostable server | Yes | Yes | Yes | No | No |
+| Multi-tenant server | Yes | Yes (multi-user) | Yes (multi-user) | n/a | n/a |
+| Cross-shell (zsh + bash) | Yes | Yes | Yes | Yes | Yes |
+| Rich interactive TUI | Yes | Yes | Yes | Yes | No (basic `Ctrl-R`) |
+| Agent/executor tagging | Yes | No | No | No | No |
+| Single static binary | Yes | Yes | Yes | Yes | n/a |
+
+Cells marked `—` are left blank rather than guessed: a capability that isn't a
+well-established fact of that tool's current behavior. Notably, Atuin and
+hiSHtory both do E2E sync, but with a **single key/secret you copy to each
+machine** (no per-device keys or revocation) and **replicate the full history to
+every machine's local database**. mcfly is **local-only** — no sync, no server,
+no encryption. Plain shell history is a **plaintext** file with no sync.
+
+## Quickstart
+
+### 1. Install
+
+Requires **Go 1.26+**.
 
 ```bash
 git clone <your-fork> && cd yore
@@ -54,19 +94,16 @@ make build          # -> ./bin/yore
 sudo install -m755 bin/yore /usr/local/bin/yore
 ```
 
-Cross-compiled binaries for all supported platforms:
+Cross-compiled binaries for every supported platform:
 
 ```bash
 make release        # -> dist/yore-{linux,darwin,freebsd}-{amd64,arm64}
 ```
 
 Supported: **Linux** (amd64/arm64, includes WSL), **macOS** (Intel/Apple
-Silicon), **FreeBSD** (amd64). Native Windows and PowerShell are on the roadmap,
-not yet supported.
+Silicon), **FreeBSD** (amd64). Native Windows/PowerShell is not yet supported.
 
----
-
-## Shell setup
+### 2. Shell setup
 
 Add one line to your shell rc file:
 
@@ -78,135 +115,226 @@ eval "$(yore init zsh)"
 eval "$(yore init bash)"
 ```
 
-Both install **capture hooks** (recording each command with its exit code,
-duration, working directory, host, and session — a single backgrounded write,
-so effectively zero prompt latency) and, depending on the **integration mode**,
-rebind your history keys.
+Source it **after** your own `HISTFILE`/`SAVEHIST` settings so yore wins. This
+installs the capture hooks and, depending on the integration mode, rebinds your
+history keys and adds the `hb`/`hs` aliases. That's the whole single-machine
+setup — you have a fast, redacted, searchable local history now.
 
-### Integration modes
+### 3. (Optional) Sync across machines
 
-Pick a mode at `yore setup` (`--integration`), or `yore init --mode <mode>`; it
-is stored in `config.integration` (default **takeover**):
-
-- **takeover** (default) — *yore is the single source of truth.* Your shell's
-  own persistent history is turned off (no unredacted `~/.zsh_history` on disk),
-  its in-memory list is seeded from yore, and new commands are gated through
-  yore's redaction. So **`!N`, `!!`, and Up work against yore's history, and it's
-  secret-free**. `Ctrl-R` and Up open the search TUI; `hb` (browse) / `hs` are added.
-- **coexist** — record *alongside* your untouched native history. `Ctrl-R` is
-  rebound to yore and `hb`/`hs` are added; native `!N` keeps working against
-  native history. (This is how Atuin behaves by default.)
-- **capture** — record only; no keybinding or alias changes.
-
-zsh gets the exact takeover experience via `zshaddhistory`; bash's history hooks
-are coarser, so its in-memory gate is best-effort. Source `yore init` **after**
-your own `HISTFILE`/`SAVEHIST` settings so takeover wins.
-
-### The keys
-
-- **`Ctrl-R`** → the inline search TUI, seeded with whatever you'd started typing;
-  the command you pick runs immediately on Enter (set `enter_executes: false` to
-  insert it at your prompt for review instead).
-- **Up arrow** → yore search (takeover), or native scroll (coexist, unless you
-  set `bind_up_arrow`).
-- **`!N` / `!!` / `!$`** → native shell history expansion — still works, against
-  yore's history in takeover and native history in coexist.
-- **`hb`** → the full-screen browser; the command you pick is dropped onto your
-  next prompt to edit (zsh) — `Enter` inserts it, `y` copies it to the clipboard.
-  (yore does **not** touch `h`, so your own `h` — e.g. `h=history` — is left alone.)
-  **`hs <query>`** → CLI search (plain matching lines when piped, e.g. `hs docker
-  | grep build`). Scoped siblings: **`hsa`** (all hosts), **`hss`** (this
-  session), **`hsc`** (this cwd), and **`hsw`** (this git repo). Omit them all
-  with `yore init zsh --no-aliases`.
-
-### Shell completions
-
-The CLI is built with cobra, so it ships completions for every command, flag, and
-even dynamic values (device ids, hostnames). Install them once:
+Sync is opt-in and needs a server you host. In short:
 
 ```bash
-# zsh — write to a directory on your $fpath, e.g.
-yore completion zsh > "${fpath[1]}/_yore"
+# on a server your machines can reach (same binary; stores only ciphertext)
+openssl rand -base64 32 | docker secret create yore_token -
+docker build -f docker/Dockerfile -t yore:latest .
+docker stack deploy -c docker/swarm/stack.yml yore
 
-# bash
-yore completion bash | sudo tee /etc/bash_completion.d/yore >/dev/null
+# on your first machine
+yore setup          # server URL + token + integration mode; bootstraps keys
 
-# fish
-yore completion fish > ~/.config/fish/completions/yore.fish
+# on each additional machine
+yore setup                        # registers it as PENDING, prints a code
+# …then, on an already-enrolled machine:
+yore devices approve <id>         # confirm the code, approve — it syncs from here
 ```
 
-`yore completion --help` prints per-shell instructions. Completions cover flag
-values (`--scope`, `--sort`, `--format`), shell names for `init`, and live
-device ids for `yore devices approve|revoke`.
+Full deployment, multi-tenant, and enrollment details are in
+[Multi-machine sync](#multi-machine-sync-optional) below.
 
-### What gets recorded
+## Features
 
-Everything except what looks sensitive. `yore` never records:
+### Capture & history
 
-- commands matching a **secrets** rule (AWS/GitHub/Slack tokens,
+- **Cross-shell capture** for **zsh** and **bash**, recording each command with
+  its exit code, duration, working directory, host, and session.
+- **Sub-1 ms prompt path.** The hook does one append to a crash-safe spool plus a
+  best-effort daemon poke — no database, network, or crypto on the prompt path.
+  Recording survives the daemon being down (the spool drains at next start).
+- **Integration modes** (`config.integration`, default **takeover**), chosen at
+  `yore setup --integration` or `yore init --mode`:
+  - **takeover** (default) — *yore is the single source of truth.* Your shell's
+    persistent history is turned off (no unredacted `~/.zsh_history` on disk), its
+    in-memory list is seeded from yore, and new commands are gated through yore's
+    redaction — so **`!N`, `!!`, `!$`, and Up work against yore's history, and
+    it's secret-free**. zsh gets this exactly via `zshaddhistory`; bash's in-memory
+    gate is coarser and best-effort.
+  - **coexist** — record *alongside* your untouched native history. `Ctrl-R` is
+    rebound to yore and `hb`/`hs` are added; native `!N` keeps working against
+    native history.
+  - **capture** — record only; no keybinding or alias changes.
+- **Import** existing history idempotently, with redaction applied so old
+  credentials never get dragged in:
+
+  ```bash
+  yore import auto                       # finds ~/.zsh_history, ~/.bash_history, …
+  yore import --format zsh ~/.zsh_history
+  ```
+
+  Re-run it as often as you like; only new entries land, and it reports how many
+  secret-bearing lines it skipped.
+
+### Search & TUI
+
+- **Inline `Ctrl-R` search** — a fast panel seeded with whatever you'd started
+  typing. The pick **runs immediately on Enter** by default (`enter_executes`;
+  set it `false` to insert at the prompt for review instead).
+  - **Scopes**: local (this host) / all hosts / host / session / cwd / workspace
+    (anywhere under the current git repo) — cycle scope right inside the search.
+  - **Ranking**: recency (default) or **frecency** (frequency × recency).
+  - **Matching**: substring (smart-case) or **fuzzy** (subsequence).
+  - **Syntax highlighting** of command rows, layered under match highlighting.
+- **Full-screen browser** (`hb`) with hosts / table / detail / stats / devices
+  panes, a **tag column** and `t` **tag filter**, and **`S` sync-now**. `Enter`
+  recalls the pick to your prompt to edit; `y` copies it to the clipboard; `D`
+  opens the devices pane.
+- **Aliases** (omit with `yore init … --no-aliases`):
+  - **`hb`** — the browser. (yore leaves `h` alone, so your own `h=history`
+    survives.)
+  - **`hs <query>`** — CLI search; prints plain matching lines when piped, e.g.
+    `hs docker | grep build`. Scoped siblings: **`hsa`** (all hosts), **`hss`**
+    (this session), **`hsc`** (this cwd), **`hsw`** (this git repo).
+- **Scriptable search**: `yore search --headless <query>` prints matching commands
+  as plain lines (with `--scope`, `--sort`, `--fuzzy`, `--tag`, `--limit`,
+  `--no-host`).
+- **Executor / agent tagging.** Each record is tagged with what ran it —
+  auto-detected agent environments (e.g. `CLAUDECODE`, Cursor, aider) or your own
+  `$YORE_TAG` / `--tag`. Filter with `yore search --tag claude-code` or the
+  browser's `t`, so you can separate "what I typed" from "what an agent ran".
+- **Shell completions** for **bash, zsh, and fish** via cobra — covering flag
+  values (`--scope`, `--sort`, `--format`), shell names, and live device ids for
+  `yore devices approve|revoke`:
+
+  ```bash
+  yore completion zsh  > "${fpath[1]}/_yore"
+  yore completion bash | sudo tee /etc/bash_completion.d/yore >/dev/null
+  yore completion fish > ~/.config/fish/completions/yore.fish
+  ```
+
+- **`vim` or `emacs` keymap** for the TUIs (`keymap` config).
+
+The background daemon auto-starts on first use and idles out when unused. It holds
+the searchable corpus in RAM (loaded from a warm snapshot for an instant first
+search) and does all filtering, so search stays instant into six figures of
+history.
+
+### Secrets redaction
+
+yore never records anything that looks sensitive. It drops:
+
+- commands matching a **secrets** rule — AWS/GitHub/Slack tokens,
   `--password`/credential flags, connection-string URLs with inline passwords,
-  PEM blocks, JWTs, `TOKEN=…`/`SECRET=…` assignments, …) or any regex you add;
+  PEM blocks, JWTs, `TOKEN=…`/`SECRET=…` assignments, and any regex you add;
 - commands you start with a leading space (the `histignorespace` convention);
 - commands run under a directory you list in `ignore_dirs`.
 
-The secrets rules live in **`~/.config/yore/redact.yml`** — a YAML file seeded
-from the built-ins on `yore setup` and yours to edit: tweak a pattern, drop a
-rule you don't want, or add your own. Each rule is a `name`, a Go `pattern`
-(regexp), optional literal `hints` (a fast pre-filter), and an optional `fold`
-flag (case-insensitive hint match). It is **fail-safe**: if the file is missing,
-unreadable, unparseable, or left with no patterns, `yore` falls back to the
-compiled-in built-ins, so a typo can never silently switch redaction off (a
-single invalid pattern is skipped; the rest keep working). `yore doctor` reports
-which rules loaded and whether it fell back.
+The rules live in an editable **`~/.config/yore/redact.yml`**, seeded from the
+built-ins on `yore setup` and yours to tune. Each rule is a `name`, a Go
+`pattern` (regexp), optional literal `hints` (a fast pre-filter), and an optional
+`fold` flag (case-insensitive hints):
 
-The same filter runs on **import**, so bulk-loading years of `~/.zsh_history`
-won't drag old credentials into the store (or, later, to your server).
-
----
-
-## Import your existing history
-
-```bash
-yore import auto                       # finds ~/.zsh_history, ~/.bash_history, …
-yore import --format zsh ~/.zsh_history
+```yaml
+rules:
+  - name: my-internal-secret
+    pattern: "my-internal-secret-[a-z0-9]+"
+    hints:
+      - my-internal-secret
+    fold: false
 ```
 
-Import is idempotent — run it as many times as you like; only new entries land.
-It reports how many secret-bearing lines it skipped.
+It is **fail-safe**: if the file is missing, unreadable, unparseable, or left
+with no patterns, yore falls back to the compiled-in built-ins — a typo can never
+silently switch redaction off (one invalid pattern is skipped; the rest keep
+working). The **same gate runs on live capture, on import, and on the
+shell-history seed**, so secrets never reach your store or your server. `yore
+doctor` reports which rules loaded and whether it fell back.
 
----
+### Security & encryption
+
+- **Per-device keypairs.** Each device holds an X25519 (encryption) and Ed25519
+  (signing) keypair; the private halves never leave the machine.
+- **One wrapped History Key.** A single 32-byte symmetric History Key exists only
+  as blobs **wrapped to each enrolled device's public key** — there is no master
+  key to copy around.
+- **Auto-rotating epoch data keys**, each wrapped once under the History Key;
+  every record is sealed (XChaCha20-Poly1305) with its epoch's key.
+- **Enrollment & revocation.** Approving a new device is one key-wrap from an
+  existing device; revoking rotates the keys (re-wrapping for surviving devices)
+  **without re-encrypting a single record**, so cost is independent of history
+  size.
+- **Tamper-evident.** Every sealed record is bound by authenticated data to its
+  exact position (`recordID|hostID|seq|keyID`), so a compromised server can't
+  reorder, replay, or substitute blobs undetected.
+- **Per-device request signing.** On top of the bearer token, every *mutating*
+  request is signed with the device's Ed25519 key (with a nonce + timestamp
+  anti-replay), so a captured token can't push or revoke — useful against
+  TLS-inspecting proxies, which see ciphertext and the token but no private key.
+- **Optional TLS cert pinning** (`yore setup --pin`) — fail-closed against
+  interception.
+- Local database and device key file are `0600`. Treat full disk access to a
+  machine as access to that machine's readable history — the same as
+  `~/.zsh_history` today.
+
+Full crypto and endpoint details are in [`docs/protocol.md`](docs/protocol.md).
+
+### Sync & server
+
+- **Eventual-consistency sync**: append-only per-host streams with
+  client-assigned sequence numbers; merge is a set-union by record ULID; deletes
+  are tombstones — conflict-free by construction. The client pushes above a
+  watermark and pulls other hosts' streams via delta cursors.
+- **Remote history lives only in daemon RAM** — fetched and decrypted on demand,
+  **never written to this machine's disk**, re-pulled per daemon lifetime.
+- **Sync cadence**: a background loop (`sync_interval`, default `5m`), plus **`S`
+  sync-now** in the browser and `yore sync` on the CLI. An experimental,
+  opt-in `push_debounce` coalesces a push shortly after recording.
+- **Shallow vs deep search**: local-host results are always instant and
+  offline-safe; all-hosts results are pulled into RAM, decrypted, and cached for
+  the daemon's lifetime — fetched lazily when you widen scope. Offline, deep scope
+  simply reports remote is unavailable; nothing breaks.
+- **Multi-tenant server**: one server can host several isolated tenants — each its
+  own devices, keys, and history in a **separate database file**, selected by
+  which bearer token a request matches (`$YORE_TOKENS_FILE`). The client and wire
+  protocol are unchanged.
+- **Backups & logs**: rolling local-db snapshots (`backup_*` config) and a
+  bounded, silenceable daemon log (`log_*` config); the server writes rolling
+  per-tenant snapshots too.
+
+### Portability & ops
+
+- **One CGO-free static binary** for client, daemon, TUIs, importer, and server.
+- **Cross-platform**: linux/macOS/FreeBSD on amd64/arm64 (WSL runs the linux
+  builds).
+- **O(1)-in-history-age hot paths** — search, decrypt, enroll, and revoke don't
+  degrade as years of history accumulate.
+- **Diagnostics**: `yore doctor` (environment + which redaction rules loaded) and
+  `yore status` (daemon + store + sync). Stop things with `yore stop` /
+  `yore server stop`.
 
 ## Everyday use
 
 | You want to… | Do this |
 |---|---|
-| Search and recall a command | `Ctrl-R` (or Up, in takeover), type, `Enter` to insert |
-| Re-run an event by number | `!N`, `!!`, `!$` — native, works against yore's history |
+| Search and recall a command | `Ctrl-R` (or Up, in takeover), type, `Enter` |
+| Re-run an event by number | `!N`, `!!`, `!$` — native, against yore's history |
 | Cycle search scope (host / all / session / dir / repo) | `Ctrl-R` again inside the search |
-| Rank by frequency×recency, or fuzzy match | `Alt-f` / `Alt-z` inside the search |
-| Browse, filter, inspect, get stats, manage devices | `hb` — `Enter` recalls the pick to your prompt, `y` copies it (then `D` for devices) |
+| Rank by frequency×recency, or fuzzy-match | frecency / fuzzy toggles inside the search |
+| Browse, filter, inspect, get stats, manage devices | `hb` — `Enter` recalls, `y` copies, `D` for devices |
 | See only what an agent ran | `yore search --tag claude-code` |
 | Grep history in a script | `hs <query>` \| … or `yore search --headless <query>` |
 | See daemon / sync status, or diagnose | `yore status` / `yore doctor` |
-| Stop the background daemon / server | `yore stop` / `yore server stop` |
-
-The background daemon starts itself on first use and idles out when unused. It
-holds the searchable corpus in RAM (loaded from a warm snapshot for an instant
-first search) and does all filtering, so search stays instant into six figures
-of history.
-
----
+| Force a sync now | `yore sync` (or `S` in `hb`) |
+| Stop the daemon / server | `yore stop` / `yore server stop` |
 
 ## Multi-machine sync (optional)
 
 ### 1. Run the server
 
-The server is the same binary. It stores only ciphertext. Deploy it wherever
-your machines can reach it (it's built for a Docker Swarm; TLS terminates at
-your existing reverse proxy).
+The server is the same binary and stores only ciphertext. Deploy it wherever your
+machines can reach it (built for a Docker Swarm; TLS terminates at your existing
+reverse proxy).
 
 ```bash
-# create the auth token secret
 openssl rand -base64 32 | docker secret create yore_token -
 docker build -f docker/Dockerfile -t yore:latest .
 docker stack deploy -c docker/swarm/stack.yml yore
@@ -219,10 +347,10 @@ containers) see [`docker/sandbox/`](docker/sandbox/).
 
 #### Multiple tenants (optional)
 
-One server can host several **isolated tenants** — each its own group of
-machines with their own devices, keys, and history in a **separate database
-file**. The client and wire protocol are unchanged: a machine still just sends
-its bearer token, and the server routes by which token it matches.
+One server can host several **isolated tenants** — each its own group of machines
+with their own devices, keys, and history in a **separate database file**. The
+client and wire protocol are unchanged: a machine sends its bearer token, and the
+server routes by which token it matches.
 
 - `$YORE_TOKEN` / `$YORE_TOKEN_FILE` is the **default** tenant (its db is `--db`,
   e.g. `/data/yore.db`) — a single-token server behaves exactly as before.
@@ -230,9 +358,9 @@ its bearer token, and the server routes by which token it matches.
   (`name → token`); each shards to `<dir(--db)>/tenants/<name>.db`. Names are
   restricted to `[A-Za-z0-9_-]+`, and `default` is reserved.
 
-```json
-{ "alice": "<token>", "bob": "<token>" }
-```
+  ```json
+  { "alice": "<token>", "bob": "<token>" }
+  ```
 
 Generate a token per tenant the same way (`openssl rand -base64 32`). A tenant
 never sees another tenant's data.
@@ -242,10 +370,9 @@ never sees another tenant's data.
 The server writes rolling per-tenant snapshots to
 `<dir(--db)>/backups/<tenant>/data-<unixMillis>.db` (atomic; safe to copy):
 
-- `$YORE_BACKUP_INTERVAL` — a Go duration between snapshots (default `1h`; set
-  `0` to disable).
-- `$YORE_BACKUP_KEEP` — how many snapshots to retain per tenant, newest first
-  (default `3`).
+- `$YORE_BACKUP_INTERVAL` — Go duration between snapshots (default `1h`; `0`
+  disables).
+- `$YORE_BACKUP_KEEP` — snapshots retained per tenant, newest first (default `3`).
 
 ### 2. Enroll your first machine
 
@@ -255,14 +382,16 @@ yore setup            # asks for the server URL + token and your integration
                       # the History Key. Add --pin to pin the server's TLS cert.
 ```
 
+If the server is unreachable or rejects the token, nothing is saved.
+
 ### 3. Enroll another machine
 
 ```bash
 # on the new machine
-yore setup            # registers it as PENDING and prints a verification code
+yore setup                    # registers it as PENDING, prints a verification code
 
 # on a machine that's already enrolled
-yore devices          # shows the pending device + its code
+yore devices                  # shows the pending device + its code
 yore devices approve <id>     # confirm the code matches, then approve
 ```
 
@@ -270,40 +399,8 @@ After approval the new machine syncs automatically. To remove a machine:
 
 ```bash
 yore devices revoke <id>      # revokes and rotates keys; old records are NOT
-                              # re-encrypted, the revoked machine just loses access
+                              # re-encrypted — the revoked machine just loses access
 ```
-
-### How search uses remote data
-
-- **Shallow** (local host) results are always instant and work offline.
-- **Deep** (all hosts) results are pulled from the server into the daemon's RAM,
-  decrypted, and cached for the daemon's lifetime — fetched lazily when you
-  widen the scope or when a shallow search comes up thin. Offline, deep scope
-  simply reports that remote is unavailable; nothing breaks.
-
----
-
-## Security model in one paragraph
-
-Each device holds an X25519 keypair; the private key never leaves it. One 32-byte
-symmetric **History Key** exists only as blobs wrapped to each enrolled device's
-public key. History records are sealed with rotating per-device **epoch keys**,
-each wrapped once under the History Key. Reading is a single asymmetric unwrap
-(then everything is symmetric and sub-microsecond); enrolling a device is one
-wrap; revoking is a key re-wrap — **records are never re-encrypted**, so cost is
-independent of how much history you keep. Every sealed record is bound by
-authenticated data to its exact position in its host's stream, so a compromised
-server can't reorder, replay, or substitute blobs. On top of the bearer token,
-every *mutating* request is **signed with the device's Ed25519 key** (with a
-nonce + timestamp anti-replay), so a captured token can't push or revoke —
-useful against TLS-inspecting proxies, which see ciphertext + the token but not
-any private key. `yore setup --pin` additionally pins the server's TLS
-certificate (fail-closed against interception). The local database and the
-device key file are `0600`; treat full disk access to any one machine as access
-to that machine's readable history, the same as `~/.zsh_history` today. Full
-endpoint and crypto details are in [`docs/protocol.md`](docs/protocol.md).
-
----
 
 ## Configuration
 
@@ -333,24 +430,27 @@ endpoint and crypto details are in [`docs/protocol.md`](docs/protocol.md).
 }
 ```
 
-- `integration` — `takeover` (default) / `coexist` / `capture` (see Shell setup).
+- `integration` — `takeover` (default) / `coexist` / `capture`.
 - `server_pin` — base64 SHA-256 of the server's TLS cert; set by `setup --pin`.
 - `keymap` — `emacs` (default) or `vim` for the TUIs.
-- `enter_executes` — run the picked command on Enter (default); set `false` to
-  insert it at the prompt for review instead.
+- `enter_executes` — run the picked command on Enter (default); `false` inserts it
+  at the prompt for review.
 - `bind_up_arrow` — in coexist mode, also bind Up to search.
-- `backup_interval` — how often the daemon writes a consistent `data.db`
-  snapshot into `~/.config/yore/backups/` (default `1h`; `"0"` disables).
-- `backup_keep` — how many backups to retain, newest first (default `3`).
-- `log_max_size` — cap `daemon.log` at this size, rotating when exceeded
-  (`5MB` default; accepts `KB`/`MB`/`GB` or a plain byte count; `"0"` disables
-  rotation → plain unbounded append).
-- `log_keep` — how many rotated `daemon.log.N` segments to keep (default `1`).
-- `log_silent` — suppress `daemon.log` entirely (no file is written).
+- `key_epoch` — how often a new epoch data key is minted (default `24h`).
+- `daemon_idle` — idle timeout before the daemon exits (default `30m`).
+- `sync_interval` — background push/pull cadence (default `5m`).
+- `push_debounce` — experimental; a duration enables a coalesced push shortly
+  after recording (default off).
+- `backup_interval` / `backup_keep` — local `data.db` snapshot cadence and
+  retention (`1h`, `3`; `"0"` disables).
+- `log_max_size` / `log_keep` / `log_silent` — cap and rotate `daemon.log`
+  (`5MB`, `1`; `"0"` size = unbounded; `log_silent` writes no file).
+- `ignore_patterns` / `ignore_dirs` — extra never-record regexes and directories.
+- `record_space_prefixed` — record even leading-space commands.
 
-The auth token may also come from `$YORE_TOKEN` or `$YORE_TOKEN_FILE` (the
-server reads `$YORE_TOKEN_FILE` for Swarm secrets). Override the whole state
-directory with `$YORE_DIR`.
+The auth token may also come from `$YORE_TOKEN` or `$YORE_TOKEN_FILE` (the server
+reads `$YORE_TOKEN_FILE` for Swarm secrets). Override the whole state directory
+with `$YORE_DIR`.
 
 ### Footprint
 
@@ -369,22 +469,14 @@ directory with `$YORE_DIR`.
 
 Uninstall = remove that directory.
 
----
+## Docs & contributing
 
-## Development
+- [`docs/architecture.md`](docs/architecture.md) — the design: data flow,
+  packages, daemon socket protocol, search model, key hierarchy, invariants.
+- [`docs/protocol.md`](docs/protocol.md) — the full sync HTTP/JSON API.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — build, test, the CI gates, and
+  conventions.
+- [`LICENSE`](LICENSE) — MIT.
 
-```bash
-make test           # unit + integration tests (testify; go test ./...)
-make vet
-make bench          # store/matcher/crypto benchmarks
-```
-
-The codebase is a micro-package layout under `internal/`: `rec`/`proto`/`wire`
-(shared contracts), `store`+`spool` (local bbolt + crash-safe capture),
-`daemon` (RAM corpus + unix-socket server), `match`/`tui` (search + browse, with
-`tui/hl` syntax highlighting), `cryptobox` (E2E core), `reqsign` (request
-signing), `server`+`syncer` (sync), `redact` (secrets gate), `importer`, `shell`
-(hook scripts), `cli` (cobra tree). Tests use testify (`require`, table-driven).
-
-See [`docs/architecture.md`](docs/architecture.md) for the design and
-[`docs/protocol.md`](docs/protocol.md) for the full sync API.
+Contributions are welcome — please read [`CONTRIBUTING.md`](CONTRIBUTING.md)
+first.
