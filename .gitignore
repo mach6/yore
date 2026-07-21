@@ -11,6 +11,10 @@ unit-test-report.json
 *.db
 .env
 
+# Editor / IDE
+/.idea/
+/.vscode/
+
 # Transient/scratch agent working files (never committed)
 /.agents/
 /.claude/
