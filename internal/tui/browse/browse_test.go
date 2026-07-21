@@ -30,6 +30,8 @@ type fakeBackend struct {
 	devices    proto.DevicesInfo
 	approved   []string
 	revoked    []string
+	synced     int
+	syncErr    error
 }
 
 func (f *fakeBackend) Query(req proto.QueryReq) (proto.QueryResp, error) {
@@ -80,6 +82,19 @@ func (f *fakeBackend) Revoke(id string) error {
 	defer f.mu.Unlock()
 	f.revoked = append(f.revoked, id)
 	return nil
+}
+
+func (f *fakeBackend) Sync() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.synced++
+	return f.syncErr
+}
+
+func (f *fakeBackend) syncCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.synced
 }
 
 func (f *fakeBackend) lastReq() proto.QueryReq {
@@ -165,6 +180,27 @@ func ready(t *testing.T, f *fakeBackend, w, h int) Model {
 }
 
 // --- tests ---------------------------------------------------------------
+
+func TestSyncNow(t *testing.T) {
+	f := &fakeBackend{resp: mkResp(mkRows("ls"))}
+	m := ready(t, f, 120, 30)
+
+	// S flashes progress and issues a sync command.
+	m, cmd := step(t, m, press("S"))
+	require.Contains(t, strip(m.View()), "syncing", "S should flash syncing…")
+	require.NotNil(t, cmd, "S should issue a sync command")
+
+	// The command yields a syncDoneMsg once the (fake) cycle returns.
+	sd, ok := cmd().(syncDoneMsg)
+	require.True(t, ok, "S command did not yield a syncDoneMsg")
+	require.NoError(t, sd.err)
+	require.Equal(t, 1, f.syncCount(), "Sync should have been called exactly once")
+
+	// Applying it flashes success and schedules a refresh (query + host list).
+	m, cmd2 := step(t, m, sd)
+	require.Contains(t, strip(m.View()), "synced", "after sync the view should flash ✓ synced")
+	require.NotNil(t, cmd2, "sync should schedule a refresh (query + host list)")
+}
 
 func TestHostSelectionChangesScope(t *testing.T) {
 	f := &fakeBackend{

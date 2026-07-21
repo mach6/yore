@@ -27,6 +27,7 @@ type Backend interface {
 	Devices() (proto.DevicesInfo, error)
 	Approve(id string) error
 	Revoke(id string) error
+	Sync() error
 }
 
 // Options configures a browse session.
@@ -100,6 +101,9 @@ type flashExpireMsg struct{ id int }
 
 // hostsTickMsg fires the bounded init-time warm loop (see onHostsTick).
 type hostsTickMsg struct{}
+
+// syncDoneMsg carries the result of an on-demand "sync now" (the S key).
+type syncDoneMsg struct{ err error }
 
 // Model is the Bubble Tea model backing the browser. Exported so tests can
 // drive Update directly.
@@ -264,6 +268,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case statsResultMsg:
 		return m.applyStats(msg)
 
+	case syncDoneMsg:
+		return m.applySync(msg)
+
 	case flashExpireMsg:
 		if msg.id == m.flashID {
 			m.flash = ""
@@ -385,6 +392,39 @@ func (m Model) hostsCmd() tea.Cmd {
 	}
 }
 
+// syncNow forces an immediate push/pull (the S key) and flashes progress; the
+// result arrives as a syncDoneMsg. b.Sync() blocks until the daemon's cycle
+// finishes, so "syncing…" shows for the real duration.
+func (m Model) syncNow() (tea.Model, tea.Cmd) {
+	m.flash = "syncing…" // no expiry tick: replaced by applySync when the cycle ends
+	m.flashID++
+	return m, m.syncCmd()
+}
+
+func (m Model) syncCmd() tea.Cmd {
+	b := m.b
+	return func() tea.Msg { return syncDoneMsg{err: b.Sync()} }
+}
+
+// applySync flashes the outcome and, on success, re-fetches the table, host
+// sidebar, and (in stats view) the aggregation so just-synced data shows at once
+// instead of waiting for the periodic cycle.
+func (m Model) applySync(msg syncDoneMsg) (tea.Model, tea.Cmd) {
+	m.flashID++
+	if msg.err != nil {
+		m.flash = "sync failed"
+		return m, flashTick(m.flashID)
+	}
+	m.flash = "✓ synced"
+	mm, qcmd := m.issueQuery()
+	cmds := []tea.Cmd{flashTick(mm.flashID), qcmd, mm.hostsCmd()}
+	if mm.view == viewStats {
+		mm.statsSeq++
+		cmds = append(cmds, mm.statsCmd(mm.statsSeq))
+	}
+	return mm, tea.Batch(cmds...)
+}
+
 func (m Model) statsCmd(seq uint64) tea.Cmd {
 	b := m.b
 	return func() tea.Msg {
@@ -464,6 +504,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "s":
 		return m.toggleStats()
+	case "S":
+		return m.syncNow()
 	case "D":
 		m.view = viewDevices
 		m.devConfirm = ""

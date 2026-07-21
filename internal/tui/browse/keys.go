@@ -21,6 +21,7 @@ type keyMap struct {
 	Copy    key.Binding
 	Delete  key.Binding
 	Stats   key.Binding
+	Sync    key.Binding
 	Help    key.Binding
 	Quit    key.Binding
 	Confirm key.Binding
@@ -47,6 +48,7 @@ func defaultKeyMap(vim bool) keyMap {
 		Copy:    key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "copy")),
 		Delete:  key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
 		Stats:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "stats")),
+		Sync:    key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "sync now")),
 		Help:    key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		Quit:    key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 		Confirm: key.NewBinding(key.WithKeys("y", "n"), key.WithHelp("y/n", "confirm")),
@@ -56,7 +58,7 @@ func defaultKeyMap(vim bool) keyMap {
 
 // ShortHelp implements help.KeyMap: the compact one-line hint bar.
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Focus, k.Search, k.Accept, k.Copy, k.Delete, k.Stats, k.Help, k.Quit}
+	return []key.Binding{k.Focus, k.Search, k.Accept, k.Copy, k.Delete, k.Stats, k.Sync, k.Help, k.Quit}
 }
 
 // FullHelp implements help.KeyMap: the expanded ? menu.
@@ -68,7 +70,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		nav,
 		{k.Focus, k.Search, k.Accept, k.Copy, k.Delete},
-		{k.Stats, k.Help, k.Quit},
+		{k.Stats, k.Sync, k.Help, k.Quit},
 	}
 }
 
@@ -93,6 +95,7 @@ type statsKeys struct{}
 func (statsKeys) ShortHelp() []key.Binding {
 	return []key.Binding{
 		key.NewBinding(key.WithKeys("s", "esc"), key.WithHelp("s/esc", "back")),
+		key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "sync now")),
 		key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 	}
 }
