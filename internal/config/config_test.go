@@ -43,6 +43,7 @@ func TestNewOpsAccessorDefaults(t *testing.T) {
 	assert.EqualValues(t, 5*1024*1024, c.LogMaxBytes(), "LogMaxBytes default")
 	assert.Equal(t, 1, c.LogKeepN(), "LogKeepN default")
 	assert.False(t, c.LogSilentOn(), "LogSilentOn default")
+	assert.True(t, c.EnterExecutesOn(), "EnterExecutesOn default (nil) is true")
 
 	// Explicit "0" interval disables backups (durOr alone would give the default).
 	assert.EqualValues(t, 0, Config{BackupInterval: "0"}.BackupIntervalD(), "backup_interval 0 disables")
@@ -56,6 +57,11 @@ func TestNewOpsAccessorDefaults(t *testing.T) {
 
 	tru := true
 	require.True(t, Config{LogSilent: &tru}.LogSilentOn(), "LogSilent true")
+
+	// enter_executes defaults on (nil); *true keeps it on, *false opts out.
+	fls := false
+	assert.True(t, Config{EnterExecutes: &tru}.EnterExecutesOn(), "EnterExecutes true")
+	assert.False(t, Config{EnterExecutes: &fls}.EnterExecutesOn(), "EnterExecutes false")
 }
 
 func TestBackupDir(t *testing.T) {

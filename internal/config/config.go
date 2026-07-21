@@ -49,11 +49,11 @@ type Config struct {
 	SyncInterval string `json:"sync_interval,omitempty"` // default 5m
 	AutoDeepen   *bool  `json:"auto_deepen,omitempty"`   // default true
 
-	// EnterExecutes controls the Ctrl-R search widget: when true, accepting a
-	// result with Enter runs it immediately (Atuin parity); when false/unset it
-	// is inserted into the prompt for review. Read directly by the emitted shell
+	// EnterExecutes controls the Ctrl-R search widget: when true/unset, accepting
+	// a result with Enter runs it immediately (Atuin parity); set false to insert
+	// it into the prompt for review instead. Read directly by the emitted shell
 	// integration; see internal/shell/assets.
-	EnterExecutes *bool `json:"enter_executes,omitempty"` // default false
+	EnterExecutes *bool `json:"enter_executes,omitempty"` // default true
 
 	// BindUpArrow, when true, also binds the Up arrow to the search TUI (in
 	// addition to Ctrl-R), Atuin-style. Off by default because it changes a
@@ -107,7 +107,7 @@ func (c Config) RecordSpacePrefixedOn() bool {
 // EnterExecutesOn reports whether accepting a Ctrl-R result runs it immediately
 // (Atuin parity) rather than inserting it into the prompt for review.
 func (c Config) EnterExecutesOn() bool {
-	return c.EnterExecutes != nil && *c.EnterExecutes
+	return c.EnterExecutes == nil || *c.EnterExecutes
 }
 
 // KeymapVim reports whether the vim keymap is selected (Atuin keymap_mode=vim

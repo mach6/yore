@@ -75,11 +75,14 @@ add-zsh-hook zshaddhistory _yore_addhistory
 {{- if .Bindings}}
 
 # Whether accepting a Ctrl-R result should run it immediately (Atuin parity).
-# Read from config.json at call time — NOT at source time — so toggling
-# "enter_executes" takes effect without re-sourcing. Honors $YORE_DIR.
+# Default: run the picked command on Enter; opt out with enter_executes:false to
+# insert it for review instead. Read from config.json at call time — NOT at
+# source time — so toggling "enter_executes" takes effect without re-sourcing.
+# Honors $YORE_DIR.
 _yore_enter_executes() {
 	local f="${YORE_DIR:-$HOME/.config/yore}/config.json"
-	[[ -r $f ]] && grep -q '"enter_executes"[[:space:]]*:[[:space:]]*true' "$f"
+	[[ -r $f ]] && grep -q '"enter_executes"[[:space:]]*:[[:space:]]*false' "$f" && return 1
+	return 0
 }
 
 # Interactive search widget. The TUI draws on /dev/tty, so this command

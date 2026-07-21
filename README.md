@@ -105,8 +105,8 @@ your own `HISTFILE`/`SAVEHIST` settings so takeover wins.
 ### The keys
 
 - **`Ctrl-R`** → the inline search TUI, seeded with whatever you'd started typing;
-  the command you pick is inserted at your prompt — review, then Enter (set
-  `enter_executes: true` to run on Enter instead).
+  the command you pick runs immediately on Enter (set `enter_executes: false` to
+  insert it at your prompt for review instead).
 - **Up arrow** → yore search (takeover), or native scroll (coexist, unless you
   set `bind_up_arrow`).
 - **`!N` / `!!` / `!$`** → native shell history expansion — still works, against
@@ -305,7 +305,7 @@ endpoint and crypto details are in [`docs/protocol.md`](docs/protocol.md).
   "server_pin": "…",
   "integration": "takeover",
   "keymap": "emacs",
-  "enter_executes": false,
+  "enter_executes": true,
   "bind_up_arrow": false,
   "key_epoch": "24h",
   "daemon_idle": "30m",
@@ -324,7 +324,8 @@ endpoint and crypto details are in [`docs/protocol.md`](docs/protocol.md).
 - `integration` — `takeover` (default) / `coexist` / `capture` (see Shell setup).
 - `server_pin` — base64 SHA-256 of the server's TLS cert; set by `setup --pin`.
 - `keymap` — `emacs` (default) or `vim` for the TUIs.
-- `enter_executes` — run the picked command on Enter instead of inserting it.
+- `enter_executes` — run the picked command on Enter (default); set `false` to
+  insert it at the prompt for review instead.
 - `bind_up_arrow` — in coexist mode, also bind Up to search.
 - `backup_interval` — how often the daemon writes a consistent `data.db`
   snapshot into `~/.config/yore/backups/` (default `1h`; `"0"` disables).

@@ -81,13 +81,15 @@ preexec_functions+=(__yore_bash_gate)
 {{- if .Bindings}}
 
 # Whether accepting a Ctrl-R result should run it immediately (Atuin parity).
-# Honors $YORE_DIR. NOTE: bash reads this at source time to choose the Ctrl-R
-# binding below (bash `bind -x` cannot itself accept the line), so a change to
-# "enter_executes" in config.json takes effect only in a new shell / re-source.
-# zsh, by contrast, re-reads it on every keypress.
+# Default: run the picked command on Enter; opt out with enter_executes:false to
+# insert it for review instead. Honors $YORE_DIR. NOTE: bash reads this at source
+# time to choose the Ctrl-R binding below (bash `bind -x` cannot itself accept the
+# line), so a change to "enter_executes" in config.json takes effect only in a new
+# shell / re-source. zsh, by contrast, re-reads it on every keypress.
 _yore_enter_executes() {
 	local f="${YORE_DIR:-$HOME/.config/yore}/config.json"
-	[[ -r $f ]] && grep -q '"enter_executes"[[:space:]]*:[[:space:]]*true' "$f"
+	[[ -r $f ]] && grep -q '"enter_executes"[[:space:]]*:[[:space:]]*false' "$f" && return 1
+	return 0
 }
 
 # Interactive search widget. The TUI draws on /dev/tty, so this command
