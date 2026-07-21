@@ -9,11 +9,21 @@ COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /yore ./cmd/yore
 
 FROM alpine:3.20
-RUN apk add --no-cache zsh bash ca-certificates
+RUN apk add --no-cache zsh bash bash-completion ca-certificates
 COPY --from=build /yore /usr/local/bin/yore
-# Source the yore integration in each shell (mode comes from config.json).
-RUN printf 'eval "$(yore init zsh)"\n' >> /root/.zshrc \
- && printf 'eval "$(yore init bash)"\n' >> /root/.bashrc
+# Install yore's cobra completions for both shells.
+RUN mkdir -p /usr/share/bash-completion/completions /usr/local/share/zsh/site-functions \
+ && yore completion bash > /usr/share/bash-completion/completions/yore \
+ && yore completion zsh  > /usr/local/share/zsh/site-functions/_yore
+# Enable each shell's completion framework, then source the yore integration
+# (mode comes from config.json). zsh needs compinit; bash needs bash-completion.
+RUN printf '%s\n' \
+      'fpath=(/usr/local/share/zsh/site-functions $fpath)' \
+      'autoload -Uz compinit && compinit' \
+      'eval "$(yore init zsh)"' >> /root/.zshrc \
+ && printf '%s\n' \
+      '[ -f /usr/share/bash-completion/bash_completion ] && . /usr/share/bash-completion/bash_completion' \
+      'eval "$(yore init bash)"' >> /root/.bashrc
 COPY docker/sandbox/client-entrypoint.sh /usr/local/bin/client-entrypoint.sh
 RUN chmod +x /usr/local/bin/client-entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/client-entrypoint.sh"]

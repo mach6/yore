@@ -32,6 +32,7 @@ services:
       context: ../..
       dockerfile: docker/sandbox/Dockerfile.client
     hostname: zsh-box
+    init: true  # tini reaps orphaned shell-hook processes; sleep infinity cannot
     environment:
       YORE_SERVER: http://server:8080
       YORE_TOKEN: sandbox-token
@@ -46,6 +47,7 @@ services:
       context: ../..
       dockerfile: docker/sandbox/Dockerfile.client
     hostname: bash-box
+    init: true  # tini reaps orphaned shell-hook processes; sleep infinity cannot
     environment:
       YORE_SERVER: http://server:8080
       YORE_TOKEN: sandbox-token
