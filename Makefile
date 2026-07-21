@@ -12,7 +12,7 @@ LDFLAGS    := -s -w -X yore/internal/cli.Version=$(shell git describe --tags --a
 SHELL       := /bin/bash
 .SHELLFLAGS := -o pipefail -c
 
-.PHONY: build test vet fmt lint coverage coverage-check bench clean docker release drone
+.PHONY: build test vet fmt lint coverage coverage-check bench clean docker release drone stress
 
 build:
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/yore
@@ -58,6 +58,18 @@ clean:
 
 docker:
 	docker build -f docker/Dockerfile -t yore:latest .
+
+# MANUAL stress/soak harness — NOT part of CI (never runs in Drone). Rebuilds the
+# current binary into a fresh 3-container sandbox, hammers it with N records per
+# host (normal + secrets + tags + drop-cases), syncs, then verifies correctness
+# and prints timings. Needs docker + docker compose. Tears the sandbox down at
+# the end (KEEP=1 leaves it up for a post-mortem).
+#   make stress            # N=5000 per host (a real run)
+#   make stress N=10000    # heavier
+#   make stress N=150      # quick smoke
+#   make stress KEEP=1     # leave the sandbox running afterwards
+stress:
+	N=$(N) KEEP=$(KEEP) docker/sandbox/stress.sh
 
 # Tier-1 release matrix: linux+darwin+freebsd, amd64+arm64 where it matters.
 # WSL runs the linux binaries. Windows native is experimental/later.

@@ -84,3 +84,58 @@ truth (so `!N`, up-arrow, and Ctrl-R all read from yore).
 ```sh
 docker compose -f docker/sandbox/compose.yml down -v
 ```
+
+## Stress test (`stress.sh`) — MANUAL, not CI
+
+`stress.sh` is a self-contained stress/soak harness that automates the whole
+walkthrough at scale and then *verifies* it. It is **manual only** — it is never
+run by CI (it is not referenced in `.drone.yml`). Run it when you want to confirm
+yore stays correct and fast under a real load, or after touching recording,
+redaction, sync, or the daemon.
+
+```sh
+make stress               # N=5000 records per host (a real run)
+make stress N=10000       # heavier
+make stress N=150         # quick smoke
+make stress KEEP=1        # leave the sandbox up afterwards for a post-mortem
+# or call it directly:
+N=5000 docker/sandbox/stress.sh
+docker/sandbox/stress.sh --keep
+```
+
+### What it does
+
+1. **Fresh sandbox** — `down -v` then `up -d --build`, so it always exercises the
+   *current* source, then waits for the server's `/v1/health` (probed from inside
+   a client; nothing is published to your host).
+2. **Enrolls** zsh-box (bootstrap) and bash-box (pending → approved from
+   zsh-box), and seeds an `ignore_dirs` entry plus a short `backup_interval` into
+   the client config before any recording.
+3. **Generates load** — one `docker exec` per host runs a shell loop that records
+   `N` commands via `yore record` (never one exec per command). The mix carries
+   unique, greppable markers:
+   - **normal** commands (the bulk — a positive control that must be stored),
+   - **secrets** in valid shapes (github token, AWS secret, URL userinfo, PEM
+     header, `TOKEN=…`), each embedding `SEKRETMARKER` — must be redacted,
+   - **leading-space** and **ignore-dir** commands — must be dropped,
+   - **agent-tagged** batches (`CLAUDECODE=1`, `YORE_TAG=stress-agent`,
+     `AIDER_MODEL=…`) — must be tagged.
+4. **Syncs** both hosts (two rounds for full convergence).
+
+### What it verifies (each a ✓/✗; non-zero exit if any fails)
+
+| check | how |
+|-------|-----|
+| **Redaction / E2E at scale** (headline) | `docker cp` each client's `data.db` **and** the server's `yore.db` out, `grep -a` for `SEKRETMARKER` → **zero** hits everywhere (redaction dropped the secrets; the server holds ciphertext only). |
+| **Positive control** | the normal `<HOSTMARKER>` commands are present via `yore search --headless`. |
+| **Convergence** | from each host, a deep `--scope all` search finds the *other* host's commands; counts match the expected non-dropped totals (±tolerance). |
+| **Dropped-count sanity** | stored ≈ generated − (secrets + space-prefixed + ignore-dir); the numbers are printed. |
+| **Tags** | `yore search --headless --tag claude-code` (and `stress-agent`, `aider`) match the planted counts. |
+| **Performance** | times the bulk-record loop, `yore sync`, and a deep `--scope all` search at full volume; prints ms and records/sec. |
+| **Health** | exactly **one** `yore daemon` *process* per client (`pgrep -f '[y]ore daemon'` — the `[y]` trick avoids pgrep matching its own shell, and counts processes, not threads), **zero** zombies (from `/proc/<pid>/stat`), and a rolling backup exists under `~/.config/yore/backups/`. |
+
+### Teardown
+
+By default the harness always tears the sandbox down (via an `EXIT` trap, even on
+failure) and confirms `docker ps` is left clean. Pass `--keep` / `KEEP=1` to leave
+it running for inspection.
