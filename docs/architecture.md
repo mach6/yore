@@ -180,8 +180,10 @@ documented in **[`protocol.md`](protocol.md)**.
 
 `server_url`, `token` / `token_file`, `server_pin`, `integration`
 (takeover|coexist|capture), `key_epoch` (24h), `daemon_idle` (30m),
-`sync_interval` (5m), `auto_deepen`, `enter_executes`, `bind_up_arrow`, `keymap`
-(emacs|vim), `ignore_patterns`, `ignore_dirs`, `record_space_prefixed`.
+`sync_interval` (5m), `push_debounce` (experimental — off; a duration enables a
+coalesced push shortly after recording), `auto_deepen`, `enter_executes`,
+`bind_up_arrow`, `keymap` (emacs|vim), `ignore_patterns`, `ignore_dirs`,
+`record_space_prefixed`.
 
 ## Invariants
 

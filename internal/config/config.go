@@ -48,6 +48,13 @@ type Config struct {
 	KeyEpoch     string `json:"key_epoch,omitempty"`     // default 24h
 	DaemonIdle   string `json:"daemon_idle,omitempty"`   // default 30m
 	SyncInterval string `json:"sync_interval,omitempty"` // default 5m
+	// PushDebounce is EXPERIMENTAL and OFF by default. Set it (e.g. "2s") to have
+	// the daemon push shortly after a command is recorded — coalescing a burst
+	// into one delta push — so cross-host propagation is seconds instead of up to
+	// SyncInterval. Empty/"0"/invalid leaves it disabled; only the periodic tick
+	// pushes. (Note: an agent that fires commands in bursts will push at up to one
+	// cycle per PushDebounce for the whole run — that's why it's opt-in.)
+	PushDebounce string `json:"push_debounce,omitempty"` // EXPERIMENTAL; default off
 	AutoDeepen   *bool  `json:"auto_deepen,omitempty"`   // default true
 
 	// EnterExecutes controls the Ctrl-R search widget: when true/unset, accepting
@@ -128,6 +135,12 @@ func (c Config) IntegrationMode() string {
 func (c Config) KeyEpochD() time.Duration     { return durOr(c.KeyEpoch, 24*time.Hour) }
 func (c Config) DaemonIdleD() time.Duration   { return durOr(c.DaemonIdle, 30*time.Minute) }
 func (c Config) SyncIntervalD() time.Duration { return durOr(c.SyncInterval, 5*time.Minute) }
+
+// PushDebounceD is EXPERIMENTAL and OFF by default (0). A valid duration enables
+// push-on-record — the daemon pushes that long after new records are ingested,
+// coalescing bursts. Empty/"0"/invalid all resolve to 0 (disabled), so only the
+// periodic SyncInterval tick pushes.
+func (c Config) PushDebounceD() time.Duration { return durOr(c.PushDebounce, 0) }
 func (c Config) AutoDeepenOn() bool           { return c.AutoDeepen == nil || *c.AutoDeepen }
 func (c Config) BindUpArrowOn() bool          { return c.BindUpArrow != nil && *c.BindUpArrow }
 

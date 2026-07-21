@@ -62,6 +62,13 @@ func TestNewOpsAccessorDefaults(t *testing.T) {
 	fls := false
 	assert.True(t, Config{EnterExecutes: &tru}.EnterExecutesOn(), "EnterExecutes true")
 	assert.False(t, Config{EnterExecutes: &fls}.EnterExecutesOn(), "EnterExecutes false")
+
+	// push_debounce is EXPERIMENTAL and OFF by default; a valid duration enables
+	// it, while "0"/invalid stay disabled.
+	assert.EqualValues(t, 0, c.PushDebounceD(), "PushDebounceD default off")
+	assert.EqualValues(t, 0, Config{PushDebounce: "0"}.PushDebounceD(), "push_debounce 0 disabled")
+	assert.EqualValues(t, 0, Config{PushDebounce: "nope"}.PushDebounceD(), "push_debounce invalid disabled")
+	assert.Equal(t, 2*time.Second, Config{PushDebounce: "2s"}.PushDebounceD(), "push_debounce honored")
 }
 
 func TestBackupDir(t *testing.T) {

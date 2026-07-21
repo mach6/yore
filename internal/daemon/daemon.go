@@ -80,6 +80,7 @@ type server struct {
 	activity    chan struct{} // "a request arrived" -> reset idle timer
 	shutdownReq chan struct{} // OpShutdown -> graceful stop
 	syncWake    chan struct{} // "sync now" -> push/pull cycle
+	pushWake    chan struct{} // new local records -> debounced push (experimental)
 	sigCh       chan os.Signal
 	done        chan struct{} // closed once, signals all workers to stop
 
@@ -128,6 +129,7 @@ func Run(dir string, opts Options) error {
 		activity:    make(chan struct{}, 1),
 		shutdownReq: make(chan struct{}, 1),
 		syncWake:    make(chan struct{}, 1),
+		pushWake:    make(chan struct{}, 1),
 		done:        make(chan struct{}),
 	}
 
@@ -430,6 +432,12 @@ func (s *server) doIngest() {
 	}
 	s.refreshCorpus()
 	s.logf("ingested %d records", n)
+	// Experimental push-on-record: nudge the sync loop that new local records
+	// landed. Harmless when disabled — the loop only arms its debounce timer when
+	// push_debounce is set (otherwise it just drains this).
+	if s.remote.enabled() {
+		nudge(s.pushWake)
+	}
 }
 
 // refreshCorpus folds newly-ingested rows into the RAM corpus. Only the ingest

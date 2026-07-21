@@ -262,15 +262,24 @@ func cloneCursors(m map[string]uint64) map[string]uint64 {
 // enabled. A single goroutine, so syncOnce never overlaps itself.
 func (s *server) syncLoop() {
 	defer s.wg.Done()
-	interval := config.Config{}.SyncIntervalD()
-	if cfg, err := config.Load(s.dir); err == nil {
-		interval = cfg.SyncIntervalD()
-	}
+	cfg, _ := config.Load(s.dir) // zero Config on error -> accessor defaults
+	interval := cfg.SyncIntervalD()
+	pushDebounce := cfg.PushDebounceD() // 0 = experimental push-on-record disabled
+
 	// Kick an initial sync shortly after startup so deep search is warm.
 	first := time.NewTimer(2 * time.Second)
 	tick := time.NewTicker(interval)
 	defer first.Stop()
 	defer tick.Stop()
+
+	// One-shot debounce timer for experimental push-on-record; starts idle.
+	pushTimer := time.NewTimer(time.Hour)
+	if !pushTimer.Stop() {
+		<-pushTimer.C
+	}
+	defer pushTimer.Stop()
+	pushPending := false
+
 	for {
 		select {
 		case <-s.done:
@@ -281,8 +290,29 @@ func (s *server) syncLoop() {
 			s.doSync()
 		case <-s.syncWake:
 			s.doSync()
+		case <-s.pushWake:
+			// Coalesce a burst of new records into one push after pushDebounce.
+			// Arm only when enabled and not already pending — the timer is idle
+			// at that point, so Reset is race-free.
+			if arm, pending := pushArm(pushDebounce, pushPending); arm {
+				pushTimer.Reset(pushDebounce)
+				pushPending = pending
+			}
+		case <-pushTimer.C:
+			pushPending = false
+			s.doSync()
 		}
 	}
+}
+
+// pushArm decides whether a pushWake should (re)arm the push-on-record debounce
+// timer: only when it is enabled (debounce > 0) and no push is already pending,
+// so a burst coalesces into a single push. Pure, for deterministic tests.
+func pushArm(debounce time.Duration, pending bool) (arm, newPending bool) {
+	if debounce <= 0 || pending {
+		return false, pending
+	}
+	return true, true
 }
 
 // doSync runs one sync cycle. It is serialized by syncMu so the periodic loop

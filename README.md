@@ -321,6 +321,7 @@ endpoint and crypto details are in [`docs/protocol.md`](docs/protocol.md).
   "key_epoch": "24h",
   "daemon_idle": "30m",
   "sync_interval": "5m",
+  "push_debounce": "0",
   "backup_interval": "1h",
   "backup_keep": 3,
   "log_max_size": "5MB",
