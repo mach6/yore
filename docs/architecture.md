@@ -135,7 +135,7 @@ take over the shell's history, all via `yore init`:
   `history -d` in bash), so `!N` / up-arrow work against yore-consistent,
   secret-free history. zsh is exact; bash's gate is best-effort.
 - **coexist** — record alongside the untouched native history; rebind Ctrl-R,
-  add `h`/`hs`. Native `!N` works against native history.
+  add `hb`/`hs`. Native `!N` works against native history.
 - **capture** — record only; no keybinding/alias changes.
 
 Two subcommands support takeover: `yore filter` (the redaction gate — reads a

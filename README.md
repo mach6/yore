@@ -3,7 +3,7 @@
 **Your shell history — every machine, encrypted, searchable, fast.**
 
 `yore` records every command you run (zsh and bash), keeps it in a rich TUI you
-reach with `Ctrl-R` or the `h`/`hs` aliases, and — when you point it at a sync
+reach with `Ctrl-R` or the `hb`/`hs` aliases, and — when you point it at a sync
 server you host — makes all of your machines' history available everywhere,
 end-to-end encrypted so the server never sees a single command in the clear.
 
@@ -92,9 +92,9 @@ is stored in `config.integration` (default **takeover**):
   own persistent history is turned off (no unredacted `~/.zsh_history` on disk),
   its in-memory list is seeded from yore, and new commands are gated through
   yore's redaction. So **`!N`, `!!`, and Up work against yore's history, and it's
-  secret-free**. `Ctrl-R` and Up open the search TUI; `h`/`hs` are added.
+  secret-free**. `Ctrl-R` and Up open the search TUI; `hb` (browse) / `hs` are added.
 - **coexist** — record *alongside* your untouched native history. `Ctrl-R` is
-  rebound to yore and `h`/`hs` are added; native `!N` keeps working against
+  rebound to yore and `hb`/`hs` are added; native `!N` keeps working against
   native history. (This is how Atuin behaves by default.)
 - **capture** — record only; no keybinding or alias changes.
 
@@ -111,8 +111,9 @@ your own `HISTFILE`/`SAVEHIST` settings so takeover wins.
   set `bind_up_arrow`).
 - **`!N` / `!!` / `!$`** → native shell history expansion — still works, against
   yore's history in takeover and native history in coexist.
-- **`h`** → the full-screen browser; the command you pick is dropped onto your
+- **`hb`** → the full-screen browser; the command you pick is dropped onto your
   next prompt to edit (zsh) — `Enter` inserts it, `y` copies it to the clipboard.
+  (yore does **not** touch `h`, so your own `h` — e.g. `h=history` — is left alone.)
   **`hs <query>`** → CLI search (plain matching lines when piped, e.g. `hs docker
   | grep build`). Scoped siblings: **`hsa`** (all hosts), **`hss`** (this
   session), **`hsc`** (this cwd), and **`hsw`** (this git repo). Omit them all
@@ -183,7 +184,7 @@ It reports how many secret-bearing lines it skipped.
 | Re-run an event by number | `!N`, `!!`, `!$` — native, works against yore's history |
 | Cycle search scope (host / all / session / dir / repo) | `Ctrl-R` again inside the search |
 | Rank by frequency×recency, or fuzzy match | `Alt-f` / `Alt-z` inside the search |
-| Browse, filter, inspect, get stats, manage devices | `h` — `Enter` recalls the pick to your prompt, `y` copies it (then `D` for devices) |
+| Browse, filter, inspect, get stats, manage devices | `hb` — `Enter` recalls the pick to your prompt, `y` copies it (then `D` for devices) |
 | See only what an agent ran | `yore search --tag claude-code` |
 | Grep history in a script | `hs <query>` \| … or `yore search --headless <query>` |
 | See daemon / sync status, or diagnose | `yore status` / `yore doctor` |

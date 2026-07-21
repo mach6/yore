@@ -486,15 +486,15 @@ else
 	bind '"\e[A": "\eyore"'
 fi
 
-# Convenience aliases (Options.Aliases). `h` opens the browser; Enter prints the
+# Convenience aliases (Options.Aliases). `hb` opens the browser; Enter prints the
 # command you pick to stdout and y copies it to the clipboard (bash can't refill
-# the prompt the way zsh's print -z does). `hs` searches (the common `history` /
-# `history | grep` pattern), with scoped siblings hsa (all hosts), hss (this
-# session), hsc (this cwd), and hsw (this git repo). Drop any pre-existing h/hs
-# aliases so our versions win and a leftover alias can't break the function
-# definitions below.
-unalias h hs hsa hss hsc hsw 2>/dev/null
-h() { command yore browse; }   # Enter prints the pick to stdout; y copies
+# the prompt the way zsh's print -z does). `hs` searches (the `history | grep`
+# pattern), with scoped siblings hsa (all hosts), hss (this session), hsc (this
+# cwd), and hsw (this git repo). yore does NOT touch `h` — keep your own (e.g.
+# h=history). Drop any pre-existing collisions so our versions win and a leftover
+# alias can't break the function definitions below.
+unalias hb hs hsa hss hsc hsw 2>/dev/null
+hb() { command yore browse; }   # Enter prints the pick to stdout; y copies
 _yore_hs() {  # $1 = scope, rest = query
 	local scope=$1; shift
 	if [[ -t 1 ]]; then

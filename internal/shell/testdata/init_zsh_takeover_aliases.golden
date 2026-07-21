@@ -108,16 +108,16 @@ if [[ -o interactive ]]; then
 	bindkey '^[OA' _yore_search_widget  # Up (application cursor keys)
 fi
 
-# Convenience aliases (Options.Aliases). `h` opens the browser and drops the
-# command you pick onto your NEXT prompt (print -z), like hs — Enter inserts, y
-# copies to the clipboard. `hs` searches (the common `history` / `history | grep`
-# pattern), with scoped siblings hsa (all hosts), hss (this session), hsc (this
-# cwd), and hsw (this git repo). You may already use h/hs as aliases, so remove
-# any first at runtime, and escape each function name (\h, \hs, \hsa, …) so zsh
-# does not alias-expand it at PARSE time — an unescaped hs() would abort sourcing
-# the whole script with "defining function based on alias".
-unalias h hs hsa hss hsc hsw 2>/dev/null
-\h() {  # browse; drop the picked command onto the next prompt (print -z), like hs
+# Convenience aliases (Options.Aliases). `hb` opens the browser and drops the
+# command you pick onto your NEXT prompt (print -z) — Enter inserts, y copies to
+# the clipboard. `hs` searches (the `history | grep` pattern), with scoped
+# siblings hsa (all hosts), hss (this session), hsc (this cwd), and hsw (this git
+# repo). yore does NOT touch `h` — keep your own (e.g. h=history). You may already
+# use these names, so drop any first at runtime, and escape each function name
+# (\hb, \hs, \hsa, …) so zsh does not alias-expand it at PARSE time — an unescaped
+# hs() would abort sourcing with "defining function based on alias".
+unalias hb hs hsa hss hsc hsw 2>/dev/null
+\hb() {  # browse; drop the picked command onto the next prompt (print -z)
 	local __f __sel
 	__f=$(mktemp) || return
 	command yore browse --accept-file "$__f"
