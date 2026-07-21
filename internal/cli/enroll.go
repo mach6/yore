@@ -11,6 +11,7 @@ import (
 
 	"yore/internal/config"
 	"yore/internal/cryptobox"
+	"yore/internal/redact"
 	"yore/internal/syncer"
 	"yore/internal/wire"
 )
@@ -169,6 +170,17 @@ func runSetup(server, token, name, integration string, pin, clearPin bool) int {
 	if err := config.Save(dir, cfg); err != nil {
 		fmt.Fprintln(os.Stderr, "yore setup:", err)
 		return 1
+	}
+
+	// Seed the editable secret-redaction rules on first setup. Seed never
+	// clobbers an existing redact.yml, and a seed failure must not fail setup
+	// (the built-in rules still apply as the fail-safe), so this is best-effort.
+	redactPath := config.RedactPath(dir)
+	_, statErr := os.Stat(redactPath)
+	if err := redact.Seed(dir); err != nil {
+		fmt.Fprintln(os.Stderr, "yore setup: could not seed redact.yml (built-in rules still apply):", err)
+	} else if os.IsNotExist(statErr) {
+		fmt.Printf("Seeded editable secret-redaction rules at %s.\n", redactPath)
 	}
 
 	if _, err := loadOrCreateDeviceKey(dir); err != nil {

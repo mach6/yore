@@ -55,7 +55,7 @@ func runImport(format string, rest []string) int {
 	// must pass the SAME recording gate as live commands, or the first sync
 	// would ship years of credentials to the server. SkipDir does not apply
 	// (imported records carry no cwd).
-	filter, ferrs := redact.New(cfg.IgnorePatterns, cfg.IgnoreDirs)
+	filter, ferrs := redact.Load(dir, cfg.IgnorePatterns, cfg.IgnoreDirs)
 	for _, e := range ferrs {
 		fmt.Fprintln(os.Stderr, "yore:", e)
 	}

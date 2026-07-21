@@ -49,8 +49,9 @@ func runFilter(cwd string) int {
 		// An empty command never actually reaches here; nothing to drop.
 		return 0
 	}
-	cfg, _ := config.Load(stateDir())
-	if filterDecision(cfg, cmd, cwd) {
+	dir := stateDir()
+	cfg, _ := config.Load(dir)
+	if filterDecision(dir, cfg, cmd, cwd) {
 		return 0
 	}
 	return 1
@@ -59,14 +60,15 @@ func runFilter(cwd string) int {
 // filterDecision reports whether the command WOULD be recorded (true = keep,
 // false = drop). It mirrors runRecord's gate exactly and in the same order:
 // the space-prefix opt-out first, then redact's ignored-dir and secret checks.
-// Callers must have already handled empty input.
-func filterDecision(cfg config.Config, cmd, cwd string) bool {
+// dir is the state directory whose redact.yml supplies the rules (built-ins on
+// fallback). Callers must have already handled empty input.
+func filterDecision(dir string, cfg config.Config, cmd, cwd string) bool {
 	// histignorespace: a leading space/tab opts a command out of history unless
 	// the user has explicitly turned that off. Checked on the raw text.
 	if !cfg.RecordSpacePrefixedOn() && cmd != "" && (cmd[0] == ' ' || cmd[0] == '\t') {
 		return false
 	}
-	filter, _ := redact.New(cfg.IgnorePatterns, cfg.IgnoreDirs)
+	filter, _ := redact.Load(dir, cfg.IgnorePatterns, cfg.IgnoreDirs)
 	if filter.SkipDir(cwd) || filter.Sensitive(cmd) {
 		return false
 	}

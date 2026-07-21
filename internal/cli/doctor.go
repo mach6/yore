@@ -54,14 +54,17 @@ func runDoctor() int {
 	// Secrets filter.
 	fmt.Println("\nsecrets filter")
 	cfg, _ := config.Load(dir)
-	if _, errs := redact.New(cfg.IgnorePatterns, cfg.IgnoreDirs); len(errs) > 0 {
-		for _, e := range errs {
-			warn(e.Error())
-		}
-	} else {
-		ok(fmt.Sprintf("active (built-ins + %d user patterns, %d ignored dirs)",
-			len(cfg.IgnorePatterns), len(cfg.IgnoreDirs)))
+	filter, errs := redact.Load(dir, cfg.IgnorePatterns, cfg.IgnoreDirs)
+	// Load's warnings already say when it fell back to the built-ins (missing,
+	// unreadable, unparseable, empty, or an invalid pattern in redact.yml).
+	for _, e := range errs {
+		warn(e.Error())
 	}
+	if _, serr := os.Stat(config.RedactPath(dir)); serr == nil {
+		ok("rules file: " + config.RedactPath(dir))
+	}
+	ok(fmt.Sprintf("active (%d rules loaded, %d user patterns, %d ignored dirs)",
+		filter.NumRules(), len(cfg.IgnorePatterns), len(cfg.IgnoreDirs)))
 
 	// Enrollment + server.
 	fmt.Println("\nsync")

@@ -43,7 +43,7 @@ func runRecord(exit int, durMs, startMs int64, session, cwd, tag string) {
 	if !cfg.RecordSpacePrefixedOn() && cmd != "" && (cmd[0] == ' ' || cmd[0] == '\t') {
 		return
 	}
-	filter, _ := redact.New(cfg.IgnorePatterns, cfg.IgnoreDirs)
+	filter, _ := redact.Load(dir, cfg.IgnorePatterns, cfg.IgnoreDirs)
 	if filter.SkipDir(cwd) || filter.Sensitive(cmd) {
 		return
 	}

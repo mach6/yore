@@ -22,10 +22,17 @@
 package redact
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"gopkg.in/yaml.v3"
+
+	"yore/internal/config"
 )
 
 // rule is one built-in (or user) detector. re is the authority; hints is a
@@ -64,7 +71,12 @@ type rule struct {
 //	wget-password        wget --password=<pw> (and --http-/--ftp-/--proxy-)
 //	generic-token-assign token/secret/password/api-key/auth = <value> anywhere
 //	env-secret-export    a leading VAR=<value> whose name embeds a secret word
-var builtins = compile([]spec{
+var builtins = compile(defaultSpecs)
+
+// defaultSpecs is the ordered built-in rule table in its editable, pre-compiled
+// form. It both compiles into builtins (above) and seeds ~/.config/yore/redact.yml
+// via Seed/DefaultSpecs, so the two can never drift.
+var defaultSpecs = []Spec{
 	{"pem-block", `-----BEGIN [A-Z ]*PRIVATE KEY-----`, []string{"-----BEGIN"}, false},
 	{"jwt", `eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.`, []string{"eyJ"}, false},
 
@@ -91,22 +103,38 @@ var builtins = compile([]spec{
 		[]string{"token", "secret", "passw", "apikey", "api_key", "api-key", "auth"}, true},
 	{"env-secret-export", `(?i)^\s*(export\s+)?[a-z0-9_]*(secret|token|password|passwd|apikey|api_key|credentials)[a-z0-9_]*=\S+`,
 		[]string{"secret", "token", "password", "passwd", "apikey", "api_key", "credential"}, true},
-})
+}
 
-// spec is the pre-compilation form of a built-in rule.
-type spec struct {
-	name    string
-	pattern string
-	hints   []string
-	fold    bool
+// Spec is one redaction rule in its editable (pre-compilation) form: the YAML
+// shape of ~/.config/yore/redact.yml and the seed form of the built-in table.
+// Name identifies the rule (surfaced by Reason); Pattern is a Go regexp that is
+// the authority for a match. Hints is an optional set of cheap literal
+// substrings, at least one of which must be present for the regexp to run — a
+// hot-path pre-filter; omit it to always run the regexp. Fold makes the hint
+// scan ASCII-case-insensitive (hints must then be lowercase).
+type Spec struct {
+	Name    string   `yaml:"name"`
+	Pattern string   `yaml:"pattern"`
+	Hints   []string `yaml:"hints,omitempty"`
+	Fold    bool     `yaml:"fold,omitempty"`
+}
+
+// DefaultSpecs returns a copy of the built-in rule table. It is the source both
+// for the always-available in-memory fallback and for seeding redact.yml, so a
+// user can see and edit exactly the rules that ship.
+func DefaultSpecs() []Spec {
+	out := make([]Spec, len(defaultSpecs))
+	copy(out, defaultSpecs)
+	return out
 }
 
 // compile turns specs into rules; a bad built-in pattern is a programmer error
-// and panics at init (built-ins are constant and covered by tests).
-func compile(specs []spec) []rule {
+// and panics at init (built-ins are constant and covered by tests). Rules loaded
+// from redact.yml are compiled non-fatally via compileSpecs instead.
+func compile(specs []Spec) []rule {
 	rules := make([]rule, len(specs))
 	for i, s := range specs {
-		rules[i] = rule{name: s.name, re: regexp.MustCompile(s.pattern), hints: s.hints, fold: s.fold}
+		rules[i] = rule{name: s.Name, re: regexp.MustCompile(s.Pattern), hints: s.Hints, fold: s.Fold}
 	}
 	return rules
 }
@@ -119,13 +147,107 @@ type Filter struct {
 	dirs  []string // filepath.Clean'd ignore-dir prefixes
 }
 
-// New compiles a Filter. userPatterns are user-supplied regexes from config:
-// an invalid one is skipped and returned in errs (never fatal), so one typo
-// can't disable recording. ignoreDirs are absolute path prefixes; a command
-// whose cwd is inside one is never recorded. Either slice may be nil/empty.
+// New compiles a Filter from the in-memory built-in table plus userPatterns.
+// userPatterns are user-supplied regexes from config: an invalid one is skipped
+// and returned in errs (never fatal), so one typo can't disable recording.
+// ignoreDirs are absolute path prefixes; a command whose cwd is inside one is
+// never recorded. Either slice may be nil/empty.
+//
+// New always uses the compiled-in built-ins and never touches redact.yml; use
+// Load to honor an edited rules file (with New's built-ins as the fail-safe
+// fallback).
 func New(userPatterns, ignoreDirs []string) (f *Filter, errs []error) {
-	rules := make([]rule, len(builtins), len(builtins)+len(userPatterns))
-	copy(rules, builtins)
+	base := make([]rule, len(builtins))
+	copy(base, builtins)
+	return assemble(base, userPatterns, ignoreDirs, nil)
+}
+
+// Load compiles a Filter from the editable rules file <dir>/redact.yml, then
+// appends userPatterns and ignoreDirs exactly as New does. It is fail-SAFE: the
+// ruleset is never empty, so a typo can never silently switch redaction off.
+//
+//   - Missing or unparseable redact.yml, or a file whose patterns: list is
+//     empty, falls back to the compiled-in built-ins (DefaultSpecs) and appends
+//     a non-fatal warning to errs — redaction stays fully on.
+//   - A single invalid regexp inside an otherwise-valid file is skipped with a
+//     warning (like an invalid user pattern); the remaining rules still apply.
+//
+// A user CAN intentionally drop individual rules by editing the file; only a
+// broken/empty file triggers the whole-table fallback.
+func Load(dir string, userPatterns, ignoreDirs []string) (*Filter, []error) {
+	base, errs := loadBaseRules(dir)
+	return assemble(base, userPatterns, ignoreDirs, errs)
+}
+
+// loadBaseRules reads redact.yml and compiles its patterns into the base rule
+// set, applying the fail-safe fallback to the built-ins. Warnings (never fatal)
+// are returned alongside the rules.
+func loadBaseRules(dir string) (rules []rule, errs []error) {
+	path := config.RedactPath(dir)
+	b, err := os.ReadFile(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return builtinRules(), []error{fmt.Errorf("redact: %s not found; using built-in rules (run `yore setup` to seed an editable copy)", path)}
+	case err != nil:
+		return builtinRules(), []error{fmt.Errorf("redact: cannot read %s: %w; using built-in rules", path, err)}
+	}
+
+	var file struct {
+		Patterns []Spec `yaml:"patterns"`
+	}
+	if err := yaml.Unmarshal(b, &file); err != nil {
+		return builtinRules(), []error{fmt.Errorf("redact: cannot parse %s: %w; using built-in rules", path, err)}
+	}
+	if len(file.Patterns) == 0 {
+		// An empty/typo'd file must never mean "redact nothing".
+		return builtinRules(), []error{fmt.Errorf("redact: %s has no patterns; using built-in rules", path)}
+	}
+
+	rules, errs = compileSpecs(file.Patterns)
+	if len(rules) == 0 {
+		// Every rule in the file was invalid; fall back rather than run open.
+		errs = append(errs, fmt.Errorf("redact: %s has no valid patterns; using built-in rules", path))
+		return builtinRules(), errs
+	}
+	return rules, errs
+}
+
+// builtinRules returns a fresh copy of the compiled built-in rule table so the
+// caller can append to it without touching the shared slice.
+func builtinRules() []rule {
+	base := make([]rule, len(builtins))
+	copy(base, builtins)
+	return base
+}
+
+// compileSpecs compiles editable specs into rules non-fatally: an invalid
+// regexp is skipped with a warning (mirroring user-pattern handling) rather
+// than panicking, so one bad line in redact.yml can't disable the rest.
+func compileSpecs(specs []Spec) (rules []rule, errs []error) {
+	rules = make([]rule, 0, len(specs))
+	for _, s := range specs {
+		if strings.TrimSpace(s.Pattern) == "" {
+			continue
+		}
+		re, err := regexp.Compile(s.Pattern)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("redact: skipping invalid pattern %q (%s): %w", s.Name, s.Pattern, err))
+			continue
+		}
+		name := s.Name
+		if name == "" {
+			name = "unnamed"
+		}
+		rules = append(rules, rule{name: name, re: re, hints: s.Hints, fold: s.Fold})
+	}
+	return rules, errs
+}
+
+// assemble appends userPatterns to the base rules and attaches the ignore dirs,
+// returning the finished Filter. It is the shared core of New and Load; errs
+// accumulates any prior (base-load) warnings plus per-user-pattern ones.
+func assemble(base []rule, userPatterns, ignoreDirs []string, errs []error) (*Filter, []error) {
+	rules := base
 	for _, p := range userPatterns {
 		if strings.TrimSpace(p) == "" {
 			continue
@@ -150,9 +272,78 @@ func New(userPatterns, ignoreDirs []string) (f *Filter, errs []error) {
 	return &Filter{rules: rules, dirs: dirs}, errs
 }
 
+// Seed writes the built-in rules to <dir>/redact.yml so the user can see and
+// edit them, but ONLY when the file does not already exist — it never clobbers
+// edits, so it is safe to call on every setup. The file is written 0600 and
+// atomically (temp file + rename), and the state dir is created if needed.
+func Seed(dir string) error {
+	path := config.RedactPath(dir)
+	switch _, err := os.Stat(path); {
+	case err == nil:
+		return nil // already present: never overwrite the user's edits
+	case !errors.Is(err, fs.ErrNotExist):
+		return err
+	}
+	if err := config.EnsureDir(dir); err != nil {
+		return err
+	}
+
+	body, err := marshalSpecs(DefaultSpecs())
+	if err != nil {
+		return err
+	}
+
+	tmp, err := os.CreateTemp(dir, ".redact-*.yml.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }() // no-op after a successful rename
+
+	if _, err := tmp.Write(body); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
+}
+
+// redactHeader documents the file for whoever opens it in an editor.
+const redactHeader = `# yore secret-redaction rules — seeded from the built-ins; edit freely. A command
+# matching any rule below is never recorded (and so never synced). Each rule has a
+# name, a Go regexp pattern, optional literal hints (a fast pre-filter — at least
+# one must be present for the regexp to run; omit to always run it), and an
+# optional fold flag (case-insensitive hint match; hints must then be lowercase).
+#
+# Fail-safe: if this file is removed, unreadable, unparseable, or left with no
+# patterns, yore falls back to the built-in rules — redaction never silently
+# turns off. You can still delete individual rules you don't want.
+`
+
+// marshalSpecs renders specs as the redact.yml document (header + patterns).
+func marshalSpecs(specs []Spec) ([]byte, error) {
+	doc := struct {
+		Patterns []Spec `yaml:"patterns"`
+	}{Patterns: specs}
+	body, err := yaml.Marshal(doc)
+	if err != nil {
+		return nil, err
+	}
+	return append([]byte(redactHeader), body...), nil
+}
+
 // Sensitive reports whether cmd matches any built-in or user rule. It is the
 // hot path and does not allocate for a command that trips no rule's hints.
 func (f *Filter) Sensitive(cmd string) bool { return f.match(cmd) >= 0 }
+
+// NumRules is the count of compiled rules (loaded/built-in plus valid user
+// patterns) backing this Filter. Intended for `yore doctor` reporting.
+func (f *Filter) NumRules() int { return len(f.rules) }
 
 // Reason returns the name of the first rule cmd matches, or "" if none.
 // Intended for `yore doctor`/debug output, not the hot path.

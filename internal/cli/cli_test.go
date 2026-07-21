@@ -73,7 +73,9 @@ func TestFilterDecision(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.keep, filterDecision(tc.cfg, tc.cmd, tc.cwd))
+			// An empty state dir has no redact.yml, so Load falls back to the
+			// built-ins — the behavior this gate is asserting.
+			require.Equal(t, tc.keep, filterDecision(t.TempDir(), tc.cfg, tc.cmd, tc.cwd))
 		})
 	}
 }

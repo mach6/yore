@@ -142,11 +142,21 @@ device ids for `yore devices approve|revoke`.
 
 Everything except what looks sensitive. `yore` never records:
 
-- commands matching a built-in **secrets** pattern (AWS/GitHub/Slack tokens,
+- commands matching a **secrets** rule (AWS/GitHub/Slack tokens,
   `--password`/credential flags, connection-string URLs with inline passwords,
   PEM blocks, JWTs, `TOKEN=…`/`SECRET=…` assignments, …) or any regex you add;
 - commands you start with a leading space (the `histignorespace` convention);
 - commands run under a directory you list in `ignore_dirs`.
+
+The secrets rules live in **`~/.config/yore/redact.yml`** — a YAML file seeded
+from the built-ins on `yore setup` and yours to edit: tweak a pattern, drop a
+rule you don't want, or add your own. Each rule is a `name`, a Go `pattern`
+(regexp), optional literal `hints` (a fast pre-filter), and an optional `fold`
+flag (case-insensitive hint match). It is **fail-safe**: if the file is missing,
+unreadable, unparseable, or left with no patterns, `yore` falls back to the
+compiled-in built-ins, so a typo can never silently switch redaction off (a
+single invalid pattern is skipped; the rest keep working). `yore doctor` reports
+which rules loaded and whether it fell back.
 
 The same filter runs on **import**, so bulk-loading years of `~/.zsh_history`
 won't drag old credentials into the store (or, later, to your server).
@@ -345,6 +355,7 @@ directory with `$YORE_DIR`.
 ```
 ~/.config/yore/
 ├── config.json     settings
+├── redact.yml      editable secret-redaction rules (seeded; fail-safe)
 ├── data.db         this host's history (bbolt)
 ├── device.key      this device's private key (0600)
 ├── corpus.snap     warm-start search snapshot (derived, rebuildable)

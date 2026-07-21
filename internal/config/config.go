@@ -31,6 +31,7 @@ func KeyPath(dir string) string    { return filepath.Join(dir, "device.key") }
 func SpoolDir(dir string) string   { return filepath.Join(dir, "spool") }
 func SocketPath(dir string) string { return filepath.Join(dir, "daemon.sock") }
 func ConfigPath(dir string) string { return filepath.Join(dir, "config.json") }
+func RedactPath(dir string) string { return filepath.Join(dir, "redact.yml") }
 func BackupDir(dir string) string  { return filepath.Join(dir, "backups") }
 
 // Config is ~/.config/yore/config.json. Zero values mean "use default";
