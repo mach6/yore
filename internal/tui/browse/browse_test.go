@@ -762,3 +762,40 @@ func TestDevicesPane(t *testing.T) {
 	m, _ = step(t, m, press("esc"))
 	require.Equal(t, viewBrowse, m.view, "esc did not leave devices view")
 }
+
+func TestAgentsViewRenders(t *testing.T) {
+	// Two agent-tagged rows plus one human row; the agent view must summarize the
+	// agents and exclude the human command.
+	rows := mkRows("cargo test", "cargo build", "ls")
+	rows[0].Tag = "claude-code"
+	rows[1].Tag = "claude-code"
+	rows[1].Exit = rec.IntPtr(1) // one failure
+	// rows[2] stays untagged (a human command)
+	f := &fakeBackend{
+		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 3}}},
+		resp:  mkResp(rows),
+	}
+	m := ready(t, f, 120, 40)
+
+	m, cmd := step(t, m, press("a"))
+	require.Equal(t, viewAgents, m.view, "`a` did not switch to the agents view")
+	require.NotNil(t, cmd, "opening agents issued no aggregation query")
+	sr, ok := cmd().(statsResultMsg)
+	require.True(t, ok, "agents command must yield a statsResultMsg (shared sample)")
+	m, _ = step(t, m, sr)
+
+	require.NotNil(t, m.agents, "agents aggregate not computed")
+	require.Len(t, m.agents.agents, 1, "exactly one agent (claude-code); the human row is excluded")
+	a := m.agents.agents[0]
+	require.Equal(t, "claude-code", a.name)
+	require.Equal(t, 2, a.count, "two agent commands")
+	require.Equal(t, 1, a.failures, "one failing agent command")
+
+	out := strip(m.View())
+	require.Containsf(t, out, "claude-code", "agents view missing the executor:\n%s", out)
+	require.Containsf(t, out, "EXECUTOR", "agents view missing the table header:\n%s", out)
+
+	// `a` again returns to browse.
+	m, _ = step(t, m, press("a"))
+	require.Equal(t, viewBrowse, m.view, "second `a` did not return to browse")
+}

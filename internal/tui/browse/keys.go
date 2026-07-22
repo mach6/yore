@@ -85,6 +85,8 @@ func (m Model) helpKeys() help.KeyMap {
 		return statsKeys{}
 	case viewDevices:
 		return devicesKeys{}
+	case viewAgents:
+		return agentsKeys{}
 	default:
 		return m.keys
 	}
@@ -96,13 +98,27 @@ type statsKeys struct{}
 
 func (statsKeys) ShortHelp() []key.Binding {
 	return []key.Binding{
+		key.NewBinding(key.WithKeys("1", "2", "3", "4", "5"), key.WithHelp("1-5", "period")),
 		key.NewBinding(key.WithKeys("s", "esc"), key.WithHelp("s/esc", "back")),
-		key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "sync now")),
 		key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 	}
 }
 
 func (k statsKeys) FullHelp() [][]key.Binding { return [][]key.Binding{k.ShortHelp()} }
+
+// agentsKeys is the footer hint set for the agent-monitor view: period tabs,
+// a/esc returns to browse, q quits.
+type agentsKeys struct{}
+
+func (agentsKeys) ShortHelp() []key.Binding {
+	return []key.Binding{
+		key.NewBinding(key.WithKeys("1", "2", "3", "4", "5"), key.WithHelp("1-5", "period")),
+		key.NewBinding(key.WithKeys("a", "esc"), key.WithHelp("a/esc", "back")),
+		key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
+	}
+}
+
+func (k agentsKeys) FullHelp() [][]key.Binding { return [][]key.Binding{k.ShortHelp()} }
 
 // devicesKeys is the footer hint set for the devices view (see handleDevicesKey:
 // a/x act, r refetches, j/k move; esc/q/D return to browse, ctrl+c quits — q

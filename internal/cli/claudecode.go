@@ -43,22 +43,22 @@ type claudeHookInput struct {
 // does not carry it (success and failure are separate events in Claude Code),
 // so the record's exit stays unknown rather than fabricated. Capturing exit
 // status is a follow-up once that event contract is pinned down.
-func runHookClaudeCode() int {
+func runHookClaudeCode() {
 	raw, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
 	if err != nil {
-		return 0
+		return
 	}
 	var in claudeHookInput
 	if json.Unmarshal(raw, &in) != nil {
-		return 0
+		return
 	}
 	// Only Bash tool calls carry a shell command. An empty tool_name is treated
 	// permissively (older payloads), but a named non-Bash tool is skipped.
 	if in.ToolName != "" && in.ToolName != "Bash" {
-		return 0
+		return
 	}
 	if strings.TrimSpace(in.ToolInput.Command) == "" {
-		return 0
+		return
 	}
 	spoolRecord(stateDir(), rec.Record{
 		Session: in.SessionID,
@@ -66,7 +66,6 @@ func runHookClaudeCode() int {
 		Cwd:     in.Cwd,
 		Tag:     agentClaudeCode,
 	})
-	return 0
 }
 
 // --- `yore init claude-code`: install the capture hook -----------------------

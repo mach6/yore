@@ -102,7 +102,7 @@ func TestRunHookClaudeCodeCaptures(t *testing.T) {
 	  "tool_input": {"command": "cargo test"}
 	}`
 	feedStdin(t, payload, func() {
-		require.Equal(t, 0, runHookClaudeCode(), "hook must always exit 0")
+		runHookClaudeCode()
 	})
 
 	rows := spooledRecords(t, dir)
@@ -130,7 +130,7 @@ func TestRunHookClaudeCodeIgnoresNonBashAndJunk(t *testing.T) {
 			t.Setenv("YORE_DIR", dir)
 			require.NoError(t, config.EnsureDir(dir))
 			feedStdin(t, tc.payload, func() {
-				require.Equal(t, 0, runHookClaudeCode(), "must always exit 0")
+				runHookClaudeCode()
 			})
 			assert.Empty(t, spooledRecords(t, dir), "nothing should be captured")
 		})
@@ -147,6 +147,6 @@ func TestRunHookClaudeCodeRedacts(t *testing.T) {
 	// A shape the built-in rules catch (see internal/redact): an inline secret
 	// assignment. The agent path must gate it exactly as the shell path does.
 	payload := `{"tool_name":"Bash","cwd":"/w","tool_input":{"command":"export DB_PASSWORD=hunter2"}}`
-	feedStdin(t, payload, func() { _ = runHookClaudeCode() })
+	feedStdin(t, payload, func() { runHookClaudeCode() })
 	assert.Empty(t, spooledRecords(t, dir), "a secret-bearing agent command must be redacted, not captured")
 }

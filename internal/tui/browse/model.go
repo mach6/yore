@@ -63,6 +63,7 @@ const (
 	viewBrowse viewMode = iota
 	viewStats
 	viewDevices
+	viewAgents
 )
 
 // hostItem is one row of the host sidebar. The first real host reported by the
@@ -138,6 +139,7 @@ type Model struct {
 
 	// stats
 	stats        *statsData
+	agents       *agentsData  // agent-monitor aggregation, from the same sample
 	statsRows    []rec.Record // the full sample; re-aggregated when the period changes
 	statsPeriod  int          // index into statPeriods
 	statsErr     error
@@ -395,7 +397,7 @@ func (m Model) applyStats(msg statsResultMsg) (tea.Model, tea.Cmd) {
 	}
 	m.statsErr = nil
 	m.statsRows = msg.resp.Rows
-	m.stats = computeStats(m.statsRows, m.now(), statPeriods[m.statsPeriod].days)
+	m.recomputeStats()
 	return m, nil
 }
 
@@ -535,6 +537,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "s":
 		return m.toggleStats()
+	case "a":
+		return m.toggleAgents()
 	case "S":
 		return m.syncNow()
 	case "D":
@@ -543,7 +547,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.devicesCmd()
 	}
 
-	if m.view == viewStats {
+	if m.view == viewStats || m.view == viewAgents {
 		switch s {
 		case "esc":
 			m.view = viewBrowse
@@ -551,9 +555,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// Period tabs: re-aggregate the held sample without a new query.
 			if p := int(s[0] - '1'); p < len(statPeriods) {
 				m.statsPeriod = p
-				if m.statsRows != nil {
-					m.stats = computeStats(m.statsRows, m.now(), statPeriods[p].days)
-				}
+				m.recomputeStats()
 			}
 		}
 		return m, nil
@@ -674,6 +676,33 @@ func (m Model) toggleTagFilter() (tea.Model, tea.Cmd) {
 	m.flashID++
 	mm, qcmd := m.issueQuery()
 	return mm, tea.Batch(qcmd, flashTick(mm.flashID))
+}
+
+// recomputeStats re-derives the stats and agent aggregates from the held sample
+// for the current period. Cheap; called on load and on a period-tab change.
+func (m *Model) recomputeStats() {
+	if m.statsRows == nil {
+		return
+	}
+	days := statPeriods[m.statsPeriod].days
+	m.stats = computeStats(m.statsRows, m.now(), days)
+	m.agents = computeAgents(m.statsRows, m.now(), days)
+}
+
+// toggleAgents opens the agent-monitor view (or returns to browse), reusing the
+// stats sample query so the aggregation has data.
+func (m Model) toggleAgents() (tea.Model, tea.Cmd) {
+	if m.view == viewAgents {
+		m.view = viewBrowse
+		return m, nil
+	}
+	m.view = viewAgents
+	if m.statsRows != nil {
+		m.recomputeStats()
+		return m, nil
+	}
+	m.statsSeq++
+	return m, m.statsCmd(m.statsSeq)
 }
 
 func (m Model) toggleStats() (tea.Model, tea.Cmd) {

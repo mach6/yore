@@ -315,7 +315,7 @@ func newHookCmd() *cobra.Command {
 		Use:   "claude-code",
 		Short: "Record a Bash command from a Claude Code PostToolUse hook (reads JSON on stdin)",
 		Args:  cobra.NoArgs,
-		RunE:  func(*cobra.Command, []string) error { return code(runHookClaudeCode()) },
+		RunE:  func(*cobra.Command, []string) error { runHookClaudeCode(); return nil },
 	})
 	return cmd
 }

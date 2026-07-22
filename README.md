@@ -138,9 +138,12 @@ rm -rf ~/.config/yore         # all of yore's state
 - **`Ctrl-R` search** — scopes (local / all / host / session / cwd / git-repo),
   frecency and fuzzy matching, syntax highlighting; Enter runs the pick by default
   (`enter_executes`).
-- **`hb` browser** — hosts / table / detail / stats / devices panes, a tag column
-  and `t` filter, `S` sync-now; Enter recalls the pick to your prompt, `y` copies.
-  (yore leaves your own `h` alone.)
+- **`hb` browser** — hosts / table / detail panes, plus full-screen **stats**
+  (`s`: KPIs, top programs/commands/dirs, by-executor, per-day + hourly
+  histograms, period tabs), an **agent monitor** (`a`: per-agent commands,
+  success rate, failures, avg duration), and **devices** (`D`). A tag column and
+  `t` filter, `S` sync-now; Enter recalls the pick, `y` copies. (yore leaves your
+  own `h` alone.)
 - **`hs` + scoped `hsa`/`hss`/`hsc`/`hsw`** search aliases; `yore search
   --headless` for scripts and pipes.
 - **Agent tagging** — commands an agent runs are tagged so you can tell them
@@ -165,7 +168,7 @@ Configure via `~/.config/yore/config.json` (every key + default is in
 | Re-run an event by number | `!N`, `!!`, `!$` — native, against yore's history |
 | Cycle search scope (host / all / session / dir / repo) | `Ctrl-R` again inside the search |
 | Rank by frequency×recency, or fuzzy-match | frecency / fuzzy toggles inside the search |
-| Browse, inspect, get stats, manage devices | `hb` — `Enter` recalls, `y` copies, `D` for devices |
+| Browse, get stats, watch agents, manage devices | `hb` — `s` stats, `a` agents, `D` devices; `Enter` recalls, `y` copies |
 | Capture what Claude Code runs | `yore init claude-code` (once) |
 | See only what an agent ran | `yore search --tag claude-code` |
 | Grep history in a script | `hs <query>` \| … or `yore search --headless <query>` |
