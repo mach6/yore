@@ -40,6 +40,12 @@ type Record struct {
 	StartMs int64  `json:"start_ms,omitempty"`
 	Tag     string `json:"tag,omitempty"` // executor: agent/tool that ran it (e.g. "claude-code"), "" = interactive
 
+	// Prompt tracing (agent commands only). PromptID groups every command an
+	// agent ran in service of one user prompt; Prompt is that prompt's text,
+	// carried on each member so the grouping survives sync without a join.
+	PromptID string `json:"prompt_id,omitempty"`
+	Prompt   string `json:"prompt,omitempty"`
+
 	DeletedMs int64  `json:"deleted_ms,omitempty"` // tombstone applied locally
 	KeyID     string `json:"key_id,omitempty"`     // DEK that sealed this record in transit
 }

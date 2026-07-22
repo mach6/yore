@@ -192,10 +192,14 @@ filter by tag, separating "what I typed" from "what an agent ran".
 
 An agent whose commands run in a *non-interactive* shell (Claude Code's Bash
 tool is `zsh -c …`) is never seen by the rc hooks, so `yore init claude-code`
-installs a Claude Code **PostToolUse** hook that pipes each Bash command to
-`yore hook claude-code`, which records it (tagged `claude-code`) through the same
-redaction gate as the shell path. It writes ~/.claude/settings.json (or, with
---project, ./.claude/settings.json), merging without disturbing other settings.
+installs Claude Code hooks: **PostToolUse** pipes each Bash command to
+`yore hook claude-code`, and **UserPromptSubmit** pipes each prompt to
+`yore hook claude-prompt`. The prompt hook writes the session's current prompt to
+a per-session state file; the command hook reads it and stamps `prompt_id` +
+`prompt` onto the record, so every command is traced to the prompt that triggered
+it. Both go through the same redaction gate as the shell path (a secret-bearing
+command or prompt is dropped). `yore init claude-code` writes ~/.claude/settings.json
+(or, with --project, ./.claude/settings.json), merging without disturbing other settings.
 
 ## Shell integration modes
 

@@ -331,7 +331,7 @@ generation. `epoch` is unix millis of the epoch start.
 
 Each record's plaintext is the JSON of its meaningful fields — `{v:1, id,
 host_id, hostname, session, cmd, cwd, exit, dur_ms, start_ms, tag, type,
-target_id}` — so **everything, including the hostname, travels encrypted**. The
+target_id, prompt_id, prompt}` — so **everything, including the hostname, travels encrypted**. The
 stream metadata (`seq`, `key_id`, and the outer `id`) rides in the wire record,
 not the ciphertext, and is bound as AAD.
 

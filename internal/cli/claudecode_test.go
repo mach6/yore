@@ -52,13 +52,18 @@ func TestMergeClaudeHookPreservesExisting(t *testing.T) {
 
 	assert.Equal(t, "opus", settings["model"], "unrelated top-level keys must survive")
 	hooks := settings["hooks"].(map[string]any)
-	assert.Len(t, hooks["UserPromptSubmit"].([]any), 1, "unrelated hook events must survive")
 
 	post := hooks["PostToolUse"].([]any)
 	require.Len(t, post, 2, "the existing Edit hook must be kept and ours appended")
 	// The pre-existing Edit/prettier block must still be there.
 	first := post[0].(map[string]any)
 	assert.Equal(t, "Edit", first["matcher"], "existing PostToolUse block must be preserved")
+
+	// The pre-existing UserPromptSubmit (logger) survives, and ours is appended.
+	ups := hooks["UserPromptSubmit"].([]any)
+	require.Len(t, ups, 2, "existing UserPromptSubmit hook kept and ours appended")
+	logger := ups[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)
+	assert.Equal(t, "logger", logger["command"], "the pre-existing prompt hook must be preserved")
 }
 
 // feedStdin swaps os.Stdin for a pipe carrying payload, for the duration of fn.
@@ -149,4 +154,58 @@ func TestRunHookClaudeCodeRedacts(t *testing.T) {
 	payload := `{"tool_name":"Bash","cwd":"/w","tool_input":{"command":"export DB_PASSWORD=hunter2"}}`
 	feedStdin(t, payload, func() { runHookClaudeCode() })
 	assert.Empty(t, spooledRecords(t, dir), "a secret-bearing agent command must be redacted, not captured")
+}
+
+func TestPromptTracing(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("YORE_DIR", dir)
+	require.NoError(t, config.EnsureDir(dir))
+
+	// UserPromptSubmit records the session's current prompt.
+	feedStdin(t, `{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"add rate limiting to the API"}`,
+		runHookClaudePrompt)
+
+	// Two PostToolUse commands in that session then carry the prompt + a shared id.
+	feedStdin(t, `{"session_id":"s1","tool_name":"Bash","cwd":"/w","tool_input":{"command":"cargo add tower"}}`,
+		runHookClaudeCode)
+	feedStdin(t, `{"session_id":"s1","tool_name":"Bash","cwd":"/w","tool_input":{"command":"cargo build"}}`,
+		runHookClaudeCode)
+
+	rows := spooledRecords(t, dir)
+	require.Len(t, rows, 2, "two commands captured")
+	require.NotEmpty(t, rows[0].PromptID, "command must be traced to a prompt")
+	assert.Equal(t, rows[0].PromptID, rows[1].PromptID, "both commands share the prompt id")
+	assert.Equal(t, "add rate limiting to the API", rows[0].Prompt, "prompt text carried on the record")
+
+	// A command in a session with no prompt is untraced (not an error).
+	feedStdin(t, `{"session_id":"other","tool_name":"Bash","tool_input":{"command":"ls"}}`, runHookClaudeCode)
+	rows = spooledRecords(t, dir)
+	var untraced *rec.Record
+	for i := range rows {
+		if rows[i].Cmd == "ls" {
+			untraced = &rows[i]
+		}
+	}
+	require.NotNil(t, untraced)
+	assert.Empty(t, untraced.PromptID, "a command with no session prompt stays untraced")
+}
+
+func TestPromptHookRedactsSecrets(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("YORE_DIR", dir)
+	require.NoError(t, config.EnsureDir(dir))
+	feedStdin(t, `{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"use export DB_PASSWORD=hunter2 please"}`,
+		runHookClaudePrompt)
+	_, ok := loadPromptState(dir, "s1")
+	assert.False(t, ok, "a secret-bearing prompt must not be persisted")
+}
+
+func TestMergeClaudeHookInstallsBothEvents(t *testing.T) {
+	settings := map[string]any{}
+	require.True(t, mergeClaudeHook(settings, "yore"))
+	require.False(t, mergeClaudeHook(settings, "yore"), "idempotent across both events")
+
+	hooks := settings["hooks"].(map[string]any)
+	require.Len(t, hooks["PostToolUse"].([]any), 1, "PostToolUse hook installed")
+	require.Len(t, hooks["UserPromptSubmit"].([]any), 1, "UserPromptSubmit hook installed")
 }

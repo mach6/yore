@@ -1,14 +1,19 @@
 package cli
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"yore/internal/config"
 	"yore/internal/rec"
+	"yore/internal/redact"
 )
 
 // agentClaudeCode is the executor tag stamped on commands captured from Claude
@@ -60,12 +65,88 @@ func runHookClaudeCode() {
 	if strings.TrimSpace(in.ToolInput.Command) == "" {
 		return
 	}
-	spoolRecord(stateDir(), rec.Record{
+	dir := stateDir()
+	r := rec.Record{
 		Session: in.SessionID,
 		Cmd:     in.ToolInput.Command,
 		Cwd:     in.Cwd,
 		Tag:     agentClaudeCode,
-	})
+	}
+	// Stamp the prompt this command served, if the UserPromptSubmit hook recorded
+	// one for this session. Best-effort: absent state just leaves it untraced.
+	if ps, ok := loadPromptState(dir, in.SessionID); ok {
+		r.PromptID = ps.ID
+		r.Prompt = ps.Text
+	}
+	spoolRecord(dir, r)
+}
+
+// promptState is the latest user prompt seen for a session, persisted by the
+// UserPromptSubmit hook so the separate PostToolUse hook processes can stamp it
+// onto the commands it triggered.
+type promptState struct {
+	ID   string `json:"id"`
+	Text string `json:"text"`
+	Ms   int64  `json:"ms"`
+}
+
+// promptStatePath is where a session's current prompt is held. Session ids are
+// opaque; hash to a safe filename.
+func promptStatePath(dir, session string) string {
+	sum := sha256.Sum256([]byte(session))
+	return filepath.Join(dir, "agent-prompts", hex.EncodeToString(sum[:])[:32]+".json")
+}
+
+// loadPromptState reads the current prompt for a session (ok=false if none).
+func loadPromptState(dir, session string) (promptState, bool) {
+	if session == "" {
+		return promptState{}, false
+	}
+	b, err := os.ReadFile(promptStatePath(dir, session))
+	if err != nil {
+		return promptState{}, false
+	}
+	var ps promptState
+	if json.Unmarshal(b, &ps) != nil || ps.ID == "" {
+		return promptState{}, false
+	}
+	return ps, true
+}
+
+// runHookClaudePrompt ingests a Claude Code UserPromptSubmit payload from stdin
+// and records it as the session's current prompt, for the PostToolUse hook to
+// attach to the commands that follow. Like the other hooks it never blocks,
+// never prints, and always exits 0.
+func runHookClaudePrompt() {
+	raw, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
+	if err != nil {
+		return
+	}
+	var in claudeHookInput
+	if json.Unmarshal(raw, &in) != nil {
+		return
+	}
+	text := strings.TrimSpace(in.Prompt)
+	if text == "" || in.SessionID == "" {
+		return
+	}
+	// The redaction gate also guards prompts: a prompt containing a secret must
+	// not be persisted or later attached to a synced record.
+	dir := stateDir()
+	cfg, _ := config.Load(dir)
+	if filter, _ := redact.Load(dir, cfg.IgnorePatterns, cfg.IgnoreDirs); filter.Sensitive(text) {
+		return
+	}
+	ps := promptState{ID: rec.NewID(), Text: text, Ms: time.Now().UnixMilli()}
+	b, err := json.Marshal(ps)
+	if err != nil {
+		return
+	}
+	path := promptStatePath(dir, in.SessionID)
+	if os.MkdirAll(filepath.Dir(path), 0o700) != nil {
+		return
+	}
+	_ = os.WriteFile(path, b, 0o600)
 }
 
 // --- `yore init claude-code`: install the capture hook -----------------------
@@ -84,53 +165,56 @@ func claudeSettingsPath(project bool) (string, error) {
 	return filepath.Join(home, ".claude", "settings.json"), nil
 }
 
-// claudeHookCommand is the shell command Claude Code runs for the hook: this
-// binary, ingesting the payload on stdin.
-func claudeHookCommand(bin string) string { return bin + " hook claude-code" }
+// hook commands Claude Code runs, this binary ingesting the payload on stdin.
+func cmdPostToolUse(bin string) string      { return bin + " hook claude-code" }
+func cmdUserPromptSubmit(bin string) string { return bin + " hook claude-prompt" }
 
-// buildClaudeHookBlock returns the PostToolUse matcher block that runs our hook
-// on every Bash tool call.
-func buildClaudeHookBlock(bin string) map[string]any {
-	return map[string]any{
-		"matcher": "Bash",
-		"hooks": []any{
-			map[string]any{"type": "command", "command": claudeHookCommand(bin)},
-		},
+// buildMatcherBlock returns a hook block that runs command for the given tool
+// matcher (an empty matcher fires on every event of that kind).
+func buildMatcherBlock(matcher, command string) map[string]any {
+	blk := map[string]any{
+		"hooks": []any{map[string]any{"type": "command", "command": command}},
 	}
+	if matcher != "" {
+		blk["matcher"] = matcher
+	}
+	return blk
 }
 
-// mergeClaudeHook adds our PostToolUse hook to an existing settings map without
-// disturbing anything else. It is idempotent: if a block already runs our hook
-// command, the map is returned unchanged with added=false. Everything is kept
-// as generic JSON so unknown settings keys survive the round trip untouched.
-func mergeClaudeHook(settings map[string]any, bin string) (added bool) {
-	want := claudeHookCommand(bin)
-
+// mergeHookInto adds a hook block for command under settings.hooks[event] unless
+// a block there already runs command. Returns whether it added anything. Keeps
+// everything as generic JSON so unrelated settings survive untouched.
+func mergeHookInto(settings map[string]any, event, matcher, command string) bool {
 	hooks, _ := settings["hooks"].(map[string]any)
 	if hooks == nil {
 		hooks = map[string]any{}
 	}
-	post, _ := hooks["PostToolUse"].([]any)
-
-	// Already present? Scan every matcher block's hook commands for ours.
-	for _, blk := range post {
+	blocks, _ := hooks[event].([]any)
+	for _, blk := range blocks {
 		bm, ok := blk.(map[string]any)
 		if !ok {
 			continue
 		}
 		inner, _ := bm["hooks"].([]any)
 		for _, h := range inner {
-			hm, ok := h.(map[string]any)
-			if ok && hm["command"] == want {
+			if hm, ok := h.(map[string]any); ok && hm["command"] == command {
 				return false
 			}
 		}
 	}
-
-	post = append(post, buildClaudeHookBlock(bin))
-	hooks["PostToolUse"] = post
+	blocks = append(blocks, buildMatcherBlock(matcher, command))
+	hooks[event] = blocks
 	settings["hooks"] = hooks
 	return true
+}
+
+// mergeClaudeHook installs both capture hooks: PostToolUse(Bash) records the
+// command, UserPromptSubmit records the prompt it served. Idempotent; returns
+// whether anything changed.
+func mergeClaudeHook(settings map[string]any, bin string) (added bool) {
+	a := mergeHookInto(settings, "PostToolUse", "Bash", cmdPostToolUse(bin))
+	b := mergeHookInto(settings, "UserPromptSubmit", "", cmdUserPromptSubmit(bin))
+	return a || b
 }
 
 // runInitClaudeCode installs (or, with print, just shows) the Claude Code
@@ -141,11 +225,8 @@ func runInitClaudeCode(bin string, project, printOnly bool) int {
 	if printOnly {
 		// Emit just the hook fragment on stdout, for a user who prefers to merge
 		// it into settings.json by hand.
-		frag := map[string]any{
-			"hooks": map[string]any{
-				"PostToolUse": []any{buildClaudeHookBlock(bin)},
-			},
-		}
+		frag := map[string]any{}
+		mergeClaudeHook(frag, bin)
 		b, _ := json.MarshalIndent(frag, "", "  ")
 		fmt.Println(string(b))
 		return 0
@@ -189,8 +270,8 @@ func runInitClaudeCode(bin string, project, printOnly bool) int {
 		return 1
 	}
 
-	u.step("installed PostToolUse hook", path)
-	u.step("captures every Bash command Claude Code runs", "tagged "+agentClaudeCode)
+	u.step("installed PostToolUse + UserPromptSubmit hooks", path)
+	u.step("captures every Bash command Claude Code runs", "tagged "+agentClaudeCode+", traced to its prompt")
 	u.blank()
 	u.next("see agent commands after Claude Code runs some:",
 		"yore search --tag "+agentClaudeCode,
