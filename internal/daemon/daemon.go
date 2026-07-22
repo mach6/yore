@@ -128,6 +128,7 @@ func Run(dir string, opts Options) error {
 
 	sc := loadSyncConf(dir)
 	tags := newTagIndex()
+	tags.setAutoTags(cfg.AutoTags)
 	s := &server{
 		dir:         dir,
 		opts:        opts,

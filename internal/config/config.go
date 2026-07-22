@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -113,6 +114,12 @@ type Config struct {
 	IgnorePatterns      []string `toml:"ignore_patterns,omitempty"`
 	IgnoreDirs          []string `toml:"ignore_dirs,omitempty"`
 	RecordSpacePrefixed bool     `toml:"record_space_prefixed,omitempty"` // default false
+
+	// AutoTags maps a directory prefix to a tag name: commands run in (or under)
+	// a matching directory carry that freeform tag, resolved at query time by the
+	// daemon (so there is no cost on the record path). Longest prefix wins.
+	// Set via `yore set-config auto_tags "/work/proj=refactor,/personal=home"`.
+	AutoTags map[string]string `toml:"auto_tags,omitempty"`
 
 	// CaptureSpoolOnly makes the capture path (the shell hook and the agent
 	// hooks) write the record to the spool and stop there: it does NOT poke or
@@ -351,6 +358,17 @@ func formatField(f reflect.Value) string {
 			parts[i] = f.Index(i).String()
 		}
 		return strings.Join(parts, ",")
+	case reflect.Map:
+		keys := make([]string, 0, f.Len())
+		for _, k := range f.MapKeys() {
+			keys = append(keys, k.String())
+		}
+		sort.Strings(keys)
+		parts := make([]string, len(keys))
+		for i, k := range keys {
+			parts[i] = k + "=" + f.MapIndex(reflect.ValueOf(k)).String()
+		}
+		return strings.Join(parts, ",")
 	default:
 		return ""
 	}
@@ -381,6 +399,20 @@ func assignField(f reflect.Value, value string) error {
 			}
 		}
 		f.Set(reflect.ValueOf(parts))
+	case reflect.Map:
+		m := map[string]string{}
+		for _, pair := range strings.Split(value, ",") {
+			pair = strings.TrimSpace(pair)
+			if pair == "" {
+				continue
+			}
+			k, v, ok := strings.Cut(pair, "=")
+			if !ok {
+				return fmt.Errorf("want key=value pairs, got %q", pair)
+			}
+			m[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		}
+		f.Set(reflect.ValueOf(m))
 	default:
 		return fmt.Errorf("unsupported field kind %s", f.Kind())
 	}

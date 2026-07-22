@@ -71,6 +71,26 @@ func TestTagIndexList(t *testing.T) {
 	assert.Equal(t, "docs", list[0].Name)
 }
 
+func TestTagIndexAutoTags(t *testing.T) {
+	idx := newTagIndex()
+	idx.setAutoTags(map[string]string{"/work/proj": "refactor", "/personal": "home"})
+
+	// A command under /work/proj/src carries the auto-tag, no record needed.
+	inProj := rec.Record{ID: "c1", Cwd: "/work/proj/src"}
+	assert.ElementsMatch(t, []string{"refactor"}, idx.effective(inProj))
+	assert.True(t, idx.has(inProj, "refactor"))
+
+	// Boundary-aware: /work/project is NOT under /work/proj.
+	sibling := rec.Record{ID: "c2", Cwd: "/work/project"}
+	assert.Nil(t, idx.effective(sibling))
+	assert.False(t, idx.has(sibling, "refactor"))
+
+	// Auto-tags compose with the executor auto-tag and explicit user tags.
+	idx.apply(tagAdd("urgent", "c1", ""))
+	withExec := rec.Record{ID: "c1", Cwd: "/work/proj", Tag: "claude-code"}
+	assert.ElementsMatch(t, []string{"claude-code", "refactor", "urgent"}, idx.effective(withExec))
+}
+
 func TestTagIndexIgnoresNonTag(t *testing.T) {
 	idx := newTagIndex()
 	idx.apply(rec.Record{ID: "x", Cmd: "ls", Tag: "claude-code"}) // a command, not a tag record

@@ -19,6 +19,24 @@ type tagIndex struct {
 	desc     map[string]string          // tag name -> description (last non-empty wins)
 	cmdTags  map[string]map[string]bool // command id -> set of tag names
 	sessTags map[string]map[string]bool // session id -> set of tag names
+	autoTags map[string]string          // cwd prefix -> tag name (config; resolved at read time)
+}
+
+// setAutoTags installs the cwd-prefix -> tag rules (from config.AutoTags). They
+// are applied when resolving a row's effective tags, so there is no cost on the
+// record path and a rule change applies retroactively.
+func (t *tagIndex) setAutoTags(m map[string]string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.autoTags = m
+}
+
+// cwdUnder reports whether cwd is prefix or nested beneath it (segment-aware).
+func cwdUnder(cwd, prefix string) bool {
+	if prefix == "" || cwd == "" {
+		return false
+	}
+	return cwd == prefix || strings.HasPrefix(cwd, strings.TrimRight(prefix, "/")+"/")
 }
 
 func newTagIndex() *tagIndex {
@@ -94,6 +112,11 @@ func (t *tagIndex) effective(r rec.Record) []string {
 	for n := range t.sessTags[r.Session] {
 		set[n] = true
 	}
+	for prefix, name := range t.autoTags {
+		if cwdUnder(r.Cwd, prefix) {
+			set[normTag(name)] = true
+		}
+	}
 	if len(set) == 0 {
 		return nil
 	}
@@ -117,7 +140,15 @@ func (t *tagIndex) has(r rec.Record, name string) bool {
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	return t.cmdTags[r.ID][name] || t.sessTags[r.Session][name]
+	if t.cmdTags[r.ID][name] || t.sessTags[r.Session][name] {
+		return true
+	}
+	for prefix, an := range t.autoTags {
+		if normTag(an) == name && cwdUnder(r.Cwd, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // list returns every known tag with its association count and description,
