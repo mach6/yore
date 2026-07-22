@@ -138,6 +138,8 @@ type Model struct {
 
 	// stats
 	stats        *statsData
+	statsRows    []rec.Record // the full sample; re-aggregated when the period changes
+	statsPeriod  int          // index into statPeriods
 	statsErr     error
 	gotStats     bool
 	statsSeq     uint64
@@ -223,9 +225,11 @@ func NewModel(b Backend, opts Options) Model {
 		detail: vp,
 		help:   h,
 		hosts:  []hostItem{{label: "All hosts", scope: proto.ScopeAll}},
-		focus:  focusTable,
-		width:  80,
-		height: 24,
+		// Stats open on the widest window; keys 1..4 narrow it.
+		statsPeriod: len(statPeriods) - 1,
+		focus:       focusTable,
+		width:       80,
+		height:      24,
 		borderFocus: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(th.Accent.GetForeground()),
@@ -390,7 +394,8 @@ func (m Model) applyStats(msg statsResultMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.statsErr = nil
-	m.stats = computeStats(msg.resp.Rows, m.hosts, m.now())
+	m.statsRows = msg.resp.Rows
+	m.stats = computeStats(m.statsRows, m.now(), statPeriods[m.statsPeriod].days)
 	return m, nil
 }
 
@@ -539,8 +544,17 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.view == viewStats {
-		if s == "esc" {
+		switch s {
+		case "esc":
 			m.view = viewBrowse
+		case "1", "2", "3", "4", "5":
+			// Period tabs: re-aggregate the held sample without a new query.
+			if p := int(s[0] - '1'); p < len(statPeriods) {
+				m.statsPeriod = p
+				if m.statsRows != nil {
+					m.stats = computeStats(m.statsRows, m.now(), statPeriods[p].days)
+				}
+			}
 		}
 		return m, nil
 	}

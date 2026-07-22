@@ -402,9 +402,9 @@ func TestStatsViewRenders(t *testing.T) {
 	require.Containsf(t, out, "█", "stats sparkline missing a full block glyph:\n%s", out) // all rows share one day -> that bucket peaks
 
 	require.NotNilf(t, m.stats, "top command aggregate = %+v, want git=3 first", m.stats)
-	require.NotEmptyf(t, m.stats.topCmds, "top command aggregate = %+v, want git=3 first", m.stats)
-	require.Equalf(t, "git", m.stats.topCmds[0].name, "top command aggregate = %+v, want git=3 first", m.stats)
-	require.Equalf(t, 3, m.stats.topCmds[0].n, "top command aggregate = %+v, want git=3 first", m.stats)
+	require.NotEmptyf(t, m.stats.topPrograms, "top command aggregate = %+v, want git=3 first", m.stats)
+	require.Equalf(t, "git", m.stats.topPrograms[0].name, "top command aggregate = %+v, want git=3 first", m.stats)
+	require.Equalf(t, 3, m.stats.topPrograms[0].n, "top command aggregate = %+v, want git=3 first", m.stats)
 
 	// `s` again returns to the browse view.
 	m, _ = step(t, m, press("s"))
@@ -426,7 +426,7 @@ func TestResizeStaysWithinWidth(t *testing.T) {
 			for _, mode := range []viewMode{viewBrowse, viewStats} {
 				m.view = mode
 				if mode == viewStats {
-					m.stats = computeStats(f.resp.Rows, m.hosts, now)
+					m.stats = computeStats(f.resp.Rows, now, 0)
 				}
 				for _, line := range strings.Split(m.View(), "\n") {
 					got := lipgloss.Width(line)
