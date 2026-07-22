@@ -66,6 +66,23 @@ func TestMergeClaudeHookPreservesExisting(t *testing.T) {
 	assert.Equal(t, "logger", logger["command"], "the pre-existing prompt hook must be preserved")
 }
 
+func TestMergeMcpServerAddsAndIsIdempotent(t *testing.T) {
+	// Adds under mcpServers.yore as a stdio entry (command + args, no type/url).
+	cfg := map[string]any{"existing": "keep me"}
+	require.True(t, mergeMcpServer(cfg, "yore"))
+	require.False(t, mergeMcpServer(cfg, "yore"), "second merge is a no-op")
+
+	assert.Equal(t, "keep me", cfg["existing"], "unrelated keys survive")
+	servers := cfg["mcpServers"].(map[string]any)
+	yore := servers["yore"].(map[string]any)
+	assert.Equal(t, "yore", yore["command"])
+	assert.Equal(t, []any{"mcp-serve"}, yore["args"])
+	_, hasType := yore["type"]
+	assert.False(t, hasType, "stdio entry needs no type")
+	_, hasURL := yore["url"]
+	assert.False(t, hasURL, "stdio entry has no url")
+}
+
 // feedStdin swaps os.Stdin for a pipe carrying payload, for the duration of fn.
 func feedStdin(t *testing.T, payload string, fn func()) {
 	t.Helper()

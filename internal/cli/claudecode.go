@@ -277,18 +277,95 @@ func mergeClaudeHook(settings map[string]any, bin string) (added bool) {
 	return a || f || b
 }
 
+// mcpServerEntry is the stdio MCP server registration Claude Code (and Cursor)
+// launch to reach yore's history. No "type" is needed: an entry with a command
+// and no url is a stdio server.
+func mcpServerEntry(bin string) map[string]any {
+	return map[string]any{"command": bin, "args": []any{"mcp-serve"}}
+}
+
+// mergeMcpServer registers yore under mcpServers unless it is already there.
+// Returns whether it changed anything. Keeps everything as generic JSON so the
+// rest of the (often large) config survives untouched.
+func mergeMcpServer(cfg map[string]any, bin string) bool {
+	servers, _ := cfg["mcpServers"].(map[string]any)
+	if servers == nil {
+		servers = map[string]any{}
+	}
+	if _, ok := servers["yore"]; ok {
+		return false
+	}
+	servers["yore"] = mcpServerEntry(bin)
+	cfg["mcpServers"] = servers
+	return true
+}
+
+// mcpConfigPath resolves the file holding MCP server registrations: the
+// project-scoped .mcp.json (version-controlled) with --project, else the
+// user-scoped ~/.claude.json.
+func mcpConfigPath(project bool) (string, error) {
+	if project {
+		return ".mcp.json", nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".claude.json"), nil
+}
+
+// installMcpServer registers yore's MCP server in the right config file,
+// preserving everything else in it. A malformed existing file is left alone.
+func installMcpServer(bin string, project bool, u *ui) error {
+	path, err := mcpConfigPath(project)
+	if err != nil {
+		return err
+	}
+	cfg := map[string]any{}
+	if data, rerr := os.ReadFile(path); rerr == nil {
+		if json.Unmarshal(data, &cfg) != nil {
+			u.step("skipped MCP registration (existing file is not valid JSON)", path)
+			return nil
+		}
+	} else if !os.IsNotExist(rerr) {
+		return rerr
+	}
+	if !mergeMcpServer(cfg, bin) {
+		u.step("MCP server already registered", path)
+		return nil
+	}
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, append(out, '\n'), 0o644); err != nil {
+		return err
+	}
+	u.step("registered MCP server", path)
+	return nil
+}
+
 // runInitClaudeCode installs (or, with print, just shows) the Claude Code
-// PostToolUse hook that records each Bash command the agent runs.
+// capture hooks and registers yore's MCP server so the agent can query history.
 func runInitClaudeCode(bin string, project, printOnly bool) int {
 	u := newUI()
 
 	if printOnly {
-		// Emit just the hook fragment on stdout, for a user who prefers to merge
-		// it into settings.json by hand.
+		// Emit the hook fragment (for settings.json) and the MCP fragment (for
+		// ~/.claude.json), for a user who prefers to merge them by hand.
 		frag := map[string]any{}
 		mergeClaudeHook(frag, bin)
 		b, _ := json.MarshalIndent(frag, "", "  ")
+		fmt.Println("// ~/.claude/settings.json")
 		fmt.Println(string(b))
+		mcp := map[string]any{}
+		mergeMcpServer(mcp, bin)
+		mb, _ := json.MarshalIndent(mcp, "", "  ")
+		fmt.Println("// ~/.claude.json")
+		fmt.Println(string(mb))
 		return 0
 	}
 
@@ -332,9 +409,19 @@ func runInitClaudeCode(bin string, project, printOnly bool) int {
 
 	u.step("installed PostToolUse + PostToolUseFailure + UserPromptSubmit hooks", path)
 	u.step("captures every Bash command Claude Code runs", "tagged "+agentClaudeCode+", with exit status, traced to its prompt")
+
+	// Register the MCP server so the agent can query history back (across all
+	// machines). Non-fatal: capture still works without it.
+	if err := installMcpServer(bin, project, u); err != nil {
+		u.step("could not register MCP server (capture still works)", err.Error())
+	}
+
 	u.blank()
 	u.next("see agent commands after Claude Code runs some:",
 		"yore search --tag "+agentClaudeCode,
 		"hb   (browse)")
+	u.next("or ask Claude Code (MCP), e.g.:",
+		`"what commands failed in this project recently?"`,
+		`"have I run this migration on any machine?"`)
 	return 0
 }

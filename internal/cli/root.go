@@ -282,11 +282,12 @@ func newInitCmd() *cobra.Command {
 			"  eval \"$(yore init bash)\"  # ~/.bashrc\n" +
 			"Integration mode comes from --mode, else config.integration (default\n" +
 			"takeover). Modes: takeover (single source of truth), coexist, capture.\n\n" +
-			"claude-code installs a Claude Code PostToolUse hook that records every\n" +
-			"Bash command the agent runs (tagged claude-code), since an agent's\n" +
-			"non-interactive shell never loads the rc hooks:\n" +
-			"  yore init claude-code             # writes ~/.claude/settings.json\n" +
-			"  yore init claude-code --project   # writes ./.claude/settings.json\n" +
+			"claude-code installs Claude Code hooks that record every Bash command\n" +
+			"the agent runs (tagged claude-code, with exit status, traced to its\n" +
+			"prompt) — an agent's non-interactive shell never loads the rc hooks —\n" +
+			"and registers yore's MCP server so the agent can query history back:\n" +
+			"  yore init claude-code             # ~/.claude/settings.json + ~/.claude.json\n" +
+			"  yore init claude-code --project   # ./.claude/settings.json + ./.mcp.json\n" +
 			"  yore init claude-code --print     # print the JSON, install by hand",
 		Args:      cobra.ExactArgs(1),
 		ValidArgs: []cobra.Completion{"zsh", "bash", "claude-code"},
