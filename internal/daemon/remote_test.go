@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+
+	"yore/internal/proto"
 )
 
 // TestPushArm covers the experimental push-on-record debounce decision: a push
@@ -32,4 +34,31 @@ func TestPushArm(t *testing.T) {
 			assert.Equal(t, tc.wantPending, pending, "newPending")
 		})
 	}
+}
+
+// TestRemoteOnline covers the reachability gate for the eager push-on-record
+// nudge: an eager push fires only while the server is believed reachable (a
+// sync succeeded or is in flight). When it is unavailable — or unconfigured, or
+// the cache is nil — new records stay spooled locally instead of firing a push
+// that would only fail.
+func TestRemoteOnline(t *testing.T) {
+	tests := []struct {
+		name  string
+		state string
+		want  bool
+	}{
+		{"ok is online", proto.RemoteOK, true},
+		{"syncing is online", proto.RemoteSyncing, true},
+		{"unavailable is offline", proto.RemoteUnavailable, false},
+		{"off is offline", proto.RemoteOff, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rc := &remoteCache{state: tc.state}
+			assert.Equal(t, tc.want, rc.online())
+		})
+	}
+
+	var nilCache *remoteCache
+	assert.False(t, nilCache.online(), "nil cache is never online")
 }

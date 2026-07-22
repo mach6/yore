@@ -281,7 +281,10 @@ The daemon's sync loop (started only when a server is configured) is driven by:
   coalesced push shortly after new records are ingested (`pushWake`), so
   cross-host propagation is seconds rather than up to `sync_interval`. Off by
   default because an agent firing command bursts would push about once per
-  debounce for its whole run.
+  debounce for its whole run. The eager nudge fires only while the server is
+  reachable — when it is offline, new records stay spooled in the local store
+  and go out in a batch when the next periodic tick reconnects, rather than
+  firing an eager push that would only fail.
 
 `yore sync` (and `S` in the TUIs) runs a **synchronous** cycle via `OpSync` and
 reports the real outcome. Every cycle is `Push` then `PullOthers`, serialized by

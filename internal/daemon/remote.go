@@ -157,6 +157,21 @@ func (rc *remoteCache) syncer() *syncer.Syncer {
 
 func (rc *remoteCache) enabled() bool { return rc.syncer() != nil }
 
+// online reports whether the server is currently believed reachable: the last
+// sync attempt succeeded, or one is in flight. It gates the eager
+// push-on-record nudge — while the server is unreachable, new local records
+// simply stay spooled in the local store (already durable) and go out in a
+// batch once the next periodic sync reconnects, instead of firing a push that
+// would only fail against a dead server.
+func (rc *remoteCache) online() bool {
+	if rc == nil {
+		return false
+	}
+	rc.mu.RLock()
+	defer rc.mu.RUnlock()
+	return rc.state == proto.RemoteOK || rc.state == proto.RemoteSyncing
+}
+
 // attach installs (or, with nil, clears) the syncer after the sync-relevant
 // configuration changed. Cached remote history and pull cursors are dropped:
 // they belong to the previous server and must never be mixed with the new one's.

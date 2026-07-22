@@ -460,8 +460,11 @@ func (s *server) doIngest() {
 	s.logf("ingested %d records", n)
 	// Experimental push-on-record: nudge the sync loop that new local records
 	// landed. Harmless when disabled — the loop only arms its debounce timer when
-	// push_debounce is set (otherwise it just drains this).
-	if s.remote.enabled() {
+	// push_debounce is set (otherwise it just drains this). Only nudge while the
+	// server is reachable: when it is offline the records stay spooled in the
+	// local store and go out in a batch once the periodic sync reconnects, rather
+	// than firing an eager push that would only fail.
+	if s.remote.enabled() && s.remote.online() {
 		nudge(s.pushWake)
 	}
 }
