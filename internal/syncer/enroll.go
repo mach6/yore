@@ -14,19 +14,63 @@ import (
 // the group. The server accepts any version >= 1 at bootstrap and pins it.
 const bootstrapHKVersion = 1
 
-// Bootstrap forms a new history group from this, the FIRST device. It registers
-// self, mints the group's History Key, wraps it for our own device key, and
-// activates self (the server pins HK version 1). After Bootstrap the HK is
-// resolved in RAM and Push/PullOthers can run.
-func (s *Syncer) Bootstrap(ctx context.Context, deviceName string) error {
-	if _, err := s.registerSelf(ctx, deviceName); err != nil {
-		return err
+// Enroll registers this machine using a single-use enrollment ticket and
+// reports which path it landed on.
+//
+// The server decides: with no active device in the group this machine forms it
+// (Bootstrap), otherwise it is pending and an enrolled machine must approve the
+// returned verification code. The newcomer cannot determine this itself — it is
+// not yet authorized to read anything — so the registration response carries it.
+func (s *Syncer) Enroll(ctx context.Context, deviceName, ticket string) (formed bool, code string, err error) {
+	pub := s.dev.Public()
+	resp, err := s.http.RegisterDevice(ctx, wire.RegisterReq{
+		ID:      s.deviceID,
+		Name:    deviceName,
+		PubKey:  pub[:],
+		SignKey: s.dev.SignPublic(),
+	}, ticket)
+	if err != nil {
+		return false, "", err
 	}
+	devPub, err := cryptobox.PublicFromBytes(resp.Device.PubKey)
+	if err != nil {
+		return false, "", fmt.Errorf("syncer: server returned malformed pubkey: %w", err)
+	}
+	return resp.GroupFormed, VerificationCode(devPub), nil
+}
 
+// Bootstrap forms a new history group from this, the FIRST device: it mints the
+// group's History Key, wraps it for our own device key, and activates self (the
+// server pins HK version 1). The device must already be registered (see Enroll).
+//
+// It also installs the recovery key, and does so BEFORE self-activation: if
+// recovery cannot be established the group must not come into existence at all,
+// because the only moment a recovery wrap can be created is while the HK is
+// held in RAM by its creator.
+func (s *Syncer) Bootstrap(ctx context.Context, recovery cryptobox.RecoveryKey, salt []byte) error {
 	hk, err := cryptobox.NewHistoryKey()
 	if err != nil {
 		return fmt.Errorf("syncer: new history key: %w", err)
 	}
+
+	recPub := recovery.Public()
+	recBlob, err := cryptobox.WrapHK(hk, recPub)
+	if err != nil {
+		return fmt.Errorf("syncer: wrap history key for recovery: %w", err)
+	}
+	if err := s.http.InitRecovery(ctx, wire.RecoveryInit{
+		Salt:    salt,
+		PubKey:  recPub[:],
+		SignKey: recovery.SignPublic(),
+		Wrap: wire.HKWrap{
+			DeviceID:  RecoveryDeviceID,
+			Blob:      recBlob,
+			HKVersion: bootstrapHKVersion,
+		},
+	}); err != nil {
+		return fmt.Errorf("syncer: install recovery key: %w", err)
+	}
+
 	pub := s.dev.Public()
 	blob, err := cryptobox.WrapHK(hk, pub)
 	if err != nil {
@@ -44,32 +88,65 @@ func (s *Syncer) Bootstrap(ctx context.Context, deviceName string) error {
 	return nil
 }
 
-// Register enrolls this, a NON-first device, as pending and returns a short
-// verification code derived from our public key. An existing active device
-// confirms the same code (via VerificationCode over the pending device's
-// PubKey) before approving, guarding against a swapped key.
-func (s *Syncer) Register(ctx context.Context, deviceName string) (string, error) {
-	dev, err := s.registerSelf(ctx, deviceName)
-	if err != nil {
-		return "", err
-	}
-	pub, err := cryptobox.PublicFromBytes(dev.PubKey)
-	if err != nil {
-		return "", fmt.Errorf("syncer: server returned malformed pubkey: %w", err)
-	}
-	return VerificationCode(pub), nil
+// MintTicket issues a single-use enrollment ticket for adding another machine.
+func (s *Syncer) MintTicket(ctx context.Context) (wire.TicketResp, error) {
+	return s.http.MintTicket(ctx)
 }
 
-// registerSelf posts this device's registration (idempotent-ish: a re-register
-// surfaces the server's 409). It returns the server's device record.
-func (s *Syncer) registerSelf(ctx context.Context, deviceName string) (wire.Device, error) {
-	pub := s.dev.Public()
-	return s.http.RegisterDevice(ctx, wire.RegisterReq{
-		ID:      s.deviceID,
-		Name:    deviceName,
-		PubKey:  pub[:],
-		SignKey: s.dev.SignPublic(),
-	})
+// RecoverHK retrieves the History Key using only the recovery passphrase, for
+// when no enrolled device survives. It fetches the salt, derives the recovery
+// keypair, proves possession by signing with it, and unwraps HK.
+//
+// It returns the History Key and the HK version the wrap carried. The key is
+// NOT yet usable for sync: this machine still has to enroll and be admitted,
+// which the caller drives — and after this call the passed client signs as the
+// recovery identity, which is what authorizes both.
+func RecoverHK(ctx context.Context, http *HTTPClient, phrase string) (hk [32]byte, hkVersion int, err error) {
+	saltResp, err := http.RecoverySalt(ctx)
+	if err != nil {
+		return [32]byte{}, 0, fmt.Errorf("syncer: fetch recovery salt: %w", err)
+	}
+	rk, err := cryptobox.DeriveRecoveryKey(phrase, saltResp.Salt)
+	if err != nil {
+		return [32]byte{}, 0, err
+	}
+
+	// Sign as the recovery identity: there is no device record to sign as.
+	http.SetSigner(RecoveryDeviceID, rk.Sign)
+	wrap, err := http.RecoveryWrap(ctx)
+	if err != nil {
+		return [32]byte{}, 0, fmt.Errorf("syncer: fetch recovery wrap (wrong phrase?): %w", err)
+	}
+	hk, err = cryptobox.UnwrapHK(wrap.Blob, rk.DeviceKeyFor())
+	if err != nil {
+		return [32]byte{}, 0, fmt.Errorf("syncer: unwrap history key with the recovery phrase: %w", err)
+	}
+	return hk, wrap.HKVersion, nil
+}
+
+// AdoptHK installs a History Key obtained out of band (by RecoverHK) as this
+// syncer's key, so the caller can wrap it for a freshly enrolled device.
+func (s *Syncer) AdoptHK(hk [32]byte, version int) { s.setHK(hk, version) }
+
+// ActivateWith wraps the currently-held HK for deviceID and activates it. It is
+// how a recovered machine admits itself once it has the HK but no approver.
+func (s *Syncer) ActivateWith(ctx context.Context, deviceID string, pub [32]byte) error {
+	s.mu.Lock()
+	hk, version := s.hk, s.hkVersion
+	resolved := s.hkResolved
+	s.mu.Unlock()
+	if !resolved {
+		return fmt.Errorf("syncer: no history key held")
+	}
+	blob, err := cryptobox.WrapHK(hk, pub)
+	if err != nil {
+		return fmt.Errorf("syncer: wrap history key for %s: %w", deviceID, err)
+	}
+	return s.http.ActivateDevice(ctx, deviceID, wire.ActivateReq{Wrap: wire.HKWrap{
+		DeviceID:  deviceID,
+		Blob:      blob,
+		HKVersion: version,
+	}})
 }
 
 // PendingDevices lists devices awaiting approval.

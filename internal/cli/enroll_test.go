@@ -75,8 +75,13 @@ func TestRunSetup(t *testing.T) {
 				cfg, err := config.Load(dir)
 				require.NoError(t, err, "load config.json")
 				require.Equal(t, base, cfg.ServerURL, "saved server URL")
-				require.Equal(t, setupTestToken, cfg.Token, "saved token")
 				require.Equal(t, "takeover", cfg.Integration, "saved integration")
+
+				// The token belongs in the secret store, never in config.json.
+				raw, err := os.ReadFile(config.ConfigPath(dir))
+				require.NoError(t, err, "read config.json")
+				require.NotContains(t, string(raw), setupTestToken, "token must not appear in config.json")
+
 			},
 		},
 		{
@@ -101,7 +106,6 @@ func TestRunSetup(t *testing.T) {
 			if tc.preseedGood {
 				require.NoError(t, config.Save(dir, config.Config{
 					ServerURL:   base,
-					Token:       setupTestToken,
 					Integration: "takeover",
 				}), "preseed config")
 			}

@@ -27,10 +27,10 @@ func enroll(t *testing.T, url string) *HTTPClient {
 	dk, err := cryptobox.GenerateDeviceKey()
 	require.NoError(t, err)
 	id := rec.NewID()
-	c := NewHTTPClient(url, testToken, "")
+	c := NewHTTPClient(url, "")
 	c.SetSigner(id, dk.Sign)
 	pub := dk.Public()
-	_, err = c.RegisterDevice(ctx, wire.RegisterReq{ID: id, Name: "test", PubKey: pub[:], SignKey: dk.SignPublic()})
+	_, err = c.RegisterDevice(ctx, wire.RegisterReq{ID: id, Name: "test", PubKey: pub[:], SignKey: dk.SignPublic()}, testToken)
 	require.NoError(t, err, "enroll register")
 	hk, err := cryptobox.NewHistoryKey()
 	require.NoError(t, err)
@@ -57,20 +57,26 @@ func newServer(t *testing.T) string {
 }
 
 func TestHTTPClientHealth(t *testing.T) {
-	c := NewHTTPClient(newServer(t), testToken, "")
+	c := NewHTTPClient(newServer(t), "")
 	require.NoError(t, c.Health(context.Background()), "Health")
 }
 
-func TestHTTPClientBadTokenIsAPIError(t *testing.T) {
+// TestHTTPClientUnknownDeviceIsAPIError pins the new auth model: a client whose
+// device the server does not know cannot read anything, and says so as a typed
+// 401. There is no token to get wrong — the device key IS the credential.
+func TestHTTPClientUnknownDeviceIsAPIError(t *testing.T) {
 	ctx := context.Background()
-	c := NewHTTPClient(newServer(t), "wrong-token", "")
+	c := NewHTTPClient(newServer(t), "")
+	dk, err := cryptobox.GenerateDeviceKey()
+	require.NoError(t, err)
+	c.SetSigner(rec.NewID(), dk.Sign)
 
-	// Health needs no token: it still succeeds.
-	require.NoError(t, c.Health(ctx), "Health with wrong token should still work")
+	// Health is open: it still succeeds.
+	require.NoError(t, c.Health(ctx), "Health needs no credential")
 
-	// An authed call must surface a typed 401.
-	_, err := c.Hosts(ctx)
-	require.Error(t, err, "Hosts with wrong token: want error, got nil")
+	// An authenticated call must surface a typed 401.
+	_, err = c.Hosts(ctx)
+	require.Error(t, err, "Hosts as an unknown device: want error, got nil")
 	var ae *APIError
 	require.ErrorAs(t, err, &ae, "want *APIError")
 	require.Equal(t, http.StatusUnauthorized, ae.Status, "want status 401")
@@ -84,29 +90,42 @@ func TestHTTPClientDeviceLifecycle(t *testing.T) {
 	dk, err := cryptobox.GenerateDeviceKey()
 	require.NoError(t, err)
 	id := rec.NewID()
-	c := NewHTTPClient(url, testToken, "")
+	c := NewHTTPClient(url, "")
 	c.SetSigner(id, dk.Sign)
 	pub := dk.Public()
 	req := wire.RegisterReq{ID: id, Name: "laptop", PubKey: pub[:], SignKey: dk.SignPublic()}
 
-	dev, err := c.RegisterDevice(ctx, req)
+	resp, err := c.RegisterDevice(ctx, req, testToken)
 	require.NoError(t, err, "RegisterDevice")
-	require.Equal(t, wire.DevicePending, dev.Status)
+	require.Equal(t, wire.DevicePending, resp.Device.Status)
+	require.False(t, resp.GroupFormed, "an empty group is not yet formed")
 
-	// Duplicate register is a typed 409.
-	_, err = c.RegisterDevice(ctx, req)
+	// Duplicate register is a typed 409. It needs its own ticket: the first
+	// enrollment consumed the bootstrap allowance only once a device is active,
+	// so reuse of the server token is what is being exercised here.
+	_, err = c.RegisterDevice(ctx, req, testToken)
 	var ae *APIError
 	require.ErrorAs(t, err, &ae, "duplicate register: want APIError")
 	require.Equal(t, http.StatusConflict, ae.Status, "duplicate register: want 409")
 
-	// List sees it.
-	devs, err := c.ListDevices(ctx)
-	require.NoError(t, err, "ListDevices")
-	require.Len(t, devs, 1)
-	require.Equal(t, id, devs[0].ID)
+	// A PENDING device cannot read: with the token gone, authentication requires
+	// an ACTIVE device record, and this one is still awaiting approval.
+	_, err = c.ListDevices(ctx)
+	require.ErrorAs(t, err, &ae, "pending ListDevices: want APIError")
+	require.Equal(t, http.StatusUnauthorized, ae.Status, "a pending device must not be able to read")
 
-	// No HK wrap yet: found=false, no error.
-	_, found, err := c.GetHKWrap(ctx, id)
+	// From an active device the registration is visible, and the pending device
+	// has no HK wrap yet: found=false, no error.
+	active := enroll(t, url)
+	devs, err := active.ListDevices(ctx)
+	require.NoError(t, err, "ListDevices as an active device")
+	ids := make([]string, 0, len(devs))
+	for _, d := range devs {
+		ids = append(ids, d.ID)
+	}
+	require.Contains(t, ids, id, "the pending registration should be listed")
+
+	_, found, err := active.GetHKWrap(ctx, id)
 	require.NoError(t, err, "GetHKWrap")
 	require.False(t, found, "GetHKWrap: want found=false before activation")
 }

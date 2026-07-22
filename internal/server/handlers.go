@@ -1,6 +1,9 @@
 package server
 
 import (
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -22,6 +25,340 @@ const (
 // GET /v1/health (no auth)
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// signed wraps a read handler in the same device-signature requirement as a
+// mutation. Reads were token-only while a bearer token existed; now the device's
+// Ed25519 key is the only credential, so every authenticated endpoint verifies
+// it.
+func (s *Server) signed(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		db, ok := mustDB(w, r)
+		if !ok {
+			return
+		}
+		body, ok := readBody(w, r)
+		if !ok {
+			return
+		}
+		if !s.requireSignature(w, r, db, body, nil) {
+			return
+		}
+		h(w, r)
+	}
+}
+
+// POST /v1/tickets — mint a single-use enrollment ticket *(signed)*
+//
+// This is how a second machine gets in: an already-enrolled device mints a
+// ticket, the new machine presents it once, and it is redeemed. There is no
+// standing credential that enrolls devices.
+func (s *Server) handleMintTicket(w http.ResponseWriter, r *http.Request) {
+	db, ok := mustDB(w, r)
+	if !ok {
+		return
+	}
+	body, ok := readBody(w, r)
+	if !ok {
+		return
+	}
+	if !s.requireSignature(w, r, db, body, nil) {
+		return
+	}
+
+	ticket, err := newTicket()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	now := time.Now()
+	expires := now.Add(ticketTTL)
+	st := storedTicket{CreatedMs: now.UnixMilli(), ExpiresMs: expires.UnixMilli()}
+	err = db.Update(func(tx *bbolt.Tx) error {
+		pruneTickets(tx, now)
+		val, merr := json.Marshal(st)
+		if merr != nil {
+			return merr
+		}
+		return tx.Bucket(bucketTickets).Put(hashTicket(ticket), val)
+	})
+	if err != nil {
+		writeAPIErr(w, err)
+		return
+	}
+	// The plaintext ticket exists only in this response; the server kept a hash.
+	writeJSON(w, http.StatusOK, wire.TicketResp{Ticket: ticket, ExpiresMs: st.ExpiresMs})
+}
+
+// newTicket returns a fresh high-entropy enrollment ticket.
+func newTicket() (string, error) {
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b[:]), nil
+}
+
+// pruneTickets drops expired and redeemed tickets so the bucket cannot grow
+// without bound. Errors are ignored: pruning is housekeeping, never a reason to
+// fail the mint that triggered it.
+func pruneTickets(tx *bbolt.Tx, now time.Time) {
+	b := tx.Bucket(bucketTickets)
+	var dead [][]byte
+	_ = b.ForEach(func(k, v []byte) error {
+		var st storedTicket
+		if json.Unmarshal(v, &st) != nil || st.Redeemed || now.UnixMilli() >= st.ExpiresMs {
+			dead = append(dead, append([]byte(nil), k...))
+		}
+		return nil
+	})
+	for _, k := range dead {
+		_ = b.Delete(k)
+	}
+}
+
+// GET /v1/recovery/salt — the Argon2id salt (open)
+//
+// Unauthenticated by necessity: the caller cannot derive the key that signs a
+// recovery request until it has this. A salt is not secret — it exists to make
+// precomputation useless, and the material it guards is the wrap, which stays
+// behind a signature.
+func (s *Server) handleRecoverySalt(w http.ResponseWriter, r *http.Request) {
+	db, ok := mustDB(w, r)
+	if !ok {
+		return
+	}
+	init, found, err := loadRecovery(db)
+	if err != nil {
+		writeAPIErr(w, err)
+		return
+	}
+	if !found {
+		writeErr(w, http.StatusNotFound, "no recovery key configured")
+		return
+	}
+	writeJSON(w, http.StatusOK, wire.RecoverySalt{Salt: init.Salt})
+}
+
+// GET /v1/recovery — the History Key wrapped to the recovery key
+// *(signed by the recovery key)*
+//
+// The signature proves the caller already holds the passphrase, so the wrap is
+// never handed to an anonymous requester.
+func (s *Server) handleGetRecovery(w http.ResponseWriter, r *http.Request) {
+	db, ok := mustDB(w, r)
+	if !ok {
+		return
+	}
+	init, found, err := loadRecovery(db)
+	if err != nil {
+		writeAPIErr(w, err)
+		return
+	}
+	if !found {
+		writeErr(w, http.StatusNotFound, "no recovery key configured")
+		return
+	}
+	body, ok := readBody(w, r)
+	if !ok {
+		return
+	}
+	if !s.requireSignature(w, r, db, body, init.SignKey) {
+		return
+	}
+	writeJSON(w, http.StatusOK, init.Wrap)
+}
+
+// POST /v1/recovery — publish the recovery key and its HK wrap *(signed)*
+//
+// Written once, by the device that bootstraps the group. It is not replaceable
+// through this endpoint: overwriting it would let anyone who compromises one
+// device swap in a recovery key of their own.
+func (s *Server) handleInitRecovery(w http.ResponseWriter, r *http.Request) {
+	db, ok := mustDB(w, r)
+	if !ok {
+		return
+	}
+	body, ok := readBody(w, r)
+	if !ok {
+		return
+	}
+	if !s.requireSignature(w, r, db, body, s.bootstrapSelfKeyAny(db, r)) {
+		return
+	}
+	var req wire.RecoveryInit
+	if err := decodeJSON(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "malformed JSON: "+err.Error())
+		return
+	}
+	if len(req.Salt) == 0 || len(req.PubKey) != 32 || len(req.SignKey) != 32 {
+		writeErr(w, http.StatusBadRequest, "salt, pub_key (32B) and sign_key (32B) required")
+		return
+	}
+	if len(req.Wrap.Blob) == 0 {
+		writeErr(w, http.StatusBadRequest, "wrap.blob required")
+		return
+	}
+
+	err := db.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket(bucketRecovery)
+		if b.Get(recoveryKey) != nil {
+			return fail(http.StatusConflict, "recovery key already configured")
+		}
+		val, merr := json.Marshal(req)
+		if merr != nil {
+			return merr
+		}
+		return b.Put(recoveryKey, val)
+	})
+	if err != nil {
+		writeAPIErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// POST /v1/recovery/ticket — mint an enrollment ticket
+// *(signed by the recovery key)*
+//
+// Recovery would otherwise be unusable in the only situation it exists for:
+// the lost machines are still ACTIVE server-side, so the bootstrap allowance
+// does not apply and no surviving device can mint a ticket. Possession of the
+// recovery passphrase is the authorization instead.
+func (s *Server) handleRecoveryTicket(w http.ResponseWriter, r *http.Request) {
+	db, ok := mustDB(w, r)
+	if !ok {
+		return
+	}
+	init, found, err := loadRecovery(db)
+	if err != nil {
+		writeAPIErr(w, err)
+		return
+	}
+	if !found {
+		writeErr(w, http.StatusNotFound, "no recovery key configured")
+		return
+	}
+	body, ok := readBody(w, r)
+	if !ok {
+		return
+	}
+	if !s.requireSignature(w, r, db, body, init.SignKey) {
+		return
+	}
+
+	ticket, err := newTicket()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	now := time.Now()
+	st := storedTicket{CreatedMs: now.UnixMilli(), ExpiresMs: now.Add(ticketTTL).UnixMilli()}
+	err = db.Update(func(tx *bbolt.Tx) error {
+		pruneTickets(tx, now)
+		val, merr := json.Marshal(st)
+		if merr != nil {
+			return merr
+		}
+		return tx.Bucket(bucketTickets).Put(hashTicket(ticket), val)
+	})
+	if err != nil {
+		writeAPIErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, wire.TicketResp{Ticket: ticket, ExpiresMs: st.ExpiresMs})
+}
+
+// POST /v1/recovery/activate/{id} — admit a device during recovery
+// *(signed by the recovery key)*
+//
+// The ordinary activate path needs an approver, and recovery is precisely the
+// case where none exists: the machines that could approve are the ones that
+// were lost, and they are still ACTIVE server-side. Holding the recovery
+// passphrase — which already unwrapped the History Key — is the authorization.
+func (s *Server) handleRecoveryActivate(w http.ResponseWriter, r *http.Request) {
+	db, ok := mustDB(w, r)
+	if !ok {
+		return
+	}
+	init, found, err := loadRecovery(db)
+	if err != nil {
+		writeAPIErr(w, err)
+		return
+	}
+	if !found {
+		writeErr(w, http.StatusNotFound, "no recovery key configured")
+		return
+	}
+	body, ok := readBody(w, r)
+	if !ok {
+		return
+	}
+	if !s.requireSignature(w, r, db, body, init.SignKey) {
+		return
+	}
+
+	id := r.PathValue("id")
+	var req wire.ActivateReq
+	if derr := decodeJSON(r, &req); derr != nil {
+		writeErr(w, http.StatusBadRequest, "malformed JSON: "+derr.Error())
+		return
+	}
+	if req.Wrap.DeviceID != id {
+		writeErr(w, http.StatusBadRequest, "wrap.device_id must equal path id")
+		return
+	}
+
+	err = db.Update(func(tx *bbolt.Tx) error {
+		devB := tx.Bucket(bucketDevices)
+		raw := devB.Get([]byte(id))
+		if raw == nil {
+			return fail(http.StatusNotFound, "device not found")
+		}
+		var dev wire.Device
+		if uerr := json.Unmarshal(raw, &dev); uerr != nil {
+			return uerr
+		}
+		if dev.Status == wire.DeviceRevoked {
+			return fail(http.StatusConflict, "device revoked")
+		}
+		if req.Wrap.HKVersion != getHKVersion(tx) {
+			return fail(http.StatusBadRequest, "hk_version must equal current")
+		}
+		wrapVal, merr := json.Marshal(req.Wrap)
+		if merr != nil {
+			return merr
+		}
+		if perr := tx.Bucket(bucketHKWraps).Put([]byte(id), wrapVal); perr != nil {
+			return perr
+		}
+		dev.Status = wire.DeviceActive
+		devVal, merr := json.Marshal(dev)
+		if merr != nil {
+			return merr
+		}
+		return devB.Put([]byte(id), devVal)
+	})
+	if err != nil {
+		writeAPIErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": wire.DeviceActive})
+}
+
+// loadRecovery reads the tenant's recovery material.
+func loadRecovery(db *bbolt.DB) (wire.RecoveryInit, bool, error) {
+	var init wire.RecoveryInit
+	found := false
+	err := db.View(func(tx *bbolt.Tx) error {
+		raw := tx.Bucket(bucketRecovery).Get(recoveryKey)
+		if raw == nil {
+			return nil
+		}
+		found = true
+		return json.Unmarshal(raw, &init)
+	})
+	return init, found, err
 }
 
 // GET /v1/hosts
@@ -215,6 +552,12 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Authorization to enroll AT ALL comes from the ticket. The auth middleware
+	// already used it to pick the tenant; redeeming it here, inside the same
+	// transaction as the write, is what makes it single-use.
+	ticket := r.Header.Get(hdrTicket)
+	bootstrap := s.isBootstrapToken(tenantFromContext(r), ticket) && !hasActiveDevice(db)
+
 	dev := wire.Device{
 		ID:        req.ID,
 		Name:      req.Name,
@@ -224,6 +567,11 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		CreatedMs: time.Now().UnixMilli(),
 	}
 	err := db.Update(func(tx *bbolt.Tx) error {
+		if !bootstrap {
+			if rerr := redeemTicket(tx, hashTicket(ticket), time.Now()); rerr != nil {
+				return rerr
+			}
+		}
 		devB := tx.Bucket(bucketDevices)
 		if devB.Get([]byte(req.ID)) != nil {
 			return fail(http.StatusConflict, "device already registered")
@@ -238,7 +586,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, dev)
+	writeJSON(w, http.StatusOK, wire.RegisterResp{Device: dev, GroupFormed: !bootstrap})
 }
 
 // GET /v1/devices
@@ -302,6 +650,47 @@ func (s *Server) bootstrapSelfKey(db *bbolt.DB, r *http.Request, pathID string) 
 		return nil
 	})
 	return selfKey
+}
+
+// bootstrapSelfKeyAny returns the signer's own sign_key when the signer is a
+// device of this tenant and no device is active yet — the window in which the
+// group is still forming and there is nobody else to vouch for it. Used by
+// recovery init, which the bootstrapping device performs before activating.
+func (s *Server) bootstrapSelfKeyAny(db *bbolt.DB, r *http.Request) []byte {
+	signer := reqsign.Device(r.Header)
+	if signer == "" || hasActiveDevice(db) {
+		return nil
+	}
+	var key []byte
+	_ = db.View(func(tx *bbolt.Tx) error {
+		raw := tx.Bucket(bucketDevices).Get([]byte(signer))
+		if raw == nil {
+			return nil
+		}
+		var d wire.Device
+		if json.Unmarshal(raw, &d) == nil && d.Status != wire.DeviceRevoked {
+			key = d.SignKey
+		}
+		return nil
+	})
+	return key
+}
+
+// isBootstrapToken reports whether ticket is the configured bootstrap token of
+// the named tenant, compared constant-time.
+func (s *Server) isBootstrapToken(name, ticket string) bool {
+	if name == "" || ticket == "" {
+		return false
+	}
+	got := []byte(ticket)
+	match := false
+	for i := range s.byToken {
+		if s.byToken[i].tenant.name == name &&
+			subtle.ConstantTimeCompare(got, s.byToken[i].token) == 1 {
+			match = true
+		}
+	}
+	return match
 }
 
 // POST /v1/devices/{id}/activate

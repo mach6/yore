@@ -31,6 +31,7 @@ type Client struct {
 	mu   sync.Mutex
 	conn net.Conn
 	r    *bufio.Reader
+	dir  string // state dir, so slow ops can open their own connection
 }
 
 // Dial connects to the daemon's socket under dir (100ms timeout).
@@ -39,7 +40,40 @@ func Dial(dir string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Client{conn: conn, r: bufio.NewReader(conn)}, nil
+	return &Client{conn: conn, r: bufio.NewReader(conn), dir: dir}, nil
+}
+
+// solo runs one request on its OWN connection instead of the shared one. The
+// network-backed ops (sync, device management) can take tens of seconds against
+// an unreachable server, and roundtrip holds the client mutex for the whole
+// exchange — so on the shared connection they would stall every query queued
+// behind them and freeze the TUI. The daemon serves each connection on its own
+// goroutine, so a second connection runs genuinely in parallel.
+//
+// A client with no dir (constructed directly in tests) falls back to the shared
+// connection rather than failing.
+func (c *Client) solo(req proto.Request, deadline time.Duration) (proto.Response, error) {
+	if c.dir == "" {
+		return c.roundtrip(req, deadline)
+	}
+	sc, err := Dial(c.dir)
+	if err != nil {
+		return proto.Response{}, err
+	}
+	defer func() { _ = sc.Close() }()
+	return sc.roundtrip(req, deadline)
+}
+
+// soloOK is solo plus the Response.OK check.
+func (c *Client) soloOK(req proto.Request, deadline time.Duration) error {
+	resp, err := c.solo(req, deadline)
+	if err != nil {
+		return err
+	}
+	if !resp.OK {
+		return respErr(resp)
+	}
+	return nil
 }
 
 // EnsureRunning returns a client to a running daemon, spawning one if needed.
@@ -124,7 +158,7 @@ func (c *Client) Delete(id string) error {
 
 // Devices lists enrolled devices (via the daemon's syncer).
 func (c *Client) Devices() (proto.DevicesInfo, error) {
-	resp, err := c.roundtrip(proto.Request{Op: proto.OpDevices}, syncDeadline)
+	resp, err := c.solo(proto.Request{Op: proto.OpDevices}, syncDeadline)
 	if err != nil {
 		return proto.DevicesInfo{}, err
 	}
@@ -139,17 +173,32 @@ func (c *Client) Devices() (proto.DevicesInfo, error) {
 
 // Approve admits a pending device (wraps the History Key for it).
 func (c *Client) Approve(id string) error {
-	return c.ok(proto.Request{Op: proto.OpApprove, DeviceID: id}, syncDeadline)
+	return c.soloOK(proto.Request{Op: proto.OpApprove, DeviceID: id}, syncDeadline)
 }
 
 // Revoke revokes a device and rotates keys.
 func (c *Client) Revoke(id string) error {
-	return c.ok(proto.Request{Op: proto.OpRevoke, DeviceID: id}, syncDeadline)
+	return c.soloOK(proto.Request{Op: proto.OpRevoke, DeviceID: id}, syncDeadline)
+}
+
+// Ticket mints a single-use enrollment ticket for adding another machine.
+func (c *Client) Ticket() (proto.TicketInfo, error) {
+	resp, err := c.solo(proto.Request{Op: proto.OpTicket}, syncDeadline)
+	if err != nil {
+		return proto.TicketInfo{}, err
+	}
+	if !resp.OK {
+		return proto.TicketInfo{}, respErr(resp)
+	}
+	if resp.Ticket == nil {
+		return proto.TicketInfo{}, errors.New("daemon: ticket response missing body")
+	}
+	return *resp.Ticket, nil
 }
 
 // Sync forces a synchronous push/pull cycle (no-op if sync isn't configured).
 func (c *Client) Sync() error {
-	return c.ok(proto.Request{Op: proto.OpSync}, syncDeadline)
+	return c.soloOK(proto.Request{Op: proto.OpSync}, syncDeadline)
 }
 
 // Shutdown asks the daemon to exit gracefully.

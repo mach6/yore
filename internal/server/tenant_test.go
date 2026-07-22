@@ -34,25 +34,30 @@ func multiTenant(t *testing.T) (def, alice *testClient, s *Server, dbPath string
 		srv.Close()
 		_ = s.Close()
 	})
-	def = &testClient{t: t, base: srv.URL, token: "default-tok"}
-	alice = &testClient{t: t, base: srv.URL, token: "alice-tok"}
+	// Each tenant gets a bootstrapped active device: routing is now by device
+	// record, so a tenant with no device has nothing to route by.
+	def = bootstrapActive(t, &testClient{t: t, base: srv.URL, ticket: "default-tok"}, "def-root")
+	alice = bootstrapActive(t, &testClient{t: t, base: srv.URL, ticket: "alice-tok"}, "alice-root")
 	return def, alice, s, dbPath
 }
 
 // TestTenantIsolation is the security boundary: one tenant's data must never be
-// visible under another tenant's token, and each lives in its own file on disk.
+// visible to another tenant's device, and each lives in its own file on disk.
 func TestTenantIsolation(t *testing.T) {
 	def, alice, _, dbPath := multiTenant(t)
 
 	// Bootstrap a device and push records under the DEFAULT tenant.
-	dev := bootstrapActive(t, def, "dev-default")
+	dev := def
 	status, body := dev.do("POST", "/v1/records", wire.PushReq{HostID: "hostD", Records: mkRecords(1, 3)})
 	require.Equalf(t, http.StatusOK, status, "default push: body %s", body)
 
-	// alice sees NO devices, NO hosts, NO records — a completely separate db.
+	// alice sees only her OWN device, and NO hosts, NO records — a separate db.
 	status, body = alice.do("GET", "/v1/devices", nil)
 	require.Equalf(t, http.StatusOK, status, "alice list devices: body %s", body)
-	require.Empty(t, mustJSON[[]wire.Device](t, body), "alice must not see default's device")
+	aliceDevs := mustJSON[[]wire.Device](t, body)
+	for _, d := range aliceDevs {
+		require.NotEqual(t, dev.devID, d.ID, "alice must not see default's device")
+	}
 
 	status, body = alice.do("GET", "/v1/hosts", nil)
 	require.Equalf(t, http.StatusOK, status, "alice hosts: body %s", body)
@@ -73,7 +78,7 @@ func TestTenantIsolation(t *testing.T) {
 
 	// alice can independently bootstrap her OWN device — no collision with the
 	// default tenant's id space, since they are different files.
-	_ = bootstrapActive(t, alice, "dev-alice")
+	_ = alice
 	status, body = alice.do("GET", "/v1/devices", nil)
 	require.Equalf(t, http.StatusOK, status, "alice list after own bootstrap: body %s", body)
 	require.Len(t, mustJSON[[]wire.Device](t, body), 1, "alice sees only her own device")
@@ -89,23 +94,23 @@ func TestTenantIsolation(t *testing.T) {
 	require.NotEqual(t, dbPath, aliceDB, "tenant files must differ")
 }
 
-// TestTenantAuth checks token routing: garbage/absent tokens are rejected, and
-// each valid tenant token authenticates to its own tenant only.
+// TestTenantAuth checks device routing: an unknown or absent credential is
+// rejected, and each tenant's device authenticates to its own tenant only.
 func TestTenantAuth(t *testing.T) {
 	def, alice, _, _ := multiTenant(t)
 
-	bad := &testClient{t: t, base: def.base, token: "garbage"}
+	bad := def.anon().withTicket("garbage")
 	status, _ := bad.do("GET", "/v1/devices", nil)
-	require.Equal(t, http.StatusUnauthorized, status, "unknown token => 401")
+	require.Equal(t, http.StatusUnauthorized, status, "unknown caller => 401")
 
-	none := &testClient{t: t, base: def.base, token: ""}
+	none := &testClient{t: t, base: def.base}
 	status, _ = none.do("GET", "/v1/devices", nil)
-	require.Equal(t, http.StatusUnauthorized, status, "no token => 401")
+	require.Equal(t, http.StatusUnauthorized, status, "no credential => 401")
 
 	status, _ = def.do("GET", "/v1/devices", nil)
-	require.Equal(t, http.StatusOK, status, "default token authenticates")
+	require.Equal(t, http.StatusOK, status, "the default tenant's device authenticates")
 	status, _ = alice.do("GET", "/v1/devices", nil)
-	require.Equal(t, http.StatusOK, status, "alice token authenticates")
+	require.Equal(t, http.StatusOK, status, "alice's device authenticates")
 
 	// Health stays open with no token even in multi-tenant mode.
 	status, _ = none.do("GET", "/v1/health", nil)
@@ -174,9 +179,9 @@ func TestHandlerRefusesMissingTenantDB(t *testing.T) {
 func TestBackupPerTenant(t *testing.T) {
 	def, alice, s, dbPath := multiTenant(t)
 
-	devD := bootstrapActive(t, def, "dev-d")
+	devD := def
 	devD.do("POST", "/v1/records", wire.PushReq{HostID: "hd", Records: mkRecords(1, 2)})
-	devA := bootstrapActive(t, alice, "dev-a")
+	devA := alice
 	devA.do("POST", "/v1/records", wire.PushReq{HostID: "ha", Records: mkRecords(1, 4)})
 
 	s.backupAll()

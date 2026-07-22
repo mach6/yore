@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"errors"
-	"os"
 	"sync"
 	"time"
 
@@ -23,16 +22,17 @@ var errSyncOff = errors.New("sync not configured (run `yore setup`)")
 // listDevices returns the enrolled devices with per-device verification codes
 // for pending ones (computed here so proto stays independent of wire/cryptobox).
 func (s *server) listDevices() (proto.DevicesInfo, error) {
-	if !s.remote.enabled() {
+	sy := s.remote.syncer()
+	if sy == nil {
 		return proto.DevicesInfo{}, errSyncOff
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	devs, err := s.remote.sy.Devices(ctx)
+	devs, err := sy.Devices(ctx)
 	if err != nil {
 		return proto.DevicesInfo{}, err
 	}
-	self := s.remote.sy.DeviceID()
+	self := sy.DeviceID()
 	out := make([]proto.DeviceInfo, 0, len(devs))
 	for _, d := range devs {
 		di := proto.DeviceInfo{ID: d.ID, Name: d.Name, Status: d.Status, Self: d.ID == self}
@@ -48,7 +48,8 @@ func (s *server) listDevices() (proto.DevicesInfo, error) {
 
 // deviceOp approves (approve=true) or revokes+rotates (approve=false) a device.
 func (s *server) deviceOp(id string, approve bool) error {
-	if !s.remote.enabled() {
+	sy := s.remote.syncer()
+	if sy == nil {
 		return errSyncOff
 	}
 	if id == "" {
@@ -57,9 +58,24 @@ func (s *server) deviceOp(id string, approve bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if approve {
-		return s.remote.sy.Approve(ctx, id)
+		return sy.Approve(ctx, id)
 	}
-	return s.remote.sy.Revoke(ctx, id)
+	return sy.Revoke(ctx, id)
+}
+
+// mintTicket issues a single-use enrollment ticket for adding another machine.
+func (s *server) mintTicket() (proto.TicketInfo, error) {
+	sy := s.remote.syncer()
+	if sy == nil {
+		return proto.TicketInfo{}, errSyncOff
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	t, err := sy.MintTicket(ctx)
+	if err != nil {
+		return proto.TicketInfo{}, err
+	}
+	return proto.TicketInfo{Ticket: t.Ticket, ExpiresMs: t.ExpiresMs}, nil
 }
 
 // remoteCache holds other hosts' history, decrypted, in RAM ONLY — it is never
@@ -68,9 +84,11 @@ func (s *server) deviceOp(id string, approve bool) error {
 // scratch each daemon lifetime (pull cursors are RAM-only). When sync is not
 // configured the cache is disabled and reports state "off".
 type remoteCache struct {
-	sy *syncer.Syncer
-
-	mu      sync.RWMutex
+	mu sync.RWMutex
+	// sy is nil until sync is configured. It is guarded by mu because the daemon
+	// may attach or replace it at runtime when config.json changes, while query
+	// and status goroutines read it concurrently.
+	sy      *syncer.Syncer
 	records []rec.Record
 	cmds    []string
 	cursors map[string]uint64
@@ -78,32 +96,83 @@ type remoteCache struct {
 	lastMs  int64
 }
 
-// newRemote builds the remote cache from persisted config. Missing server,
-// token, or device key yields a disabled cache (state "off") rather than an
-// error — a machine can run purely local.
-func newRemote(dir string, st *store.Store) *remoteCache {
-	rc := &remoteCache{state: proto.RemoteOff, cursors: map[string]uint64{}}
+// syncConf is the resolved subset of configuration that decides WHICH server the
+// syncer talks to. It is comparable, so the daemon can distinguish a meaningful
+// config change (re-attach) from an unrelated edit (leave the warm cache alone).
+//
+// There is no credential here: the device key IS the credential, so a machine
+// that holds one and knows the server URL can sync. Enrollment tickets are used
+// once by `yore setup` and never persisted.
+type syncConf struct {
+	url   string
+	pin   string
+	epoch time.Duration
+}
+
+// configured reports whether there is enough configuration to sync at all.
+func (sc syncConf) configured() bool { return sc.url != "" }
+
+// loadSyncConf resolves the sync-relevant configuration from config.json.
+func loadSyncConf(dir string) syncConf {
 	cfg, _ := config.Load(dir)
-	if cfg.ServerURL == "" {
-		return rc
-	}
-	token := cfg.Token
-	if token == "" {
-		token = os.Getenv("YORE_TOKEN")
-	}
-	if token == "" {
-		return rc
+	return syncConf{url: cfg.ServerURL, pin: cfg.ServerPin, epoch: cfg.KeyEpochD()}
+}
+
+// newSyncer builds a syncer for sc, or nil when sync is not configured or this
+// machine has no usable device key — a machine can run purely local.
+func newSyncer(dir string, st *store.Store, sc syncConf) *syncer.Syncer {
+	if !sc.configured() {
+		return nil
 	}
 	key, err := cryptobox.LoadDeviceKey(config.KeyPath(dir))
 	if err != nil {
-		return rc
+		return nil
 	}
-	rc.sy = syncer.New(st, syncer.NewHTTPClient(cfg.ServerURL, token, cfg.ServerPin), key, cfg.KeyEpochD())
-	rc.state = proto.RemoteUnavailable // until the first successful sync
+	return syncer.New(st, syncer.NewHTTPClient(sc.url, sc.pin), key, sc.epoch)
+}
+
+// newRemote builds the remote cache from persisted config. Missing server,
+// token, or device key yields a disabled cache (state "off") rather than an
+// error; the daemon re-checks the configuration as it runs, so sync configured
+// later comes alive without a restart (see syncLoop).
+func newRemote(dir string, st *store.Store, sc syncConf) *remoteCache {
+	rc := &remoteCache{state: proto.RemoteOff, cursors: map[string]uint64{}}
+	if sy := newSyncer(dir, st, sc); sy != nil {
+		rc.sy = sy
+		rc.state = proto.RemoteUnavailable // until the first successful sync
+	}
 	return rc
 }
 
-func (rc *remoteCache) enabled() bool { return rc != nil && rc.sy != nil }
+// syncer returns the attached syncer, or nil when sync is not configured.
+func (rc *remoteCache) syncer() *syncer.Syncer {
+	if rc == nil {
+		return nil
+	}
+	rc.mu.RLock()
+	defer rc.mu.RUnlock()
+	return rc.sy
+}
+
+func (rc *remoteCache) enabled() bool { return rc.syncer() != nil }
+
+// attach installs (or, with nil, clears) the syncer after the sync-relevant
+// configuration changed. Cached remote history and pull cursors are dropped:
+// they belong to the previous server and must never be mixed with the new one's.
+func (rc *remoteCache) attach(sy *syncer.Syncer) {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	rc.sy = sy
+	rc.records = nil
+	rc.cmds = nil
+	rc.cursors = map[string]uint64{}
+	rc.lastMs = 0
+	if sy == nil {
+		rc.state = proto.RemoteOff
+	} else {
+		rc.state = proto.RemoteUnavailable
+	}
+}
 
 // info reports the remote state for status/TUI display.
 func (rc *remoteCache) info() proto.RemoteInfo {
@@ -123,8 +192,12 @@ func (rc *remoteCache) info() proto.RemoteInfo {
 // decryption failure during pull is fatal for the cycle (never silently
 // skipped) and leaves the cache as it was.
 func (rc *remoteCache) syncOnce(ctx context.Context, nowMs int64) error {
+	sy := rc.syncer()
+	if sy == nil {
+		return errSyncOff
+	}
 	rc.setState(proto.RemoteSyncing)
-	if _, err := rc.sy.Push(ctx); err != nil {
+	if _, err := sy.Push(ctx); err != nil {
 		rc.setState(proto.RemoteUnavailable)
 		return err
 	}
@@ -132,7 +205,7 @@ func (rc *remoteCache) syncOnce(ctx context.Context, nowMs int64) error {
 	cursors := cloneCursors(rc.cursors)
 	rc.mu.RUnlock()
 
-	recs, next, err := rc.sy.PullOthers(ctx, cursors)
+	recs, next, err := sy.PullOthers(ctx, cursors)
 	if err != nil {
 		rc.setState(proto.RemoteUnavailable)
 		return err
@@ -258,19 +331,36 @@ func cloneCursors(m map[string]uint64) map[string]uint64 {
 	return out
 }
 
-// syncLoop drives periodic and on-demand sync. Started only when the remote is
-// enabled. A single goroutine, so syncOnce never overlaps itself.
+// syncLoop drives periodic and on-demand sync. It runs even when sync is not
+// configured, because its tick is also what notices sync being configured later
+// — otherwise a daemon started before `yore setup` would stay local-only for its
+// whole life. A single goroutine, so syncOnce never overlaps itself.
 func (s *server) syncLoop() {
 	defer s.wg.Done()
-	cfg, _ := config.Load(s.dir) // Defaults() on error, never an empty Config
-	interval := cfg.SyncIntervalD()
+	cfg, _ := config.Load(s.dir)        // Defaults() on error, never an empty Config
 	pushDebounce := cfg.PushDebounceD() // 0 = experimental push-on-record disabled
 
 	// Kick an initial sync shortly after startup so deep search is warm.
 	first := time.NewTimer(2 * time.Second)
-	tick := time.NewTicker(interval)
+	tick := time.NewTicker(syncTick(s.remote.enabled(), cfg.SyncIntervalD()))
 	defer first.Stop()
 	defer tick.Stop()
+
+	// reload re-reads config.json and re-attaches the syncer when the server or
+	// identity changed, so `yore setup` (or a hand edit) takes effect live.
+	reload := func() {
+		sc := loadSyncConf(s.dir)
+		if sc == s.syncConf {
+			return
+		}
+		s.syncConf = sc
+		cfg, _ := config.Load(s.dir)
+		pushDebounce = cfg.PushDebounceD()
+		s.remote.attach(newSyncer(s.dir, s.store, sc))
+		enabled := s.remote.enabled()
+		tick.Reset(syncTick(enabled, cfg.SyncIntervalD()))
+		s.logf("config changed: sync enabled=%v server=%q", enabled, sc.url)
+	}
 
 	// One-shot debounce timer for experimental push-on-record; starts idle.
 	pushTimer := time.NewTimer(time.Hour)
@@ -285,10 +375,13 @@ func (s *server) syncLoop() {
 		case <-s.done:
 			return
 		case <-first.C:
+			reload()
 			s.doSync()
 		case <-tick.C:
+			reload()
 			s.doSync()
 		case <-s.syncWake:
+			reload()
 			s.doSync()
 		case <-s.pushWake:
 			// Coalesce a burst of new records into one push after pushDebounce.
@@ -315,10 +408,23 @@ func pushArm(debounce time.Duration, pending bool) (arm, newPending bool) {
 	return true, true
 }
 
+// syncTick is the period between sync-loop wakeups: the configured sync
+// interval when sync is live, otherwise a short poll that exists only to notice
+// sync being configured (a stat of config.json, not a network call).
+func syncTick(enabled bool, interval time.Duration) time.Duration {
+	if enabled {
+		return interval
+	}
+	return unconfiguredPoll
+}
+
 // doSync runs one sync cycle. It is serialized by syncMu so the periodic loop
 // and an explicit OpSync never overlap (which would double-push or race the
-// pull cursors).
+// pull cursors). It is a no-op when sync is not configured.
 func (s *server) doSync() {
+	if !s.remote.enabled() {
+		return
+	}
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"net/http"
 	"testing"
 	"time"
 
@@ -26,7 +27,24 @@ func newDevice(t *testing.T, url string) (*Syncer, *store.Store) {
 	t.Cleanup(func() { _ = st.Close() })
 	key, err := cryptobox.GenerateDeviceKey()
 	require.NoError(t, err, "GenerateDeviceKey")
-	return New(st, NewHTTPClient(url, testToken, ""), key, testEpoch), st
+	return New(st, NewHTTPClient(url, ""), key, testEpoch), st
+}
+
+// requireBootstrap forms the group from s: register with the server's own token
+// (allowed only while no device is active), then bootstrap with a fresh
+// recovery key.
+func requireBootstrap(t *testing.T, s *Syncer, name string) {
+	t.Helper()
+	ctx := context.Background()
+	_, _, err := s.Enroll(ctx, name, testToken)
+	require.NoError(t, err, "%s enroll", name)
+	salt, err := cryptobox.NewRecoverySalt()
+	require.NoError(t, err, "NewRecoverySalt")
+	phrase, err := cryptobox.NewRecoveryPhrase()
+	require.NoError(t, err, "NewRecoveryPhrase")
+	rk, err := cryptobox.DeriveRecoveryKey(phrase, salt)
+	require.NoError(t, err, "DeriveRecoveryKey")
+	require.NoError(t, s.Bootstrap(ctx, rk, salt), "%s bootstrap", name)
 }
 
 // enrollPair returns two enrolled machines sharing one server: A has
@@ -37,9 +55,11 @@ func enrollPair(t *testing.T, url string) (a *Syncer, aStore *store.Store, b *Sy
 	a, aStore = newDevice(t, url)
 	b, bStore = newDevice(t, url)
 
-	require.NoError(t, a.Bootstrap(ctx, "machine-A"), "A.Bootstrap")
-	_, err := b.Register(ctx, "machine-B")
-	require.NoError(t, err, "B.Register")
+	requireBootstrap(t, a, "machine-A")
+	ticket, err := a.MintTicket(ctx)
+	require.NoError(t, err, "A.MintTicket")
+	_, _, err = b.Enroll(ctx, "machine-B", ticket.Ticket)
+	require.NoError(t, err, "B.Enroll")
 	pending, err := a.PendingDevices(ctx)
 	require.NoError(t, err, "A.PendingDevices")
 	found := false
@@ -301,9 +321,13 @@ func TestRevokeRotation(t *testing.T) {
 			require.Equal(t, wire.DeviceRevoked, d.Status, "B should be revoked")
 		}
 	}
-	_, found, err := b.http.GetHKWrap(ctx, b.DeviceID())
-	require.NoError(t, err, "B GetHKWrap after revoke")
-	require.False(t, found, "B GetHKWrap after revoke: want found=false")
+	// A revoked device cannot authenticate at all any more: its key is the only
+	// credential and the server no longer honours it. (It also has no HK wrap,
+	// but it can no longer get far enough to learn that.)
+	_, _, err = b.http.GetHKWrap(ctx, b.DeviceID())
+	var revokedErr *APIError
+	require.ErrorAs(t, err, &revokedErr, "B GetHKWrap after revoke: want APIError")
+	require.Equal(t, http.StatusUnauthorized, revokedErr.Status, "a revoked device must be refused")
 
 	// A is now on HK version 2.
 	_, verA, err := a.resolveHK(ctx)
@@ -312,8 +336,10 @@ func TestRevokeRotation(t *testing.T) {
 
 	// Enroll a fresh device C AFTER the rotation. It receives HK2.
 	c, _ := newDevice(t, url)
-	_, err = c.Register(ctx, "machine-C")
-	require.NoError(t, err, "C.Register")
+	ticketC, err := a.MintTicket(ctx)
+	require.NoError(t, err, "A.MintTicket for C")
+	_, _, err = c.Enroll(ctx, "machine-C", ticketC.Ticket)
+	require.NoError(t, err, "C.Enroll")
 	require.NoError(t, a.Approve(ctx, c.DeviceID()), "A.Approve(C)")
 	hkC, verC, err := c.resolveHK(ctx)
 	require.NoError(t, err, "C.resolveHK")
@@ -329,4 +355,84 @@ func TestRevokeRotation(t *testing.T) {
 	for _, got := range recs {
 		requireSameRecord(t, want[got.ID], got)
 	}
+}
+
+// TestRecoverAfterLosingEveryDevice is the guarantee recovery exists for: with
+// every enrolled machine gone, the recovery phrase alone must bring the history
+// back. It is the difference between "lost a laptop" and "lost the archive".
+func TestRecoverAfterLosingEveryDevice(t *testing.T) {
+	ctx := context.Background()
+	url := newServer(t)
+
+	// Machine A forms the group with a known recovery phrase and pushes history.
+	a, aStore := newDevice(t, url)
+	_, _, err := a.Enroll(ctx, "machine-A", testToken)
+	require.NoError(t, err, "A.Enroll")
+	salt, err := cryptobox.NewRecoverySalt()
+	require.NoError(t, err, "NewRecoverySalt")
+	phrase, err := cryptobox.NewRecoveryPhrase()
+	require.NoError(t, err, "NewRecoveryPhrase")
+	rk, err := cryptobox.DeriveRecoveryKey(phrase, salt)
+	require.NoError(t, err, "DeriveRecoveryKey")
+	require.NoError(t, a.Bootstrap(ctx, rk, salt), "A.Bootstrap")
+
+	for _, r := range makeRecords(12) {
+		_, aerr := aStore.Append(r)
+		require.NoError(t, aerr, "A append")
+	}
+	_, err = a.Push(ctx)
+	require.NoError(t, err, "A.Push")
+	want := canonicalByID(t, aStore)
+
+	// A is gone: a brand-new machine holds nothing but the phrase. Note that A is
+	// still ACTIVE server-side — that is exactly the real situation — so the
+	// bootstrap allowance does not apply and nothing can vouch for B.
+	b, _ := newDevice(t, url)
+	rc := NewHTTPClient(url, "")
+	hk, hkVer, err := RecoverHK(ctx, rc, phrase)
+	require.NoError(t, err, "RecoverHK")
+
+	// The recovery key authorizes B's enrollment ticket, then B admits itself
+	// with the recovered History Key.
+	tkt, err := rc.RecoveryTicket(ctx)
+	require.NoError(t, err, "RecoveryTicket")
+	_, _, err = b.Enroll(ctx, "machine-B", tkt.Ticket)
+	require.NoError(t, err, "B.Enroll")
+	bPub := b.dev.Public()
+	blob, err := cryptobox.WrapHK(hk, bPub)
+	require.NoError(t, err, "wrap HK for B")
+	require.NoError(t, rc.RecoveryActivate(ctx, b.DeviceID(), wire.ActivateReq{Wrap: wire.HKWrap{
+		DeviceID: b.DeviceID(), Blob: blob, HKVersion: hkVer,
+	}}), "recovery activate B")
+
+	// B now reads everything A ever wrote.
+	got, _, err := b.PullOthers(ctx, map[string]uint64{})
+	require.NoError(t, err, "B.PullOthers")
+	require.Len(t, got, len(want), "recovered record count")
+	for _, g := range got {
+		requireSameRecord(t, want[g.ID], g)
+	}
+}
+
+// TestRecoverWrongPhraseFails pins that recovery is not a bypass: the wrap only
+// opens for the exact phrase, and a wrong one cannot reach the History Key.
+func TestRecoverWrongPhraseFails(t *testing.T) {
+	ctx := context.Background()
+	url := newServer(t)
+
+	a, _ := newDevice(t, url)
+	_, _, err := a.Enroll(ctx, "machine-A", testToken)
+	require.NoError(t, err, "A.Enroll")
+	salt, err := cryptobox.NewRecoverySalt()
+	require.NoError(t, err, "salt")
+	phrase, err := cryptobox.NewRecoveryPhrase()
+	require.NoError(t, err, "phrase")
+	rk, err := cryptobox.DeriveRecoveryKey(phrase, salt)
+	require.NoError(t, err, "derive")
+	require.NoError(t, a.Bootstrap(ctx, rk, salt), "A.Bootstrap")
+
+	wrong, err := cryptobox.NewRecoveryPhrase()
+	require.NoError(t, err, "wrong phrase")
+	_, _, err = RecoverHK(ctx, NewHTTPClient(url, ""), wrong)
+	require.Error(t, err, "a wrong recovery phrase must not recover the History Key")
 }

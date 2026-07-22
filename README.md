@@ -22,12 +22,17 @@ Built for a threat model most history tools don't serve:
 - **No master key to copy.** Per-device keypairs; the shared key is wrapped per
   device. Enroll a machine by approving it from another; **revoke** one without
   re-encrypting a single record.
+- **No standing credential at all.** A device authenticates with its own key on
+  every request — there is no bearer token to leak. Adding a machine takes a
+  **single-use enrollment ticket** minted by one already enrolled.
+- **A recovery phrase, so per-device keys can't lock you out.** Shown once when
+  you create the group; it is the way back if you lose every machine.
 - **Other machines' history never touches this disk** — it's fetched into the
   daemon's RAM on demand, never persisted.
 - **Secrets never get recorded, and never sync** — a default-on, editable
   redaction gate drops credential-bearing commands before they're written.
-- **A captured token can't tamper** — every mutating request is signed with the
-  device's key (safe against a TLS-inspecting proxy).
+- **A captured request can't tamper** — every request, reads included, is signed
+  with the device's key (safe against a TLS-inspecting proxy).
 - **One source of truth** (optional takeover mode): no second, unredacted
   `~/.zsh_history`, and `!N` / `!!` / Up still work — against yore's history.
 
@@ -42,10 +47,13 @@ this specific model.
 | E2E (server can't read history) | Yes | Yes | Yes | n/a | n/a |
 | No shared master key (per-device keys) | Yes | No — one key you copy | No — one secret you copy | n/a | n/a |
 | Per-device revocation | Yes | No | No | n/a | n/a |
+| Single-use enrollment (no standing token) | Yes | No | No | n/a | n/a |
+| Recovery phrase if every device is lost | Yes | n/a — copy the key | n/a — copy the secret | n/a | n/a |
 | Other hosts' history never stored locally | Yes | No — replicated to each | No — replicated to each | n/a | n/a |
 | Secrets redaction | Yes (default-on) | Opt-in filter | — | No | No |
 | …and it gates sync | Yes | — | — | n/a | n/a |
-| Per-device request signing | Yes | No | No | n/a | n/a |
+| Per-device request signing (incl. reads) | Yes | No | No | n/a | n/a |
+| Secrets in the OS keyring | Yes | No | No | n/a | n/a |
 | Self-hostable server | Yes | Yes | Yes | No | No |
 | Multi-tenant server | Yes | Yes | Yes | n/a | n/a |
 | Cross-shell (zsh + bash) | Yes | Yes | Yes | Yes | Yes |
@@ -96,10 +104,19 @@ openssl rand -base64 32 | docker secret create yore_token -
 docker build -f docker/Dockerfile -t yore:latest .
 docker stack deploy -c docker/swarm/stack.yml yore
 
-yore setup                 # first machine: server URL + token; bootstraps keys
-yore setup                 # each other machine: registers PENDING, prints a code
-yore devices approve <id>  # on an already-enrolled machine; confirm the code
+# first machine: uses the server's own token, forms the group, prints a
+# RECOVERY PHRASE — write it down, it is shown once and never stored
+yore setup
+
+# each other machine needs a single-use ticket from one already enrolled:
+yore devices ticket                    # on an enrolled machine
+yore setup --ticket <ticket>           # on the new machine: registers PENDING
+yore devices approve <id>              # back on the enrolled one; confirm the code
 ```
+
+Lost every machine? `yore recover` asks for the recovery phrase and re-enrols
+this one. Client secrets (the device key) live in your **OS keyring**, falling
+back to a `0600` file on headless servers and in containers.
 
 Multi-tenant hosting, server backups, and revocation:
 [`docker/swarm/stack.yml`](docker/swarm/stack.yml) and
@@ -149,6 +166,8 @@ Configure via `~/.config/yore/config.json` (every key + default is in
 | See only what an agent ran | `yore search --tag claude-code` |
 | Grep history in a script | `hs <query>` \| … or `yore search --headless <query>` |
 | Force a sync now | `yore sync` (or `S` in `hb`) |
+| Add another machine | `yore devices ticket`, then `yore setup --ticket …` there |
+| Get back in after losing every machine | `yore recover` (needs the recovery phrase) |
 | Diagnose / status | `yore doctor` / `yore status` |
 | Stop the daemon / server | `yore stop` / `yore server stop` |
 

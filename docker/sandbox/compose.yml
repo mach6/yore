@@ -4,8 +4,14 @@
 #   bash     a client with bash + yore hooks (hostname bash-box)
 #
 # Clients reach the server over the internal Docker network (plain HTTP — no TLS
-# needed inside the sandbox; request signing still protects writes). Nothing is
-# published to the host, and `docker compose down -v` removes everything.
+# needed inside the sandbox; per-device request signing authenticates everything).
+# Nothing is published to the host.
+#
+# NOTE: server-data is a persistent volume, and a group that already has an
+# active device refuses the bootstrap token by design. Since sandbox clients are
+# ephemeral, their device keys vanish with the containers and nothing is left to
+# mint an enrolment ticket — so ALWAYS reset with `docker compose down -v`
+# (not plain `down`) before bringing the sandbox back up.
 #
 #   cd docker/sandbox
 #   docker compose up -d --build
@@ -35,7 +41,10 @@ services:
     init: true  # tini reaps orphaned shell-hook processes; sleep infinity cannot
     environment:
       YORE_SERVER: http://server:8080
-      YORE_TOKEN: sandbox-token
+      # The bootstrap ticket. It enrols only the FIRST machine: once any device
+      # is active the server refuses it, and further machines need a ticket from
+      # `yore devices ticket`.
+      YORE_TICKET: sandbox-token
       YORE_INTEGRATION: takeover
     depends_on: [server]
     networks: [yore]
@@ -50,7 +59,10 @@ services:
     init: true  # tini reaps orphaned shell-hook processes; sleep infinity cannot
     environment:
       YORE_SERVER: http://server:8080
-      YORE_TOKEN: sandbox-token
+      # The bootstrap ticket. It enrols only the FIRST machine: once any device
+      # is active the server refuses it, and further machines need a ticket from
+      # `yore devices ticket`.
+      YORE_TICKET: sandbox-token
       YORE_INTEGRATION: takeover
     depends_on: [server]
     networks: [yore]

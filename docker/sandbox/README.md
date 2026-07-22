@@ -13,16 +13,25 @@ Clients reach the server over an internal Docker network (plain HTTP — no TLS 
 needed inside the sandbox; per-device request signing still protects writes).
 Nothing is published to your host, and `down -v` removes every trace.
 
-The client config (server URL, token, integration mode) is pre-seeded into each
+The client config (server URL, integration mode) is pre-seeded into each
 container from the compose environment by `client-entrypoint.sh`, so `yore setup`
-runs without prompts.
+runs without prompts. No credential is seeded — config.json holds no secrets.
+Enrolment is authorized by a **single-use ticket**, taken from `$YORE_TICKET`.
 
 ## Bring it up
 
 ```sh
 cd docker/sandbox
+docker compose down -v          # ALWAYS reset first — see below
 docker compose up -d --build
 ```
+
+**Reset with `down -v`, not `down`.** `server-data` persists, and a group that
+already has an active device refuses the bootstrap token by design — that is
+what makes it a *first* credential rather than a standing one. Sandbox clients
+are ephemeral, so their device keys die with the containers and nothing is left
+to mint a ticket: a reused volume leaves an orphaned group and every `yore setup`
+fails with `401 unauthorized`.
 
 A convenience wrapper for running yore in a container (used below):
 
@@ -34,19 +43,24 @@ dc() { docker compose -f docker/sandbox/compose.yml exec -T "$@"; }
 
 ```sh
 # 1) zsh-box becomes the first device and bootstraps the history group (the HK).
-dc zsh yore setup --server http://server:8080 --token sandbox-token \
+#    The server's own token is accepted ONLY here, while the group is empty.
+#    This also prints a RECOVERY PHRASE — the way back if every device is lost.
+dc zsh yore setup --server http://server:8080 --ticket sandbox-token \
       --integration takeover --name zsh-box
 
-# 2) bash-box registers as pending and prints a verification code.
-dc bash yore setup --server http://server:8080 --token sandbox-token \
+# 2) Adding a machine needs a single-use ticket minted by an enrolled one.
+TICKET=$(dc zsh yore devices ticket)   # the ticket is the only thing on stdout
+
+# 3) bash-box redeems it, registers as pending, and prints a verification code.
+dc bash yore setup --server http://server:8080 --ticket "$TICKET" \
       --integration takeover --name bash-box
 
-# 3) From the already-enrolled zsh-box, confirm the code matches and approve.
+# 4) From the already-enrolled zsh-box, confirm the code matches and approve.
 #    (approve prompts y/N — feed 'y' since we exec with -T)
 dc zsh yore devices                       # shows bash-box pending + its code
 printf 'y\n' | dc zsh yore devices approve <BASH_DEVICE_ID>
 
-# 4) Record a command on zsh-box and push it.
+# 5) Record a command on zsh-box and push it.
 printf 'echo hello-from-zsh-box' | dc zsh yore record --cwd /root --exit 0
 dc zsh yore sync
 

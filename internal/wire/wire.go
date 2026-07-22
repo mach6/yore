@@ -24,12 +24,46 @@ type Device struct {
 	CreatedMs int64  `json:"created_ms"`
 }
 
-// RegisterReq enrolls a new pending device.
+// RegisterReq enrolls a new pending device. The enrollment ticket authorizing
+// it travels in the X-Yore-Ticket header, not the body, so it is never stored
+// alongside the device record.
 type RegisterReq struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
 	PubKey  []byte `json:"pub_key"`
 	SignKey []byte `json:"sign_key"`
+}
+
+// RegisterResp answers a registration. GroupFormed tells the newcomer which
+// path it is on without needing a read it is not yet authorized for: false
+// means it is the first device and should form the group, true means an active
+// device already exists and this one waits for approval.
+type RegisterResp struct {
+	Device      Device `json:"device"`
+	GroupFormed bool   `json:"group_formed"`
+}
+
+// TicketResp is a freshly minted enrollment ticket. The plaintext is returned
+// exactly once, at mint time: the server keeps only its hash.
+type TicketResp struct {
+	Ticket    string `json:"ticket"`
+	ExpiresMs int64  `json:"expires_ms"`
+}
+
+// RecoveryInit publishes the recovery keypair derived from the recovery
+// passphrase, plus the History Key sealed to it. Uploaded once at bootstrap.
+type RecoveryInit struct {
+	Salt    []byte `json:"salt"`     // Argon2id salt (not secret)
+	PubKey  []byte `json:"pub_key"`  // X25519 public key derived from the passphrase
+	SignKey []byte `json:"sign_key"` // Ed25519 public key derived from the passphrase
+	Wrap    HKWrap `json:"wrap"`     // HK sealed to PubKey
+}
+
+// RecoverySalt is the unauthenticated half of recovery: the Argon2id parameters
+// needed to derive the recovery keypair from the passphrase before the holder
+// can prove possession of it.
+type RecoverySalt struct {
+	Salt []byte `json:"salt"`
 }
 
 // HKWrap is the History Key sealed to one device's public key.

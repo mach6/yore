@@ -10,6 +10,7 @@ import (
 	"yore/internal/cryptobox"
 	"yore/internal/daemon"
 	"yore/internal/redact"
+	"yore/internal/secret"
 	"yore/internal/syncer"
 )
 
@@ -19,11 +20,13 @@ import (
 func runDoctor() int {
 	dir := stateDir()
 	failed := false
-	ok := func(msg string) { fmt.Printf("  \033[32mok\033[0m   %s\n", msg) }
-	warn := func(msg string) { fmt.Printf("  \033[33mwarn\033[0m %s\n", msg) }
-	fail := func(msg string) { fmt.Printf("  \033[31mFAIL\033[0m %s\n", msg); failed = true }
+	u := newUI()
+	ok := func(msg string) { u.step(msg, "") }
+	warn := func(msg string) { u.warn(msg) }
+	fail := func(msg string) { u.fail(msg); failed = true }
 
-	fmt.Printf("yore %s — diagnostics\n\nstate\n", Version)
+	u.title("yore " + Version + " — diagnostics")
+	u.section("state")
 	if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
 		if fi.Mode().Perm()&0o077 != 0 {
 			warn(fmt.Sprintf("%s is %04o (want 0700)", dir, fi.Mode().Perm()))
@@ -35,7 +38,7 @@ func runDoctor() int {
 	}
 
 	// Daemon + local history.
-	fmt.Println("\ndaemon")
+	u.section("daemon")
 	if c, err := daemon.EnsureRunning(dir); err != nil {
 		fail("daemon not reachable: " + err.Error())
 	} else {
@@ -52,7 +55,7 @@ func runDoctor() int {
 	}
 
 	// Secrets filter.
-	fmt.Println("\nsecrets filter")
+	u.section("secrets filter")
 	cfg, _ := config.Load(dir)
 	filter, errs := redact.Load(dir, cfg.IgnorePatterns, cfg.IgnoreDirs)
 	// Load's warnings already say when it fell back to the built-ins (missing,
@@ -67,7 +70,7 @@ func runDoctor() int {
 		filter.NumRules(), len(cfg.IgnorePatterns), len(cfg.IgnoreDirs)))
 
 	// Enrollment + server.
-	fmt.Println("\nsync")
+	u.section("sync")
 	if cfg.ServerURL == "" {
 		warn("not configured — run `yore setup` to sync across machines (local-only otherwise)")
 	} else {
@@ -76,8 +79,8 @@ func runDoctor() int {
 		} else {
 			ok("device key present")
 		}
-		token := firstNonEmpty(cfg.Token, os.Getenv("YORE_TOKEN"))
-		http := syncer.NewHTTPClient(cfg.ServerURL, token, cfg.ServerPin)
+		ok(fmt.Sprintf("secrets stored in the %s", secret.Open(dir).Backend()))
+		http := syncer.NewHTTPClient(cfg.ServerURL, cfg.ServerPin)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := http.Health(ctx); err != nil {

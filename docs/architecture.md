@@ -130,6 +130,7 @@ local bbolt store and the authority for all search.
 | `hosts` | per-host live-record counts (browse sidebar); warms the remote cache |
 | `delete` | tombstone one record by id (syncs as a tombstone) |
 | `devices` | list enrolled devices (proxied to the syncer) |
+| `ticket` | mint a single-use enrollment ticket (proxied to the syncer) |
 | `approve` / `revoke` | approve a pending device / revoke+rotate keys |
 | `sync` | force a **synchronous** push/pull cycle (backs `yore sync`) |
 | `status` | daemon status (pid, uptime, local rows, remote state, version) |
@@ -235,7 +236,17 @@ device X25519 + Ed25519 keypairs   per machine; private halves never leave it
 - **AAD** binds every sealed record to `recordID|hostID|seq|keyID`, so a
   compromised server cannot reorder, replay, or substitute blobs undetected.
   Decryption failure is fatal to a pull (never silently skipped).
-- **Request signing** (`reqsign`) means a captured bearer token can't push
+- **No shared secret at all.** A device authenticates with its Ed25519 key on
+  every request, reads included; there is no bearer token to capture. The
+  server's configured token is only an *enrollment ticket for an empty group* —
+  once any device is active it enrolls nothing, and every later machine needs a
+  single-use ticket minted by one already enrolled.
+- **Recovery.** Per-device keys mean losing every device would otherwise lose
+  the archive for good, so bootstrap also seals HK to a key derived (Argon2id)
+  from a one-time recovery phrase shown once and never stored. The server holds
+  only the salt, the recovery public keys, and that wrap — still nothing that
+  can decrypt history.
+- **Request signing** (`reqsign`) means a captured request can't push
   garbage or revoke a device; optional TLS cert pinning (`yore setup --pin`)
   hardens against a TLS-inspecting proxy, fail-closed.
 
@@ -271,9 +282,13 @@ so a fresh daemon re-pulls from `after=0`. Remote plaintext exists only in RAM.
 ## The sync server
 
 Multi-tenant and sharded. Each tenant is an isolated bbolt file owned solely by
-the server process; the bearer token selects the tenant every handler operates on.
+the server process; the identity that signed a request selects the tenant every
+handler operates on.
 
-- **Token → tenant.** The auth middleware compares the token constant-time against
+- **Device → tenant.** The auth middleware finds the tenant holding the signing
+  device's record (ids are globally-unique ULIDs, so at most one matches) and
+  caches the mapping. Enrollment routes by ticket, recovery by the tenant that
+  has recovery material. Bootstrap tokens are still compared constant-time against
   every configured token (no early break — a match leaks nothing about which or
   how many tenants exist) and binds that tenant's db into the request context. No
   match → `401`. A request that somehow reaches a handler with no bound tenant
@@ -313,14 +328,17 @@ the server process; the bearer token selects the tenant every handler operates o
 ## Single-directory footprint
 
 All client state lives under `~/.config/yore/` (or `$YORE_DIR`); uninstall is one
-`rm -rf`. The files:
+`rm -rf`. The one deliberate exception is secret material: when a usable OS
+keyring exists, the device key is stored there instead of in the directory, so a
+full uninstall also drops the `yore` keyring entries. `$YORE_SECRET_BACKEND=file`
+forces everything back into the directory. The files:
 
 | Path | What |
 |---|---|
 | `config.json` | settings (0600) |
 | `redact.yml` | editable, seeded secret-redaction rules (0600) |
 | `data.db` | local bbolt store — this host's history only |
-| `device.key` | device X25519+Ed25519 identity (0600; refused if group/other-readable) |
+| `device.key` | device X25519+Ed25519 identity — kept in the **OS keyring** when one is usable, else this file (0600; refused if group/other-readable) |
 | `spool/<pid>.jsonl` | crash-safe capture handoff, drained by the daemon |
 | `daemon.sock` | daemon control socket (0600) |
 | `corpus.snap` | warm-start corpus gob snapshot (derived) |
@@ -334,7 +352,7 @@ Zero values mean "use default"; accessors apply defaults so callers never branch
 | Key | Default | Meaning |
 |---|---|---|
 | `server_url` | — | sync server base URL; empty = local-only |
-| `token` / `token_file` | — | bearer token (inline or read from a file) |
+| `token_file` | — | path to a file holding an enrollment ticket, for setups that manage it externally |
 | `server_pin` | — | pinned server TLS SPKI (base64 SHA-256); set by `setup --pin` |
 | `integration` | `takeover` | `takeover` \| `coexist` \| `capture` |
 | `key_epoch` | `24h` | DEK epoch width |

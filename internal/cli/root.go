@@ -85,6 +85,7 @@ func newRootCmd() *cobra.Command {
 		newInitCmd(),
 		newSetupCmd(),
 		newDevicesCmd(),
+		newRecoverCmd(),
 		newServerCmd(),
 		newHealthcheckCmd(),
 		newSyncCmd(),
@@ -292,25 +293,26 @@ func newInitCmd() *cobra.Command {
 // --- enrollment ------------------------------------------------------------
 
 func newSetupCmd() *cobra.Command {
-	var server, token, name, integration string
+	var server, ticket, name, integration string
 	var pin, clearPin bool
 	cmd := &cobra.Command{
 		Use:   "setup",
 		Short: "Enroll this machine with a sync server",
-		Long: "setup validates the server URL and token against the server, then records\n" +
-			"them, ensures a device key, and either bootstraps a new history group (first\n" +
-			"machine) or registers this machine as pending approval from one that's already\n" +
-			"enrolled. If the server is unreachable or rejects the token, nothing is saved.\n\n" +
+		Long: "setup enrolls this machine using a single-use enrollment ticket. The first\n" +
+			"machine forms the history group and is shown a recovery phrase; every later\n" +
+			"machine registers as pending and must be approved from one already enrolled.\n" +
+			"Get a ticket with `yore devices ticket` on an enrolled machine; the first\n" +
+			"machine uses the server's own token. Nothing is saved if enrollment fails.\n\n" +
 			"--pin captures and pins the server's TLS certificate (do it on a trusted\n" +
 			"network): thereafter the client refuses any other cert, defeating a\n" +
 			"TLS-inspecting proxy — but it also won't sync through one. --clear-pin removes\n" +
 			"a previously pinned certificate.",
 		RunE: func(*cobra.Command, []string) error {
-			return code(runSetup(server, token, name, integration, pin, clearPin))
+			return code(runSetup(server, ticket, name, integration, pin, clearPin))
 		},
 	}
 	cmd.Flags().StringVar(&server, "server", "", "server URL")
-	cmd.Flags().StringVar(&token, "token", "", "auth token")
+	cmd.Flags().StringVar(&ticket, "ticket", "", "single-use enrollment ticket (else $YORE_TICKET, else prompt)")
 	cmd.Flags().StringVar(&name, "name", "", "device name (default: hostname)")
 	cmd.Flags().StringVar(&integration, "integration", "", "shell integration: takeover|coexist|capture (default: prompt/takeover)")
 	cmd.Flags().BoolVar(&pin, "pin", false, "pin the server's TLS certificate (capture it now)")
@@ -346,7 +348,35 @@ func newDevicesCmd() *cobra.Command {
 			return code(runDevicesRevoke(args[0]))
 		},
 	}
-	cmd.AddCommand(approve, revoke)
+	ticket := &cobra.Command{
+		Use:   "ticket",
+		Short: "Mint a single-use enrollment ticket for another machine",
+		Args:  cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			return code(runDevicesTicket())
+		},
+	}
+	cmd.AddCommand(approve, revoke, ticket)
+	return cmd
+}
+
+func newRecoverCmd() *cobra.Command {
+	var server string
+	cmd := &cobra.Command{
+		Use:   "recover",
+		Short: "Regain access with your recovery phrase",
+		Long: "recover is the way back when no enrolled machine survives. It asks for the\n" +
+			"recovery phrase shown when the group was created, uses it to unwrap the\n" +
+			"History Key, then enrolls this machine and admits it directly (no other\n" +
+			"device is left to approve it).\n\n" +
+			"The phrase is the only thing you need: it also authorizes the enrollment,\n" +
+			"because the machines you lost still count as enrolled on the server.",
+		Args: cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			return code(runRecover(server))
+		},
+	}
+	cmd.Flags().StringVar(&server, "server", "", "server URL")
 	return cmd
 }
 

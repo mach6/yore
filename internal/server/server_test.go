@@ -22,16 +22,31 @@ import (
 
 // ---- harness ----
 
-// testClient talks to the server with a bearer token and, when it carries a
-// signing identity (devID + priv), signs mutating requests exactly the way the
-// real client (internal/syncer) must: reqsign.Sign over the request's
-// RequestURI and the exact body bytes.
+// testClient talks to the server the way the real client (internal/syncer)
+// must: every authenticated request is signed with reqsign over the request's
+// RequestURI and the exact body bytes. There is no bearer token — a client
+// without a signing identity can reach only the open endpoints and enrollment,
+// the latter authorized by ticket.
 type testClient struct {
-	t     *testing.T
-	base  string
-	token string // "" => send no Authorization header
-	devID string
-	priv  ed25519.PrivateKey // nil => send no signature headers
+	t      *testing.T
+	base   string
+	ticket string // "" => send no X-Yore-Ticket header
+	devID  string
+	priv   ed25519.PrivateKey // nil => send no signature headers
+}
+
+// anon returns a copy with no signing identity: an unenrolled caller.
+func (c *testClient) anon() *testClient {
+	cp := *c
+	cp.devID, cp.priv = "", nil
+	return &cp
+}
+
+// withTicket returns a copy presenting a specific enrollment ticket.
+func (c *testClient) withTicket(ticket string) *testClient {
+	cp := *c
+	cp.ticket = ticket
+	return &cp
 }
 
 // withKey returns a copy of the client that signs as (devID, priv).
@@ -85,8 +100,8 @@ func (c *testClient) sendConcurrent(method, path string, body any) (status int, 
 	if err != nil {
 		return 0, nil, fmt.Errorf("new request: %w", err)
 	}
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
+	if c.ticket != "" {
+		req.Header.Set(hdrTicket, c.ticket)
 	}
 	if c.priv != nil {
 		hdrs, err := reqsign.Sign(c.devID, func(b []byte) []byte { return ed25519.Sign(c.priv, b) },
@@ -144,8 +159,8 @@ func (c *testClient) newRequest(method, path string, body []byte) *http.Request 
 	}
 	req, err := http.NewRequest(method, c.base+path, r)
 	require.NoError(c.t, err, "new request")
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
+	if c.ticket != "" {
+		req.Header.Set(hdrTicket, c.ticket)
 	}
 	return req
 }
@@ -186,7 +201,19 @@ func setup(t *testing.T) *testClient {
 		srv.Close()
 		_ = s.Close()
 	})
-	return &testClient{t: t, base: srv.URL, token: "tok"}
+	// The base client holds only the server's bootstrap token: it can form a
+	// group, but it is not a device and so cannot read anything. Tests obtain a
+	// usable identity with bootstrapActive / registerDevice.
+	return &testClient{t: t, base: srv.URL, ticket: "tok"}
+}
+
+// mintTicket asks the server for a single-use enrollment ticket, signed by c
+// (which must be an active device).
+func mintTicket(t *testing.T, c *testClient) string {
+	t.Helper()
+	status, body := c.do("POST", "/v1/tickets", struct{}{})
+	require.Equalf(t, http.StatusOK, status, "mint ticket: body %s", body)
+	return mustJSON[wire.TicketResp](t, body).Ticket
 }
 
 func mustJSON[T any](t *testing.T, data []byte) T {
@@ -212,13 +239,21 @@ func mkRecords(start, n uint64) []wire.PushRecord {
 
 func pubKey() []byte { return make([]byte, 32) }
 
-// registerDevice generates a fresh Ed25519 keypair, self-signs a registration
-// for id, and returns a client that signs later requests as that device.
+// registerDevice enrolls a new device into an existing group: it mints a ticket
+// with base (an active device) and registers id against it.
 func registerDevice(t *testing.T, base *testClient, id string) *testClient {
+	t.Helper()
+	return registerWithTicket(t, base, id, mintTicket(t, base))
+}
+
+// registerWithTicket generates a fresh Ed25519 keypair, self-signs a
+// registration for id authorized by ticket, and returns a client that signs
+// later requests as that device.
+func registerWithTicket(t *testing.T, base *testClient, id, ticket string) *testClient {
 	t.Helper()
 	pub, priv, err := ed25519.GenerateKey(nil)
 	require.NoError(t, err, "genkey")
-	dc := base.withKey(id, priv)
+	dc := base.withKey(id, priv).withTicket(ticket)
 	status, body := dc.do("POST", "/v1/devices", wire.RegisterReq{ID: id, Name: id, PubKey: pubKey(), SignKey: pub})
 	require.Equalf(t, http.StatusOK, status, "register %s: body %s", id, body)
 	return dc
@@ -237,7 +272,9 @@ func activateDevice(t *testing.T, signer *testClient, id string) {
 // returning its signing client. Use once per server.
 func bootstrapActive(t *testing.T, base *testClient, id string) *testClient {
 	t.Helper()
-	dc := registerDevice(t, base, id)
+	// The very first device enrolls on the server's own token, which is accepted
+	// only while no device is active.
+	dc := registerWithTicket(t, base, id, base.ticket)
 	activateDevice(t, dc, id) // bootstrap: the pending device self-activates
 	return dc
 }
@@ -255,11 +292,13 @@ func TestAuth(t *testing.T) {
 	c := setup(t)
 
 	// Health is open.
-	noAuth := &testClient{t: t, base: c.base, token: ""}
+	noAuth := &testClient{t: t, base: c.base}
 	status, _ := noAuth.do("GET", "/v1/health", nil)
 	require.Equal(t, http.StatusOK, status, "health no-auth")
 
-	wrong := &testClient{t: t, base: c.base, token: "nope"}
+	// An unenrolled caller: no signing identity, and a ticket the server never
+	// minted. Nothing beyond /v1/health is reachable.
+	wrong := &testClient{t: t, base: c.base, ticket: "nope"}
 	routes := []struct{ method, path string }{
 		{"GET", "/v1/hosts"},
 		{"POST", "/v1/records"},
@@ -295,7 +334,7 @@ func TestRegisterSignature(t *testing.T) {
 	dc := c.withKey("A", priv)
 	status, body := dc.do("POST", "/v1/devices", wire.RegisterReq{ID: "A", Name: "A", PubKey: pubKey(), SignKey: pub})
 	require.Equalf(t, http.StatusOK, status, "register: body %s", body)
-	d := mustJSON[wire.Device](t, body)
+	d := mustJSON[wire.RegisterResp](t, body).Device
 	require.Equal(t, wire.DevicePending, d.Status, "register status")
 	require.True(t, bytes.Equal(d.SignKey, pub), "register: sign key stored")
 
@@ -412,7 +451,7 @@ func TestPullPaging(t *testing.T) {
 	total := 0
 	pages := 0
 	for {
-		status, body := c.do("GET", fmt.Sprintf("/v1/records?host_id=h&after=%d&limit=1000", after), nil)
+		status, body := dev.do("GET", fmt.Sprintf("/v1/records?host_id=h&after=%d&limit=1000", after), nil)
 		require.Equalf(t, http.StatusOK, status, "pull: body %s", body)
 		resp := mustJSON[wire.PullResp](t, body)
 		total += len(resp.Records)
@@ -437,7 +476,7 @@ func TestPullUnknownAndBeyond(t *testing.T) {
 	dev := bootstrapActive(t, c, "pusher")
 
 	// Unknown host => empty, no NextAfter, not 404.
-	status, body := c.do("GET", "/v1/records?host_id=nope", nil)
+	status, body := dev.do("GET", "/v1/records?host_id=nope", nil)
 	require.Equalf(t, http.StatusOK, status, "unknown host: body %s", body)
 	resp := mustJSON[wire.PullResp](t, body)
 	require.Empty(t, resp.Records, "unknown host records")
@@ -445,30 +484,35 @@ func TestPullUnknownAndBeyond(t *testing.T) {
 
 	// after beyond end => empty, no NextAfter.
 	dev.do("POST", "/v1/records", wire.PushReq{HostID: "h", Records: mkRecords(1, 3)})
-	status, body = c.do("GET", "/v1/records?host_id=h&after=100", nil)
+	status, body = dev.do("GET", "/v1/records?host_id=h&after=100", nil)
 	require.Equalf(t, http.StatusOK, status, "beyond end: body %s", body)
 	resp = mustJSON[wire.PullResp](t, body)
 	require.Empty(t, resp.Records, "beyond end records")
 	require.Nil(t, resp.NextAfter, "beyond end nextAfter")
 }
 
-// ---- reads stay token-only ----
+// ---- reads require a device signature ----
 
-func TestReadsTokenOnly(t *testing.T) {
+// TestReadsRequireSignature pins the auth model: with no bearer token, a read is
+// exactly as privileged as a write. An active device may read; an unenrolled
+// caller may not read anything but /v1/health.
+func TestReadsRequireSignature(t *testing.T) {
 	c := setup(t)
 	dev := bootstrapActive(t, c, "reader")
 	dev.do("POST", "/v1/records", wire.PushReq{HostID: "h", Records: mkRecords(1, 3)})
 
-	// GET endpoints work with the token alone — no signature attached.
-	reads := []string{"/v1/health", "/v1/hosts", "/v1/records?host_id=h", "/v1/devices", "/v1/keys/dek"}
+	reads := []string{"/v1/hosts", "/v1/records?host_id=h", "/v1/devices", "/v1/keys/dek"}
 	for _, path := range reads {
 		t.Run(path, func(t *testing.T) {
-			status, body := c.do("GET", path, nil)
-			require.Equalf(t, http.StatusOK, status, "read %s: body %s", path, body)
+			status, body := dev.do("GET", path, nil)
+			require.Equalf(t, http.StatusOK, status, "signed read %s: body %s", path, body)
+
+			status, _ = dev.anon().do("GET", path, nil)
+			require.Equalf(t, http.StatusUnauthorized, status, "unsigned read %s must be refused", path)
 		})
 	}
-	// Health is open even without the token.
-	noAuth := &testClient{t: t, base: c.base, token: ""}
+	// Health is open to an unauthenticated caller.
+	noAuth := &testClient{t: t, base: c.base}
 	status, _ := noAuth.do("GET", "/v1/health", nil)
 	require.Equal(t, http.StatusOK, status, "health no-auth")
 }
@@ -481,7 +525,7 @@ func TestHosts(t *testing.T) {
 	dev.do("POST", "/v1/records", wire.PushReq{HostID: "alpha", Records: mkRecords(1, 5)})
 	dev.do("POST", "/v1/records", wire.PushReq{HostID: "beta", Records: mkRecords(1, 9)})
 
-	status, body := c.do("GET", "/v1/hosts", nil)
+	status, body := dev.do("GET", "/v1/hosts", nil)
 	require.Equalf(t, http.StatusOK, status, "hosts: body %s", body)
 	resp := mustJSON[wire.HostsResp](t, body)
 	got := map[string]uint64{}
@@ -502,7 +546,7 @@ func TestDeviceLifecycle(t *testing.T) {
 	dcA := c.withKey("A", privA)
 	status, body := dcA.do("POST", "/v1/devices", wire.RegisterReq{ID: "A", Name: "A", PubKey: pubKey(), SignKey: pubA})
 	require.Equalf(t, http.StatusOK, status, "register A: body %s", body)
-	require.Equal(t, wire.DevicePending, mustJSON[wire.Device](t, body).Status, "register A status")
+	require.Equal(t, wire.DevicePending, mustJSON[wire.RegisterResp](t, body).Device.Status, "register A status")
 
 	// Duplicate (still self-signed, fresh nonce) => 409.
 	status, _ = dcA.do("POST", "/v1/devices", wire.RegisterReq{ID: "A", Name: "A", PubKey: pubKey(), SignKey: pubA})
@@ -522,21 +566,21 @@ func TestDeviceLifecycle(t *testing.T) {
 
 	// hk_version is now 1: activating B at wrong version fails, at 1 succeeds.
 	// B is approved by the active device A (signer need not be the resource).
-	dcB := registerDevice(t, c, "B")
+	dcB := registerDevice(t, dcA, "B")
 	_ = dcB
 	wrongVer := wire.ActivateReq{Wrap: wire.HKWrap{DeviceID: "B", HKVersion: 2}}
 	status, _ = dcA.do("POST", "/v1/devices/B/activate", wrongVer)
 	require.Equal(t, http.StatusBadRequest, status, "activate B wrong version")
 	activateDevice(t, dcA, "B")
 
-	// A's HK wrap is retrievable (token-only GET).
-	status, _ = c.do("GET", "/v1/keys/hk?device_id=A", nil)
+	// A's HK wrap is retrievable by an active device.
+	status, _ = dcA.do("GET", "/v1/keys/hk?device_id=A", nil)
 	require.Equal(t, http.StatusOK, status, "get hk A")
 
 	// Revoke A, signed by active device B => deletes A's wrap.
 	status, _ = dcB.do("POST", "/v1/devices/A/revoke", nil)
 	require.Equal(t, http.StatusOK, status, "revoke A")
-	status, _ = c.do("GET", "/v1/keys/hk?device_id=A", nil)
+	status, _ = dcB.do("GET", "/v1/keys/hk?device_id=A", nil)
 	require.Equal(t, http.StatusNotFound, status, "get hk A after revoke")
 
 	// Activate revoked A (signed by active B) => 409.
@@ -549,12 +593,12 @@ func TestDeviceLifecycle(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, status, "revoke unknown")
 
 	// List returns all devices regardless of status.
-	status, body = c.do("GET", "/v1/devices", nil)
+	status, body = dcB.do("GET", "/v1/devices", nil)
 	require.Equal(t, http.StatusOK, status, "list devices")
 	require.Len(t, mustJSON[[]wire.Device](t, body), 2, "list devices count")
 
 	// hk get for a device that never had a wrap => 404.
-	status, _ = c.do("GET", "/v1/keys/hk?device_id=ghost", nil)
+	status, _ = dcB.do("GET", "/v1/keys/hk?device_id=ghost", nil)
 	require.Equal(t, http.StatusNotFound, status, "get hk ghost")
 }
 
@@ -563,12 +607,12 @@ func TestDeviceLifecycle(t *testing.T) {
 func TestRevokeSignature(t *testing.T) {
 	c := setup(t)
 	dcA := bootstrapActive(t, c, "A")
-	dcB := registerDevice(t, c, "B")
+	dcB := registerDevice(t, dcA, "B")
 	activateDevice(t, dcA, "B")
 
-	// Token-only revoke (no signature) => 401.
-	status, _ := c.do("POST", "/v1/devices/B/revoke", nil)
-	require.Equal(t, http.StatusUnauthorized, status, "token-only revoke")
+	// Unsigned revoke => 401: there is no credential but the device key.
+	status, _ := c.anon().do("POST", "/v1/devices/B/revoke", nil)
+	require.Equal(t, http.StatusUnauthorized, status, "unsigned revoke")
 
 	// Properly signed revoke by an active device => 200. (Any active device may
 	// revoke any device; A revokes B.)
@@ -615,7 +659,7 @@ func TestDEK(t *testing.T) {
 		if cursor != "" {
 			path += "&cursor=" + cursor
 		}
-		status, body = c.do("GET", path, nil)
+		status, body = dcA.do("GET", path, nil)
 		require.Equalf(t, http.StatusOK, status, "dek list: body %s", body)
 		resp := mustJSON[wire.DEKListResp](t, body)
 		for _, w := range resp.Wraps {
@@ -638,7 +682,7 @@ func TestDEK(t *testing.T) {
 // signing client (the surviving active device) and the DEK key ids.
 func rotateSetup(t *testing.T, c *testClient) (signer *testClient, keyIDs []string) {
 	dcA := bootstrapActive(t, c, "A")
-	dcB := registerDevice(t, c, "B")
+	dcB := registerDevice(t, dcA, "B")
 	activateDevice(t, dcA, "B")
 	_ = dcB
 
@@ -673,16 +717,16 @@ func TestRotateHappy(t *testing.T) {
 	require.Equalf(t, http.StatusOK, status, "rotate: body %s", body)
 
 	// Version bumped: A's hk wrap now v2.
-	status, body = c.do("GET", "/v1/keys/hk?device_id=A", nil)
+	status, body = dcA.do("GET", "/v1/keys/hk?device_id=A", nil)
 	require.Equal(t, http.StatusOK, status, "get hk A")
 	require.Equal(t, 2, mustJSON[wire.HKWrap](t, body).HKVersion, "A hk after rotate")
 
 	// B's wrap is gone (was revoked before rotate).
-	status, _ = c.do("GET", "/v1/keys/hk?device_id=B", nil)
+	status, _ = dcA.do("GET", "/v1/keys/hk?device_id=B", nil)
 	require.Equal(t, http.StatusNotFound, status, "get hk B after rotate")
 
 	// All DEKs replaced with v2.
-	_, body = c.do("GET", "/v1/keys/dek?limit=1000", nil)
+	_, body = dcA.do("GET", "/v1/keys/dek?limit=1000", nil)
 	resp := mustJSON[wire.DEKListResp](t, body)
 	require.Len(t, resp.Wraps, 3, "dek count after rotate")
 	for _, w := range resp.Wraps {
@@ -714,10 +758,10 @@ func TestRotatePartialIsAllOrNothing(t *testing.T) {
 	require.Equalf(t, http.StatusBadRequest, status, "partial rotate: body %s", body)
 
 	// Assert NOTHING changed: A's wrap still v1.
-	_, body = c.do("GET", "/v1/keys/hk?device_id=A", nil)
+	_, body = dcA.do("GET", "/v1/keys/hk?device_id=A", nil)
 	require.Equal(t, 1, mustJSON[wire.HKWrap](t, body).HKVersion, "A hk after failed rotate")
 	// All 3 DEKs still present at v1.
-	_, body = c.do("GET", "/v1/keys/dek?limit=1000", nil)
+	_, body = dcA.do("GET", "/v1/keys/dek?limit=1000", nil)
 	resp := mustJSON[wire.DEKListResp](t, body)
 	require.Len(t, resp.Wraps, 3, "dek count after failed rotate")
 	for _, w := range resp.Wraps {
@@ -792,7 +836,7 @@ func TestConcurrentPushDistinctHosts(t *testing.T) {
 	}
 
 	// Every host present with the right max seq.
-	_, body := c.do("GET", "/v1/hosts", nil)
+	_, body := dev.do("GET", "/v1/hosts", nil)
 	resp := mustJSON[wire.HostsResp](t, body)
 	require.Len(t, resp.Hosts, hosts, "hosts count")
 	for _, h := range resp.Hosts {

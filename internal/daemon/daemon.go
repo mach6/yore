@@ -35,10 +35,12 @@ import (
 )
 
 const (
-	defaultLimit     = 200                   // QueryReq.Limit == 0 falls back to this
-	ingestDebounce   = 75 * time.Millisecond // straggler window after a wake
-	defaultIdle      = 30 * time.Minute      // last-resort idle timeout
-	snapshotInterval = 5 * time.Minute       // periodic warm-snapshot write
+	defaultLimit      = 200                   // QueryReq.Limit == 0 falls back to this
+	ingestDebounce    = 75 * time.Millisecond // straggler window after a wake
+	defaultIdle       = 30 * time.Minute      // last-resort idle timeout
+	snapshotInterval  = 5 * time.Minute       // periodic warm-snapshot write
+	socketCheckPeriod = 30 * time.Second      // how often to confirm our socket still exists
+	unconfiguredPoll  = 15 * time.Second      // sync-loop tick while sync is unconfigured
 )
 
 // Options configures a daemon run.
@@ -57,11 +59,17 @@ type server struct {
 	cfg         config.Config
 	store       *store.Store
 	ln          net.Listener
+	sockInfo    os.FileInfo   // identity of the socket file we bound; see socketLive
+	sockCheck   time.Duration // socketWatchLoop period; 0 means socketCheckPeriod
 	logFile     io.Closer
 	logger      *log.Logger
 	idleTimeout time.Duration
 	startTime   time.Time
 	remote      *remoteCache
+	// syncConf is the sync configuration the current syncer was built from.
+	// Owned solely by the syncLoop goroutine, which compares it against disk to
+	// detect a meaningful config change.
+	syncConf syncConf
 
 	// Corpus: live records in ascending seq, plus the parallel commands slice
 	// that match.Filter scans. Append-only while running; guarded by mu.
@@ -114,6 +122,7 @@ func Run(dir string, opts Options) error {
 
 	logFile, logger := openLog(dir, cfg)
 
+	sc := loadSyncConf(dir)
 	s := &server{
 		dir:         dir,
 		opts:        opts,
@@ -123,7 +132,8 @@ func Run(dir string, opts Options) error {
 		logger:      logger,
 		idleTimeout: idle,
 		startTime:   time.Now(),
-		remote:      newRemote(dir, st),
+		remote:      newRemote(dir, st, sc),
+		syncConf:    sc,
 		conns:       make(map[net.Conn]struct{}),
 		wake:        make(chan struct{}, 1),
 		activity:    make(chan struct{}, 1),
@@ -152,6 +162,8 @@ func Run(dir string, opts Options) error {
 	}
 	_ = os.Chmod(config.SocketPath(dir), 0o600)
 	s.ln = ln
+	// Remember which file we bound so socketLive can tell it from a replacement.
+	s.sockInfo, _ = os.Stat(config.SocketPath(dir))
 
 	bail := func(e error) error {
 		_ = ln.Close()
@@ -177,15 +189,16 @@ func Run(dir string, opts Options) error {
 	s.sigCh = make(chan os.Signal, 1)
 	signal.Notify(s.sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	s.wg.Add(3)
+	// The sync loop runs unconditionally: its tick also notices sync being
+	// configured after the daemon started, so a daemon that predates `yore setup`
+	// picks it up instead of staying local-only until it exits.
+	s.wg.Add(5)
 	go s.acceptLoop()
 	go s.ingestLoop()
 	go s.snapshotLoop()
-	if s.remote.enabled() {
-		s.wg.Add(1)
-		go s.syncLoop()
-		s.logf("sync enabled")
-	}
+	go s.socketWatchLoop()
+	go s.syncLoop()
+	s.logf("sync enabled=%v", s.remote.enabled())
 	if s.cfg.BackupIntervalD() > 0 {
 		s.wg.Add(1)
 		go s.backupLoop()
@@ -244,7 +257,13 @@ func (s *server) shutdown() {
 		// after workers stop, so the corpus is quiescent.
 		s.snapshotNow()
 
-		_ = os.Remove(config.SocketPath(s.dir))
+		// Only unlink the socket if it is still the file we bound: if another
+		// daemon has taken the path over, removing it would strand that daemon
+		// on an unreachable listener (the very wedge socketWatchLoop exists to
+		// prevent).
+		if s.socketLive() {
+			_ = os.Remove(config.SocketPath(s.dir))
+		}
 		_ = s.store.Close()
 		s.logf("stopped pid=%d", os.Getpid())
 		if s.logFile != nil {
@@ -361,6 +380,13 @@ func (s *server) dispatch(req *proto.Request, f *match.Filter) (proto.Response, 
 			return proto.Response{Err: "revoke: " + err.Error()}, false
 		}
 		return proto.Response{OK: true}, false
+
+	case proto.OpTicket:
+		ti, err := s.mintTicket()
+		if err != nil {
+			return proto.Response{Err: "ticket: " + err.Error()}, false
+		}
+		return proto.Response{OK: true, Ticket: &ti}, false
 
 	case proto.OpStatus:
 		st := s.status()
@@ -521,6 +547,48 @@ func (s *server) snapshotLoop() {
 			s.snapshotNow()
 		}
 	}
+}
+
+// socketWatchLoop stops the daemon if the socket file it bound is unlinked or
+// replaced. A unix listener survives its path being removed: the daemon would
+// keep accepting on an unreachable socket AND keep the store lock, so every
+// client gets ENOENT while every respawn loses the lock race and exits quietly
+// — a wedge only a manual kill clears. Exiting instead releases the lock, and
+// the next poke spawns a healthy daemon.
+func (s *server) socketWatchLoop() {
+	defer s.wg.Done()
+	period := s.sockCheck
+	if period <= 0 {
+		period = socketCheckPeriod
+	}
+	t := time.NewTicker(period)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-t.C:
+			if !s.socketLive() {
+				s.logf("socket %s gone or replaced; shutting down", config.SocketPath(s.dir))
+				s.triggerShutdown()
+				return
+			}
+		}
+	}
+}
+
+// socketLive reports whether the socket path still refers to the very file this
+// daemon bound. A missing path, or a different file at it (another daemon took
+// over), both mean our listener is unreachable.
+func (s *server) socketLive() bool {
+	if s.sockInfo == nil {
+		return true // identity unknown: never shut down on a guess
+	}
+	fi, err := os.Stat(config.SocketPath(s.dir))
+	if err != nil {
+		return false
+	}
+	return os.SameFile(s.sockInfo, fi)
 }
 
 // hosts aggregates live-record counts per host from BOTH the local RAM corpus

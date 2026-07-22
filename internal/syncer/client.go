@@ -35,6 +35,13 @@ import (
 // requestTimeout bounds every HTTP call the client makes.
 const requestTimeout = 30 * time.Second
 
+// connectTimeout bounds only the TCP connect. A server that is simply down
+// refuses immediately, but one that is unreachable (no route, black-holed
+// network, VPN off) would otherwise hang for the full requestTimeout — and the
+// daemon's sync cycle along with it. Failing the connect fast keeps "the
+// network is down" a brief, quiet degradation to local-only history.
+const connectTimeout = 5 * time.Second
+
 // APIError is a non-2xx response from the sync server. It carries the HTTP
 // status and the server's ErrorResp.Error text.
 type APIError struct {
@@ -49,35 +56,44 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("yore server: http %d: %s", e.Status, e.Msg)
 }
 
-// HTTPClient is a thin transport over the sync server's HTTP JSON API. The
-// signer (set once via SetSigner) is used to sign mutating (POST) requests with
-// the device key so a captured bearer token can't push or revoke.
+// HTTPClient is a thin transport over the sync server's HTTP JSON API.
+//
+// There is no bearer token: EVERY authenticated request — reads included — is
+// signed with the device's Ed25519 key (set once via SetSigner), so the only
+// credential is a private key that never leaves the machine. Enrollment, which
+// happens before a device record exists, is authorized instead by a single-use
+// ticket passed to RegisterDevice.
 type HTTPClient struct {
 	baseURL  string
-	token    string
 	hc       *http.Client
 	deviceID string
-	sign     func([]byte) []byte // nil until SetSigner; signs POSTs
+	sign     func([]byte) []byte // nil until SetSigner
 }
 
-// NewHTTPClient returns a client for the server at baseURL authenticating with
-// the given bearer token. baseURL should have no trailing slash. If pin is
+// NewHTTPClient returns a client for the server at baseURL. Authentication is
+// per-device signatures, installed by SetSigner; there is no token to pass.
+// baseURL should have no trailing slash. If pin is
 // non-empty (base64 SHA-256 of the server's SubjectPublicKeyInfo), the client
 // pins the server's TLS certificate and refuses any other — defeating a
 // TLS-inspecting proxy at the cost of not syncing through one.
-func NewHTTPClient(baseURL, token, pin string) *HTTPClient {
-	hc := &http.Client{Timeout: requestTimeout}
-	if pin != "" {
-		hc.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{VerifyConnection: pinVerifier(pin)},
-		}
+func NewHTTPClient(baseURL, pin string) *HTTPClient {
+	// Mirror http.DefaultTransport's proxy behaviour; only the dial timeout (and
+	// optionally the pin) differ from the stdlib default.
+	tr := &http.Transport{
+		Proxy:       http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{Timeout: connectTimeout}).DialContext,
 	}
-	return &HTTPClient{baseURL: baseURL, token: token, hc: hc}
+	if pin != "" {
+		tr.TLSClientConfig = &tls.Config{VerifyConnection: pinVerifier(pin)}
+	}
+	return &HTTPClient{baseURL: baseURL, hc: &http.Client{Timeout: requestTimeout, Transport: tr}}
 }
 
-// SetSigner installs the device's request signer (deviceID + Ed25519 sign
-// function). Call once at Syncer construction; it makes every POST carry a
-// reqsign signature.
+// SetSigner installs the request signer (deviceID + Ed25519 sign function).
+// Call once at Syncer construction; it makes every request carry a reqsign
+// signature. Recovery reuses this with the recovery-derived key and the
+// reserved device id, which is how a machine with no enrolled identity proves
+// it holds the passphrase.
 func (c *HTTPClient) SetSigner(deviceID string, sign func([]byte) []byte) {
 	c.deviceID = deviceID
 	c.sign = sign
@@ -126,10 +142,10 @@ func ServerPin(baseURL string) (string, error) {
 	return base64.StdEncoding.EncodeToString(sum[:]), nil
 }
 
-// do performs one request. It marshals body (if non-nil) as JSON, sends the
-// bearer token unless auth is false, and on a 2xx decodes the response into out
-// (if non-nil). A non-2xx becomes an *APIError carrying the server's message.
-func (c *HTTPClient) do(ctx context.Context, method, path string, query url.Values, body, out any, auth bool) error {
+// do performs one request: it marshals body (if non-nil) as JSON, applies hdrs,
+// signs the request, and on a 2xx decodes the response into out (if non-nil).
+// A non-2xx becomes an *APIError carrying the server's message.
+func (c *HTTPClient) do(ctx context.Context, method, path string, query url.Values, body, out any, hdrs map[string]string) error {
 	u := c.baseURL + path
 	if len(query) > 0 {
 		u += "?" + query.Encode()
@@ -151,12 +167,12 @@ func (c *HTTPClient) do(ctx context.Context, method, path string, query url.Valu
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if auth {
-		req.Header.Set("Authorization", "Bearer "+c.token)
+	for k, v := range hdrs {
+		req.Header.Set(k, v)
 	}
-	// Sign mutating requests (all POSTs) with the device key, so the bearer
-	// token alone can't push or revoke. reqsign binds to method+target+body.
-	if c.sign != nil && method == http.MethodPost {
+	// Sign every request with the device key: it is the only credential. reqsign
+	// binds the signature to method+target+body.
+	if c.sign != nil {
 		hdrs, err := reqsign.Sign(c.deviceID, c.sign, method, req.URL.RequestURI(), bodyBytes, time.Now())
 		if err != nil {
 			return fmt.Errorf("syncer: sign request: %w", err)
@@ -200,13 +216,13 @@ func parseServerError(data []byte) string {
 
 // Health checks server liveness. It sends no auth token (the endpoint is open).
 func (c *HTTPClient) Health(ctx context.Context) error {
-	return c.do(ctx, http.MethodGet, "/v1/health", nil, nil, nil, false)
+	return c.do(ctx, http.MethodGet, "/v1/health", nil, nil, nil, nil)
 }
 
 // Hosts lists every host stream the server knows.
 func (c *HTTPClient) Hosts(ctx context.Context) ([]wire.HostInfo, error) {
 	var resp wire.HostsResp
-	if err := c.do(ctx, http.MethodGet, "/v1/hosts", nil, nil, &resp, true); err != nil {
+	if err := c.do(ctx, http.MethodGet, "/v1/hosts", nil, nil, &resp, nil); err != nil {
 		return nil, err
 	}
 	return resp.Hosts, nil
@@ -215,7 +231,7 @@ func (c *HTTPClient) Hosts(ctx context.Context) ([]wire.HostInfo, error) {
 // PushRecords uploads a batch of sealed records for one host stream.
 func (c *HTTPClient) PushRecords(ctx context.Context, req wire.PushReq) (wire.PushResp, error) {
 	var resp wire.PushResp
-	err := c.do(ctx, http.MethodPost, "/v1/records", nil, req, &resp, true)
+	err := c.do(ctx, http.MethodPost, "/v1/records", nil, req, &resp, nil)
 	return resp, err
 }
 
@@ -228,21 +244,76 @@ func (c *HTTPClient) PullRecords(ctx context.Context, hostID string, after uint6
 		q.Set("limit", strconv.Itoa(limit))
 	}
 	var resp wire.PullResp
-	err := c.do(ctx, http.MethodGet, "/v1/records", q, nil, &resp, true)
+	err := c.do(ctx, http.MethodGet, "/v1/records", q, nil, &resp, nil)
 	return resp, err
 }
 
-// RegisterDevice enrolls a new pending device and returns the server's record.
-func (c *HTTPClient) RegisterDevice(ctx context.Context, req wire.RegisterReq) (wire.Device, error) {
-	var dev wire.Device
-	err := c.do(ctx, http.MethodPost, "/v1/devices", nil, req, &dev, true)
-	return dev, err
+// RegisterDevice enrolls a new pending device, authorized by a single-use
+// enrollment ticket. The ticket rides in a header rather than the body so it is
+// never marshalled into anything the server persists.
+func (c *HTTPClient) RegisterDevice(ctx context.Context, req wire.RegisterReq, ticket string) (wire.RegisterResp, error) {
+	var resp wire.RegisterResp
+	err := c.do(ctx, http.MethodPost, "/v1/devices", nil, req, &resp,
+		map[string]string{HdrTicket: ticket})
+	return resp, err
+}
+
+// HdrTicket carries the single-use enrollment ticket (mirrors the server).
+const HdrTicket = "X-Yore-Ticket"
+
+// RecoveryDeviceID is the reserved signer id recovery requests use: the caller
+// has no enrolled device, and proves itself with the recovery key instead.
+const RecoveryDeviceID = "recovery"
+
+// MintTicket asks the server for a fresh single-use enrollment ticket. Only an
+// enrolled device can call it, which is what makes enrollment a closed loop.
+func (c *HTTPClient) MintTicket(ctx context.Context) (wire.TicketResp, error) {
+	var resp wire.TicketResp
+	err := c.do(ctx, http.MethodPost, "/v1/tickets", nil, struct{}{}, &resp, nil)
+	return resp, err
+}
+
+// InitRecovery publishes the recovery public keys and the History Key sealed to
+// them. Called once, by the device that forms the group.
+func (c *HTTPClient) InitRecovery(ctx context.Context, req wire.RecoveryInit) error {
+	return c.do(ctx, http.MethodPost, "/v1/recovery", nil, req, nil, nil)
+}
+
+// RecoverySalt fetches the Argon2id salt needed to derive the recovery key.
+// Unauthenticated: it is required before any recovery signature is possible.
+func (c *HTTPClient) RecoverySalt(ctx context.Context) (wire.RecoverySalt, error) {
+	var resp wire.RecoverySalt
+	err := c.do(ctx, http.MethodGet, "/v1/recovery/salt", nil, nil, &resp, nil)
+	return resp, err
+}
+
+// RecoveryTicket mints an enrollment ticket authorized by the recovery key, so
+// a replacement machine can enroll when no surviving device can vouch for it.
+// The client must already be signing with the recovery key.
+func (c *HTTPClient) RecoveryTicket(ctx context.Context) (wire.TicketResp, error) {
+	var resp wire.TicketResp
+	err := c.do(ctx, http.MethodPost, "/v1/recovery/ticket", nil, struct{}{}, &resp, nil)
+	return resp, err
+}
+
+// RecoveryActivate admits a device using the recovery key's authority, for when
+// no surviving device can approve it.
+func (c *HTTPClient) RecoveryActivate(ctx context.Context, id string, req wire.ActivateReq) error {
+	return c.do(ctx, http.MethodPost, "/v1/recovery/activate/"+url.PathEscape(id), nil, req, nil, nil)
+}
+
+// RecoveryWrap fetches the History Key wrapped to the recovery key. The client
+// must already be signing with the recovery key (see SetSigner).
+func (c *HTTPClient) RecoveryWrap(ctx context.Context) (wire.HKWrap, error) {
+	var wrap wire.HKWrap
+	err := c.do(ctx, http.MethodGet, "/v1/recovery", nil, nil, &wrap, nil)
+	return wrap, err
 }
 
 // ListDevices returns all devices the server knows, in ID order.
 func (c *HTTPClient) ListDevices(ctx context.Context) ([]wire.Device, error) {
 	var devs []wire.Device
-	if err := c.do(ctx, http.MethodGet, "/v1/devices", nil, nil, &devs, true); err != nil {
+	if err := c.do(ctx, http.MethodGet, "/v1/devices", nil, nil, &devs, nil); err != nil {
 		return nil, err
 	}
 	return devs, nil
@@ -250,12 +321,12 @@ func (c *HTTPClient) ListDevices(ctx context.Context) ([]wire.Device, error) {
 
 // ActivateDevice approves a pending device by uploading the HK wrapped for it.
 func (c *HTTPClient) ActivateDevice(ctx context.Context, id string, req wire.ActivateReq) error {
-	return c.do(ctx, http.MethodPost, "/v1/devices/"+url.PathEscape(id)+"/activate", nil, req, nil, true)
+	return c.do(ctx, http.MethodPost, "/v1/devices/"+url.PathEscape(id)+"/activate", nil, req, nil, nil)
 }
 
 // RevokeDevice revokes a device and deletes its HK wrap server-side.
 func (c *HTTPClient) RevokeDevice(ctx context.Context, id string) error {
-	return c.do(ctx, http.MethodPost, "/v1/devices/"+url.PathEscape(id)+"/revoke", nil, nil, nil, true)
+	return c.do(ctx, http.MethodPost, "/v1/devices/"+url.PathEscape(id)+"/revoke", nil, nil, nil, nil)
 }
 
 // GetHKWrap fetches the HK wrap sealed to deviceID. The bool is false (with a
@@ -265,7 +336,7 @@ func (c *HTTPClient) GetHKWrap(ctx context.Context, deviceID string) (wire.HKWra
 	q := url.Values{}
 	q.Set("device_id", deviceID)
 	var wrap wire.HKWrap
-	err := c.do(ctx, http.MethodGet, "/v1/keys/hk", q, nil, &wrap, true)
+	err := c.do(ctx, http.MethodGet, "/v1/keys/hk", q, nil, &wrap, nil)
 	if err != nil {
 		var ae *APIError
 		if errors.As(err, &ae) && ae.Status == http.StatusNotFound {
@@ -287,7 +358,7 @@ func (c *HTTPClient) ListDEKWraps(ctx context.Context, cursor string, limit int)
 		q.Set("limit", strconv.Itoa(limit))
 	}
 	var resp wire.DEKListResp
-	err := c.do(ctx, http.MethodGet, "/v1/keys/dek", q, nil, &resp, true)
+	err := c.do(ctx, http.MethodGet, "/v1/keys/dek", q, nil, &resp, nil)
 	return resp, err
 }
 
@@ -297,12 +368,12 @@ func (c *HTTPClient) UploadDEKWraps(ctx context.Context, wraps []wire.DEKWrap) (
 	var resp struct {
 		Stored int `json:"stored"`
 	}
-	err := c.do(ctx, http.MethodPost, "/v1/keys/dek", nil, wraps, &resp, true)
+	err := c.do(ctx, http.MethodPost, "/v1/keys/dek", nil, wraps, &resp, nil)
 	return resp.Stored, err
 }
 
 // Rotate atomically installs a new HK generation: a fresh HK wrap set for the
 // surviving devices and every DEK re-wrapped under the new HK.
 func (c *HTTPClient) Rotate(ctx context.Context, req wire.RotateReq) error {
-	return c.do(ctx, http.MethodPost, "/v1/keys/rotate", nil, req, nil, true)
+	return c.do(ctx, http.MethodPost, "/v1/keys/rotate", nil, req, nil, nil)
 }

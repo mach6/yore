@@ -46,7 +46,11 @@ func BackupDir(dir string) string  { return filepath.Join(dir, "backups") }
 // stored value is malformed.
 type Config struct {
 	ServerURL string `json:"server_url,omitempty"`
-	Token     string `json:"token,omitempty"`
+	// TokenFile optionally points at a file holding the auth token, for setups
+	// that manage it externally. The token itself is NEVER stored here — it
+	// lives in the OS keyring, or a 0600 file when no keyring is available (see
+	// internal/secret) — so config.json holds no secrets and stays safe to
+	// read, diff, and share.
 	TokenFile string `json:"token_file,omitempty"`
 	// ServerPin, when set, pins the server's TLS certificate: the base64 SHA-256
 	// of its SubjectPublicKeyInfo. The syncer refuses to connect unless the
