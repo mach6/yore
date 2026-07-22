@@ -684,14 +684,15 @@ func TestTagFilter(t *testing.T) {
 	m := ready(t, f, 120, 40)
 	rows := mkRows("agent-run", "ls", "vim")
 	rows[0].Tag = "claude-code"
+	rows[0].Tags = []string{"claude-code"} // effective tags, as the daemon resolves them
 	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(rows)})
 
-	// The tag column appears once a row carries a tag; the header advertises it.
+	// The tags column appears once a row carries tags; the header advertises it.
 	require.True(t, m.hasTags, "a tagged row should set hasTags")
 	require.True(t, m.colLayout().showTag, "the tag column should show when the result set has tags")
 	out := strip(m.View())
-	require.Containsf(t, out, "tag", "table header should show the tag column:\n%s", out)
-	require.Containsf(t, out, "claude-code", "the tag cell should render the row's tag:\n%s", out)
+	require.Containsf(t, out, "tag", "table header should show the tags column:\n%s", out)
+	require.Containsf(t, out, "claude-code", "the tag cell should render the row's tags:\n%s", out)
 
 	// t on the tagged row (row 0 selected) adopts its tag; buildReq carries it.
 	m, cmd := step(t, m, press("t"))

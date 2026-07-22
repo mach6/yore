@@ -333,7 +333,7 @@ func (m Model) applyResult(msg queryResultMsg) (tea.Model, tea.Cmd) {
 	m.remote = msg.resp.Remote
 	m.hasTags = false
 	for _, r := range m.rows {
-		if r.Tag != "" {
+		if len(r.Tags) > 0 {
 			m.hasTags = true
 			break
 		}

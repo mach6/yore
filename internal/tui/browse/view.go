@@ -272,7 +272,7 @@ func (m Model) tableHeader(l colLayout, w int) string {
 	add("exit", l.exitW, true)
 	add("dur", l.durW, false)
 	if l.showTag {
-		add("tag", l.tagW, true)
+		add("tags", l.tagW, true)
 	}
 	if l.cmdW > 0 {
 		segs = append(segs, styledSeg{text: padRight("command", l.cmdW), style: m.th.Dim})
@@ -307,8 +307,9 @@ func (m Model) renderRow(r rec.Record, l colLayout, q match.Query, selected bool
 		sep()
 	}
 	if l.showTag {
-		// Tagged cells stand out (accent); interactive rows render blank.
-		segs = append(segs, styledSeg{text: padRight(truncCols(r.Tag, l.tagW), l.tagW), style: th.Accent})
+		// Tagged cells stand out (accent); interactive rows render blank. Shows
+		// the full effective tag set (executor auto-tag + user tags).
+		segs = append(segs, styledSeg{text: padRight(truncCols(strings.Join(r.Tags, ","), l.tagW), l.tagW), style: th.Accent})
 		sep()
 	}
 	if l.cmdW > 0 {
@@ -373,6 +374,9 @@ func (m *Model) syncDetail() {
 	meta("session", dash(r.Session))
 	if r.Tag != "" {
 		meta("ran by", r.Tag)
+	}
+	if len(r.Tags) > 0 {
+		meta("tags", strings.Join(r.Tags, ", "))
 	}
 	meta("time", time.UnixMilli(r.StartMs).Local().Format("2006-01-02 15:04:05"))
 	dur := "—"

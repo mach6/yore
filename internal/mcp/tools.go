@@ -50,6 +50,7 @@ func (s *Server) buildTools() []toolDef {
 				"query":     str("substring to match in the command (empty matches all)"),
 				"directory": str("only commands run in this directory (exact path)"),
 				"executor":  str("only commands run by this executor, e.g. claude-code (empty = any)"),
+				"tag":       str("only commands with this freeform tag (matches any effective tag)"),
 				"scope":     scope,
 				"limit":     intg("max results (default 20)"),
 			}),
@@ -223,6 +224,7 @@ type commonArgs struct {
 	Query      string `json:"query"`
 	Directory  string `json:"directory"`
 	Executor   string `json:"executor"`
+	Tag        string `json:"tag"`
 	Scope      string `json:"scope"`
 	Command    string `json:"command"`
 	SessionID  string `json:"session_id"`
@@ -299,7 +301,7 @@ func (s *Server) toolSearchCommands(raw json.RawMessage) (any, *rpcError) {
 		return nil, rerr
 	}
 	limit := a.limitOr(s.opts.DefaultLimit)
-	q := proto.QueryReq{Q: a.Query, Scope: scopeOr(a.Scope, proto.ScopeAll), Executor: a.Executor, Limit: limit}
+	q := proto.QueryReq{Q: a.Query, Scope: scopeOr(a.Scope, proto.ScopeAll), Executor: a.Executor, Tag: a.Tag, Limit: limit}
 	if a.Directory != "" {
 		q.Scope, q.Cwd = proto.ScopeCwd, a.Directory
 	}

@@ -24,7 +24,9 @@ func formatCommandList(title string, rows []rec.Record, localHost string) string
 	for _, r := range rows {
 		fmt.Fprintf(&b, "%s  %s  %s", relTime(r.StartMs), exitGlyph(r), oneLine(r.Cmd, 120))
 		var tail []string
-		if r.Tag != "" {
+		if len(r.Tags) > 0 {
+			tail = append(tail, strings.Join(r.Tags, ","))
+		} else if r.Tag != "" {
 			tail = append(tail, r.Tag)
 		}
 		if r.Cwd != "" {
