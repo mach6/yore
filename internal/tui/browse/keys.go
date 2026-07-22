@@ -51,7 +51,7 @@ func defaultKeyMap(vim bool) keyMap {
 		Accept:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "insert")),
 		Copy:    key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "copy")),
 		Delete:  key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
-		Tag:     key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "tag filter")),
+		Tag:     key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "executor filter")),
 		Stats:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "stats")),
 		Agents:  key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "agents")),
 		Prompts: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "prompts")),

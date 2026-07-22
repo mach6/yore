@@ -431,8 +431,8 @@ func (m Model) statusBar(w int) string {
 		}
 		pieces = append(pieces, th.Dim.Render(fmt.Sprintf("row %d/%d", pos, m.total)))
 		pieces = append(pieces, th.Dim.Render(scopeWord(m.hosts[m.hostSel])))
-		if m.tagFilter != "" {
-			pieces = append(pieces, th.Accent.Render("tag: "+m.tagFilter))
+		if m.executorFilter != "" {
+			pieces = append(pieces, th.Accent.Render("executor: "+m.executorFilter))
 		}
 
 		if m.remote.State == proto.RemoteOff &&

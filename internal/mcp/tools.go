@@ -299,7 +299,7 @@ func (s *Server) toolSearchCommands(raw json.RawMessage) (any, *rpcError) {
 		return nil, rerr
 	}
 	limit := a.limitOr(s.opts.DefaultLimit)
-	q := proto.QueryReq{Q: a.Query, Scope: scopeOr(a.Scope, proto.ScopeAll), Tag: a.Executor, Limit: limit}
+	q := proto.QueryReq{Q: a.Query, Scope: scopeOr(a.Scope, proto.ScopeAll), Executor: a.Executor, Limit: limit}
 	if a.Directory != "" {
 		q.Scope, q.Cwd = proto.ScopeCwd, a.Directory
 	}
@@ -315,7 +315,7 @@ func (s *Server) toolRecentCommands(raw json.RawMessage) (any, *rpcError) {
 	if rerr != nil {
 		return nil, rerr
 	}
-	q := proto.QueryReq{Scope: scopeOr(a.Scope, proto.ScopeLocal), Tag: a.Executor, Limit: a.limitOr(s.opts.DefaultLimit)}
+	q := proto.QueryReq{Scope: scopeOr(a.Scope, proto.ScopeLocal), Executor: a.Executor, Limit: a.limitOr(s.opts.DefaultLimit)}
 	if a.Directory != "" {
 		q.Scope, q.Cwd = proto.ScopeCwd, a.Directory
 	}

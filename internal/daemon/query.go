@@ -88,10 +88,10 @@ func (s *server) runQuery(f *match.Filter, q proto.QueryReq) proto.QueryResp {
 	}
 
 	// Executor filter (cross-cutting; e.g. only agent-run commands).
-	if q.Tag != "" {
+	if q.Executor != "" {
 		kept := rows[:0]
 		for _, r := range rows {
-			if r.Tag == q.Tag {
+			if r.Tag == q.Executor {
 				kept = append(kept, r)
 			}
 		}

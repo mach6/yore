@@ -153,17 +153,17 @@ type Model struct {
 	appliedStats uint64
 
 	// interaction state
-	view          viewMode
-	focus         focus
-	vim           bool // vi-style navigation (from Options.Keymap == "vim")
-	searching     bool
-	confirmDelete bool
-	showHelp      bool
-	tagFilter     string // active executor-tag filter (the t key); "" = no filter
-	flash         string
-	flashID       int
-	quitting      bool
-	accepted      string // command the user chose with enter; read by Run on exit
+	view           viewMode
+	focus          focus
+	vim            bool // vi-style navigation (from Options.Keymap == "vim")
+	searching      bool
+	confirmDelete  bool
+	showHelp       bool
+	executorFilter string // active executor-tag filter (the t key); "" = no filter
+	flash          string
+	flashID        int
+	quitting       bool
+	accepted       string // command the user chose with enter; read by Run on exit
 
 	// devices pane
 	devices    []proto.DeviceInfo
@@ -473,12 +473,12 @@ func (m Model) statsCmd(seq uint64) tea.Cmd {
 func (m Model) buildReq() proto.QueryReq {
 	it := m.hosts[m.hostSel]
 	req := proto.QueryReq{
-		Q:      m.ti.Value(),
-		Scope:  it.scope,
-		Host:   it.host,
-		Tag:    m.tagFilter,
-		Limit:  queryLimit,
-		Dedupe: false, // browse shows the real timeline, newest first
+		Q:        m.ti.Value(),
+		Scope:    it.scope,
+		Host:     it.host,
+		Executor: m.executorFilter,
+		Limit:    queryLimit,
+		Dedupe:   false, // browse shows the real timeline, newest first
 	}
 	return req
 }
@@ -581,7 +581,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.ti.Focus()
 		return m, nil
 	case "t":
-		return m.toggleTagFilter()
+		return m.toggleExecutorFilter()
 	case "tab":
 		m.cycleFocus(1)
 		return m, nil
@@ -668,14 +668,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// toggleTagFilter flips the executor-tag filter (the t key). With a filter
+// toggleExecutorFilter flips the executor-tag filter (the t key). With a filter
 // active it clears it; otherwise it adopts the selected row's Tag if it has one
 // (flashing "no tag" and doing nothing when it doesn't). Either change re-issues
 // the query and flashes the new state.
-func (m Model) toggleTagFilter() (tea.Model, tea.Cmd) {
-	if m.tagFilter != "" {
-		m.tagFilter = ""
-		m.flash = "tag filter cleared"
+func (m Model) toggleExecutorFilter() (tea.Model, tea.Cmd) {
+	if m.executorFilter != "" {
+		m.executorFilter = ""
+		m.flash = "executor filter cleared"
 	} else {
 		r, ok := m.selected()
 		if !ok || r.Tag == "" {
@@ -683,8 +683,8 @@ func (m Model) toggleTagFilter() (tea.Model, tea.Cmd) {
 			m.flashID++
 			return m, flashTick(m.flashID)
 		}
-		m.tagFilter = r.Tag
-		m.flash = "tag: " + r.Tag
+		m.executorFilter = r.Tag
+		m.flash = "executor: " + r.Tag
 	}
 	m.flashID++
 	mm, qcmd := m.issueQuery()

@@ -695,15 +695,15 @@ func TestTagFilter(t *testing.T) {
 
 	// t on the tagged row (row 0 selected) adopts its tag; buildReq carries it.
 	m, cmd := step(t, m, press("t"))
-	require.Equal(t, "claude-code", m.tagFilter, "t should adopt the selected row's tag")
+	require.Equal(t, "claude-code", m.executorFilter, "t should adopt the selected row's tag")
 	require.NotNil(t, cmd, "toggling the tag filter should re-issue the query")
-	require.Equal(t, "claude-code", m.buildReq().Tag, "buildReq should carry the active tag filter")
-	require.Containsf(t, strip(m.View()), "tag: claude-code", "status bar should show the active tag filter")
+	require.Equal(t, "claude-code", m.buildReq().Executor, "buildReq should carry the active tag filter")
+	require.Containsf(t, strip(m.View()), "executor: claude-code", "status bar should show the active executor filter")
 
 	// t again clears the filter.
 	m, _ = step(t, m, press("t"))
-	require.Equal(t, "", m.tagFilter, "second t should clear the tag filter")
-	require.Equal(t, "", m.buildReq().Tag, "a cleared filter sends an empty Tag")
+	require.Equal(t, "", m.executorFilter, "second t should clear the tag filter")
+	require.Equal(t, "", m.buildReq().Executor, "a cleared filter sends an empty Tag")
 }
 
 func TestTagFilterNoTag(t *testing.T) {
@@ -715,7 +715,7 @@ func TestTagFilterNoTag(t *testing.T) {
 
 	// t on an untagged row flashes "no tag" and leaves the filter empty.
 	m, cmd := step(t, m, press("t"))
-	require.Equal(t, "", m.tagFilter, "t on an untagged row must not set a filter")
+	require.Equal(t, "", m.executorFilter, "t on an untagged row must not set a filter")
 	require.NotNil(t, cmd, "the no-tag flash should still schedule its expiry tick")
 	require.Containsf(t, strip(m.View()), "no tag", "t on an untagged row should flash 'no tag'")
 }

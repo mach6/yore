@@ -106,9 +106,9 @@ func newRootCmd() *cobra.Command {
 
 func newRecordCmd() *cobra.Command {
 	var (
-		exit              int
-		durMs, startMs    int64
-		session, cwd, tag string
+		exit                   int
+		durMs, startMs         int64
+		session, cwd, executor string
 	)
 	cmd := &cobra.Command{
 		Use:   "record",
@@ -121,7 +121,7 @@ func newRecordCmd() *cobra.Command {
 		SilenceUsage:          true,
 		DisableFlagsInUseLine: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			runRecord(exit, durMs, startMs, session, cwd, tag)
+			runRecord(exit, durMs, startMs, session, cwd, executor)
 			return nil
 		},
 	}
@@ -130,7 +130,7 @@ func newRecordCmd() *cobra.Command {
 	cmd.Flags().StringVar(&session, "session", "", "shell session id")
 	cmd.Flags().StringVar(&cwd, "cwd", "", "working directory the command ran in")
 	cmd.Flags().Int64Var(&startMs, "start-ms", 0, "start time unix millis (0 = derive from now-duration)")
-	cmd.Flags().StringVar(&tag, "tag", "", "executor tag (default: auto-detect agent, else interactive)")
+	cmd.Flags().StringVar(&executor, "executor", "", "executor tag (default: auto-detect agent, else interactive)")
 	// Never break the shell on a malformed flag: swallow it and exit 0.
 	cmd.SetFlagErrorFunc(func(*cobra.Command, error) error { return exitErr(0) })
 	return cmd
@@ -140,9 +140,9 @@ func newRecordCmd() *cobra.Command {
 
 func newSearchCmd() *cobra.Command {
 	var (
-		query, scope, tag, sortMode string
-		headless, fuzzy, noHost     bool
-		limit                       int
+		query, scope, executor, sortMode string
+		headless, fuzzy, noHost          bool
+		limit                            int
 	)
 	cmd := &cobra.Command{
 		Use:   "search [query...]",
@@ -157,9 +157,9 @@ func newSearchCmd() *cobra.Command {
 				q = strings.Join(args, " ")
 			}
 			if headless {
-				return code(headlessSearch(q, scope, tag, sortMode, fuzzy, limit, headlessShowHost(scope, noHost)))
+				return code(headlessSearch(q, scope, executor, sortMode, fuzzy, limit, headlessShowHost(scope, noHost)))
 			}
-			return code(interactiveSearch(q, scope, tag))
+			return code(interactiveSearch(q, scope, executor))
 		},
 	}
 	cmd.Flags().StringVar(&query, "query", "", "initial query")
@@ -167,7 +167,7 @@ func newSearchCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 0, "headless: max results (default 200)")
 	cmd.Flags().BoolVar(&noHost, "no-host", false, "headless: hide the host column (shown only for --scope all)")
 	cmd.Flags().StringVar(&scope, "scope", proto.ScopeLocal, "search scope: local|all|host|session|cwd|workspace")
-	cmd.Flags().StringVar(&tag, "tag", "", "filter by executor tag (e.g. claude-code)")
+	cmd.Flags().StringVar(&executor, "executor", "", "filter by executor (e.g. claude-code)")
 	cmd.Flags().StringVar(&sortMode, "sort", "", "sort: recency (default) or frecency")
 	cmd.Flags().BoolVar(&fuzzy, "fuzzy", false, "subsequence (fzf-style) matching")
 

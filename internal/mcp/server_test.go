@@ -23,7 +23,7 @@ func (f fakeQ) Query(q proto.QueryReq) (proto.QueryResp, error) {
 		if q.Q != "" && !strings.Contains(r.Cmd, q.Q) {
 			continue
 		}
-		if q.Tag != "" && r.Tag != q.Tag {
+		if q.Executor != "" && r.Tag != q.Executor {
 			continue
 		}
 		if q.Scope == proto.ScopeCwd && r.Cwd != q.Cwd {

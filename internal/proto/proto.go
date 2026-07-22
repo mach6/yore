@@ -55,17 +55,17 @@ type Request struct {
 }
 
 type QueryReq struct {
-	Q       string `json:"q"`
-	Scope   string `json:"scope"`             // one of the Scope* constants; "" = ScopeLocal
-	Host    string `json:"host,omitempty"`    // hostname filter for ScopeHost
-	Session string `json:"session,omitempty"` // session id for ScopeSession
-	Cwd     string `json:"cwd,omitempty"`     // directory for ScopeCwd
-	Tag     string `json:"tag,omitempty"`     // executor filter, e.g. "claude-code"; "" = any
-	Sort    string `json:"sort,omitempty"`    // "" = recency (newest first); "frecency" = frequency×recency
-	Fuzzy   bool   `json:"fuzzy,omitempty"`   // subsequence (fzf-style) matching instead of substring
-	Limit   int    `json:"limit,omitempty"`   // 0 = server default (200)
-	Offset  int    `json:"offset,omitempty"`
-	Dedupe  bool   `json:"dedupe,omitempty"` // collapse identical commands, newest wins
+	Q        string `json:"q"`
+	Scope    string `json:"scope"`              // one of the Scope* constants; "" = ScopeLocal
+	Host     string `json:"host,omitempty"`     // hostname filter for ScopeHost
+	Session  string `json:"session,omitempty"`  // session id for ScopeSession
+	Cwd      string `json:"cwd,omitempty"`      // directory for ScopeCwd
+	Executor string `json:"executor,omitempty"` // executor filter, e.g. "claude-code"; "" = any
+	Sort     string `json:"sort,omitempty"`     // "" = recency (newest first); "frecency" = frequency×recency
+	Fuzzy    bool   `json:"fuzzy,omitempty"`    // subsequence (fzf-style) matching instead of substring
+	Limit    int    `json:"limit,omitempty"`    // 0 = server default (200)
+	Offset   int    `json:"offset,omitempty"`
+	Dedupe   bool   `json:"dedupe,omitempty"` // collapse identical commands, newest wins
 }
 
 // Sort modes for QueryReq.Sort.

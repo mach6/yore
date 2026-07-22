@@ -22,7 +22,7 @@ type Querier interface {
 type Options struct {
 	InitialQuery string
 	Scope        string // initial scope (proto.Scope*); empty = local
-	Tag          string // executor-tag filter (--tag); "" = any
+	Executor     string // executor filter (--executor); "" = any
 	Session      string // current shell session id ($YORE_SESSION), for scope cycling
 	Cwd          string // current directory, for scope cycling
 	Version      string
@@ -319,11 +319,11 @@ func (m Model) queryCmd(seq uint64, req proto.QueryReq) tea.Cmd {
 
 func (m Model) buildReq() proto.QueryReq {
 	req := proto.QueryReq{
-		Q:      m.ti.Value(),
-		Scope:  m.scope,
-		Tag:    m.opts.Tag,
-		Limit:  queryLimit,
-		Dedupe: m.dedupe,
+		Q:        m.ti.Value(),
+		Scope:    m.scope,
+		Executor: m.opts.Executor,
+		Limit:    queryLimit,
+		Dedupe:   m.dedupe,
 	}
 	if m.frecency {
 		req.Sort = proto.SortFrecency
