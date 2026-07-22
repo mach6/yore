@@ -6,8 +6,6 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
-	"io"
-	"os"
 	"strings"
 
 	"golang.org/x/crypto/curve25519"
@@ -89,55 +87,30 @@ func PublicFromBytes(b []byte) ([32]byte, error) {
 	return pub, nil
 }
 
-// Save writes the key to path as a single line
+// Marshal serializes the key to its single-line wire form
 //
-//	yore-device2.<base64url(x25519priv‖x25519pub‖ed25519seed)>\n
+//	yore-device2.<base64url(x25519priv‖x25519pub‖ed25519seed)>
 //
-// with mode 0600, enforced even if path already existed with looser bits.
-func (k DeviceKey) Save(path string) error {
+// (no trailing newline). This is what internal/secret stores in the OS keyring
+// or the 0600 fallback file.
+func (k DeviceKey) Marshal() string {
 	var raw [3 * keySize]byte
 	copy(raw[0:], k.priv[:])
 	copy(raw[keySize:], k.pub[:])
 	copy(raw[2*keySize:], k.signSeed[:])
-	line := devicePrefix + base64.RawURLEncoding.EncodeToString(raw[:]) + "\n"
+	s := devicePrefix + base64.RawURLEncoding.EncodeToString(raw[:])
 	zero(raw[:])
-
-	if err := os.WriteFile(path, []byte(line), 0o600); err != nil {
-		return err
-	}
-	// WriteFile leaves a pre-existing file's mode untouched; enforce 0600.
-	return os.Chmod(path, 0o600)
+	return s
 }
 
-// LoadDeviceKey reads and validates a device.key written by Save. It errors if
-// the file mode grants any group or other permission, if the format is wrong,
-// or if the stored X25519 public key does not match its private key (corruption).
-func LoadDeviceKey(path string) (DeviceKey, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return DeviceKey{}, err
-	}
-	defer func() { _ = f.Close() }()
-
-	fi, err := f.Stat()
-	if err != nil {
-		return DeviceKey{}, err
-	}
-	if fi.Mode().Perm()&0o077 != 0 {
-		return DeviceKey{}, fmt.Errorf("%w: mode is %04o", ErrKeyPerms, fi.Mode().Perm())
-	}
-
-	b, err := io.ReadAll(f)
-	if err != nil {
-		return DeviceKey{}, err
-	}
-	line := strings.TrimSpace(string(b))
+// ParseDeviceKey validates and decodes a key from its Marshal form. It checks
+// the format and that the stored X25519 public key matches its private key
+// (rejecting silent corruption). It performs NO file or permission handling —
+// that belongs to the caller (internal/secret enforces 0600 on the fallback
+// file; the keyring needs no such check).
+func ParseDeviceKey(s string) (DeviceKey, error) {
+	line := strings.TrimSpace(s)
 	if !strings.HasPrefix(line, devicePrefix) {
-		// A pre-signing device1 key can't be upgraded in place (no signing seed);
-		// point the user at re-enrolling rather than loading a partial identity.
-		if strings.HasPrefix(line, "yore-device1.") {
-			return DeviceKey{}, fmt.Errorf("%w: device key predates request signing — run `yore setup` to re-enroll", ErrKeyFormat)
-		}
 		return DeviceKey{}, fmt.Errorf("%w: missing %q prefix", ErrKeyFormat, devicePrefix)
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(line, devicePrefix))

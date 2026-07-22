@@ -95,3 +95,25 @@ func TestTrailingNewlineStripped(t *testing.T) {
 	require.NoError(t, err, "Get")
 	assert.Equal(t, "value", got)
 }
+
+// TestDeviceKeyStore covers the device identity round-tripping through the
+// store: EnsureDeviceKey mints once and is stable, and a stored key parses back
+// to the same identity.
+func TestDeviceKeyStore(t *testing.T) {
+	s := fileStore(t)
+
+	_, err := s.LoadDeviceKey()
+	require.ErrorIs(t, err, ErrNotFound, "no device key before enrollment")
+
+	k1, err := s.EnsureDeviceKey()
+	require.NoError(t, err, "EnsureDeviceKey")
+
+	k2, err := s.EnsureDeviceKey()
+	require.NoError(t, err, "EnsureDeviceKey is idempotent")
+	require.Equal(t, k1.Public(), k2.Public(), "EnsureDeviceKey must not mint a second identity")
+
+	loaded, err := s.LoadDeviceKey()
+	require.NoError(t, err, "LoadDeviceKey after ensure")
+	require.Equal(t, k1.Public(), loaded.Public(), "loaded identity must match")
+	require.Equal(t, k1.SignPublic(), loaded.SignPublic(), "loaded signing key must match")
+}

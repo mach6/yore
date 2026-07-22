@@ -60,29 +60,20 @@ func resolveServerURL(dir, serverFlag string) (string, error) {
 }
 
 // ensureDeviceKey makes sure this machine has a device key, generating and
-// saving one (0600) on first use.
+// storing one on first use (in the OS keyring, else a 0600 fallback file).
 func ensureDeviceKey(dir string) error {
-	path := config.KeyPath(dir)
-	if _, err := cryptobox.LoadDeviceKey(path); err == nil {
-		return nil
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("reading device key: %w", err)
-	}
-	k, err := cryptobox.GenerateDeviceKey()
-	if err != nil {
-		return err
-	}
 	if err := config.EnsureDir(dir); err != nil {
 		return err
 	}
-	return k.Save(path)
+	_, err := secret.Open(dir).EnsureDeviceKey()
+	return err
 }
 
 // syncerFor builds a Syncer against an explicit server, for enrollment paths
 // that must not persist configuration until the server has accepted them.
 func syncerFor(dir, url, pin string) (*syncer.Syncer, error) {
 	cfg, _ := config.Load(dir)
-	key, err := cryptobox.LoadDeviceKey(config.KeyPath(dir))
+	key, err := secret.Open(dir).LoadDeviceKey()
 	if err != nil {
 		return nil, fmt.Errorf("device key: %w", err)
 	}
@@ -510,7 +501,7 @@ func runRecover(server string) int {
 
 	// Admit ourselves on the recovery key's authority: no surviving device exists
 	// to approve us, and the ones that could are the ones we lost.
-	key, err := cryptobox.LoadDeviceKey(config.KeyPath(dir))
+	key, err := secret.Open(dir).LoadDeviceKey()
 	if err != nil {
 		u.fail(err.Error())
 		return 1

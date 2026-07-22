@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"yore/internal/config"
-	"yore/internal/cryptobox"
 	"yore/internal/daemon"
 	"yore/internal/redact"
 	"yore/internal/secret"
@@ -74,7 +73,7 @@ func runDoctor() int {
 	if cfg.ServerURL == "" {
 		warn("not configured — run `yore setup` to sync across machines (local-only otherwise)")
 	} else {
-		if _, err := cryptobox.LoadDeviceKey(config.KeyPath(dir)); err != nil {
+		if _, err := secret.Open(dir).LoadDeviceKey(); err != nil {
 			fail("device key problem: " + err.Error())
 		} else {
 			ok("device key present")

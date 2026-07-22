@@ -11,6 +11,7 @@ import (
 	"yore/internal/match"
 	"yore/internal/proto"
 	"yore/internal/rec"
+	"yore/internal/secret"
 	"yore/internal/store"
 	"yore/internal/syncer"
 	"yore/internal/wire"
@@ -124,7 +125,7 @@ func newSyncer(dir string, st *store.Store, sc syncConf) *syncer.Syncer {
 	if !sc.configured() {
 		return nil
 	}
-	key, err := cryptobox.LoadDeviceKey(config.KeyPath(dir))
+	key, err := secret.Open(dir).LoadDeviceKey()
 	if err != nil {
 		return nil
 	}

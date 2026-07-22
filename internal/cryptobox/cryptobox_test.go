@@ -2,8 +2,6 @@ package cryptobox
 
 import (
 	"bytes"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -51,44 +49,40 @@ func assertRejectsTruncation(t *testing.T, blob []byte, open openFn) {
 
 // --- device key ----------------------------------------------------------
 
-func TestDeviceKeySaveLoadRoundTrip(t *testing.T) {
+func TestDeviceKeyMarshalParseRoundTrip(t *testing.T) {
 	k := mustDevice(t)
-	path := filepath.Join(t.TempDir(), "device.key")
-	require.NoError(t, k.Save(path))
-
-	fi, err := os.Stat(path)
+	got, err := ParseDeviceKey(k.Marshal())
 	require.NoError(t, err)
-	require.Equal(t, os.FileMode(0o600), fi.Mode().Perm())
-
-	got, err := LoadDeviceKey(path)
-	require.NoError(t, err)
-	require.Equal(t, k.priv, got.priv, "loaded key does not match saved key")
-	require.Equal(t, k.pub, got.pub, "loaded key does not match saved key")
+	require.Equal(t, k.priv, got.priv, "parsed key does not match marshaled key")
+	require.Equal(t, k.pub, got.pub, "parsed key does not match marshaled key")
 	require.Equal(t, k.Public(), got.Public(), "Public() mismatch after round trip")
-}
 
-func TestLoadDeviceKeyRejectsLoosePermissions(t *testing.T) {
-	k := mustDevice(t)
-	path := filepath.Join(t.TempDir(), "device.key")
-	require.NoError(t, k.Save(path))
-	require.NoError(t, os.Chmod(path, 0o644))
-	_, err := LoadDeviceKey(path)
-	require.ErrorIs(t, err, ErrKeyPerms)
-}
-
-func TestLoadDeviceKeyRejectsCorruption(t *testing.T) {
-	k := mustDevice(t)
-	path := filepath.Join(t.TempDir(), "device.key")
-	require.NoError(t, k.Save(path))
-	raw, err := os.ReadFile(path)
+	// Surrounding whitespace/newlines must not matter (hand-edited fallback file).
+	got2, err := ParseDeviceKey("  " + k.Marshal() + "\n")
 	require.NoError(t, err)
+	require.Equal(t, k.Public(), got2.Public(), "whitespace changed the parse")
+}
+
+func TestParseDeviceKeyRejectsBadFormat(t *testing.T) {
+	_, err := ParseDeviceKey("not-a-yore-key")
+	require.ErrorIs(t, err, ErrKeyFormat, "missing prefix must be rejected")
+
+	_, err = ParseDeviceKey(devicePrefix + "!!!not-base64!!!")
+	require.ErrorIs(t, err, ErrKeyFormat, "bad base64 must be rejected")
+}
+
+func TestParseDeviceKeyRejectsCorruption(t *testing.T) {
+	k := mustDevice(t)
+	s := k.Marshal()
 	// Flip a byte inside the base64 payload (after the prefix) so the stored
 	// public key no longer matches the private key.
-	corrupt := bytes.Clone(raw)
-	corrupt[len(devicePrefix)+5] ^= 0x01
-	require.NoError(t, os.WriteFile(path, corrupt, 0o600))
-	_, err = LoadDeviceKey(path)
-	require.Error(t, err, "LoadDeviceKey accepted a corrupted key")
+	b := []byte(s)
+	b[len(devicePrefix)+5] ^= 0x01
+	if string(b) == s { // extremely unlikely; keep the test deterministic
+		b[len(devicePrefix)+6] ^= 0x01
+	}
+	_, err := ParseDeviceKey(string(b))
+	require.Error(t, err, "ParseDeviceKey accepted a corrupted key")
 }
 
 func TestPublicFromBytes(t *testing.T) {

@@ -59,12 +59,10 @@ const (
 var (
 	// ErrTruncated means a blob is shorter than its fixed framing requires.
 	ErrTruncated = errors.New("cryptobox: blob truncated")
-	// ErrKeyPerms means device.key is readable by group or other.
-	ErrKeyPerms = errors.New("cryptobox: device key file permissions too open (need 0600)")
 	// ErrLowOrder means an X25519 exchange produced an all-zero secret.
 	ErrLowOrder = errors.New("cryptobox: X25519 shared secret is low-order")
-	// ErrKeyFormat means device.key is not a well-formed v1 key line.
-	ErrKeyFormat = errors.New("cryptobox: malformed device key file")
+	// ErrKeyFormat means a device key string is not a well-formed v2 key line.
+	ErrKeyFormat = errors.New("cryptobox: malformed device key")
 	// ErrKeyLength means a key or plaintext had an unexpected length.
 	ErrKeyLength = errors.New("cryptobox: unexpected key length")
 )

@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/zalando/go-keyring"
+
+	"yore/internal/cryptobox"
 )
 
 // service is the keyring service name every yore entry is filed under.
@@ -175,6 +177,42 @@ func (s *Store) writeFile(name, value string) error {
 		return err
 	}
 	return os.Chmod(path, 0o600)
+}
+
+// LoadDeviceKey returns this machine's device identity from the store, or
+// ErrNotFound if none is enrolled yet. The keyring is preferred; the 0600
+// fallback file (named DeviceKey, i.e. <dir>/device.key) is consulted when the
+// keyring has no entry.
+func (s *Store) LoadDeviceKey() (cryptobox.DeviceKey, error) {
+	v, err := s.Get(DeviceKey)
+	if err != nil {
+		return cryptobox.DeviceKey{}, err
+	}
+	return cryptobox.ParseDeviceKey(v)
+}
+
+// SaveDeviceKey stores k, replacing any previous identity.
+func (s *Store) SaveDeviceKey(k cryptobox.DeviceKey) error {
+	return s.Set(DeviceKey, k.Marshal())
+}
+
+// EnsureDeviceKey returns this machine's device key, generating and storing one
+// on first use. The generated key lands in the keyring when one is usable, else
+// the 0600 fallback file.
+func (s *Store) EnsureDeviceKey() (cryptobox.DeviceKey, error) {
+	if k, err := s.LoadDeviceKey(); err == nil {
+		return k, nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return cryptobox.DeviceKey{}, err
+	}
+	k, err := cryptobox.GenerateDeviceKey()
+	if err != nil {
+		return cryptobox.DeviceKey{}, err
+	}
+	if err := s.SaveDeviceKey(k); err != nil {
+		return cryptobox.DeviceKey{}, err
+	}
+	return k, nil
 }
 
 // ---- keyring calls, each bounded by probeTimeout ----
