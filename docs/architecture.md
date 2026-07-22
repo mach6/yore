@@ -382,6 +382,7 @@ default"; accessors apply defaults so callers never branch.
 | `ignore_patterns` | — | extra user secret regexes (never recorded) |
 | `ignore_dirs` | — | cwd prefixes whose commands are never recorded |
 | `record_space_prefixed` | `false` | record leading-space commands too |
+| `capture_spool_only` | `false` | capture writes to the spool only — never pokes/spawns the daemon; the spool is drained the next time a daemon runs |
 | `backup_interval` | `1h` | local db backup cadence; `"0"` disables |
 | `backup_keep` | `3` | local db backups retained |
 | `log_max_size` | `5MB` | daemon.log rotation threshold; `"0"` = unbounded append |

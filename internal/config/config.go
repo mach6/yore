@@ -114,6 +114,18 @@ type Config struct {
 	IgnoreDirs          []string `toml:"ignore_dirs,omitempty"`
 	RecordSpacePrefixed bool     `toml:"record_space_prefixed,omitempty"` // default false
 
+	// CaptureSpoolOnly makes the capture path (the shell hook and the agent
+	// hooks) write the record to the spool and stop there: it does NOT poke or
+	// spawn the daemon. Off by default — normally a capture nudges the daemon so
+	// the record is ingested and searchable within milliseconds. With this on,
+	// nothing touches the daemon on the capture path; the spool is drained the
+	// next time a daemon runs (your next `hs`/`hb` spawns one, which ingests the
+	// whole spool at startup). The trade is slightly staler search for a machine
+	// where capture never starts a background process — useful with no sync
+	// server configured. Records are never lost either way; only ingest timing
+	// changes.
+	CaptureSpoolOnly bool `toml:"capture_spool_only,omitempty"` // default false
+
 	// Rolling local-db backup. The daemon writes a consistent snapshot of
 	// data.db into BackupDir on BackupInterval, keeping the newest BackupKeep.
 	BackupInterval string `toml:"backup_interval,omitempty"` // default 1h; "0" disables

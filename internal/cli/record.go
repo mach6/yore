@@ -87,7 +87,13 @@ func spoolRecord(dir string, r rec.Record) {
 	if r.StartMs == 0 {
 		r.StartMs = time.Now().UnixMilli()
 	}
-	if spool.Append(config.SpoolDir(dir), r) == nil {
+	if spool.Append(config.SpoolDir(dir), r) != nil {
+		return
+	}
+	// Normally nudge the daemon so the record is ingested and searchable within
+	// milliseconds. In spool-only mode the capture path stops at the spool and
+	// never touches the daemon; the spool is drained the next time a daemon runs.
+	if !cfg.CaptureSpoolOnly {
 		pokeDaemon(dir)
 	}
 }
