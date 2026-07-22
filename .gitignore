@@ -18,3 +18,4 @@ unit-test-report.json
 # Transient/scratch agent working files (never committed)
 /.agents/
 /.claude/
+.agents/

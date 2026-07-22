@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"sync"
 	"syscall"
+	"testing"
 	"time"
 
 	"yore/internal/config"
@@ -252,6 +253,12 @@ func respErr(resp proto.Response) error {
 // spawnDaemon starts `yore daemon` fully detached (mirrors cli/record.go). The
 // daemon handles the already-running race itself.
 func spawnDaemon() {
+	// Never re-exec under `go test`: os.Executable() is the test binary, so
+	// `<testbin> daemon` re-runs the whole suite and re-spawns recursively — a
+	// detached fork bomb. Production binaries return false here.
+	if testing.Testing() {
+		return
+	}
 	self, err := os.Executable()
 	if err != nil {
 		return

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 	"syscall"
+	"testing"
 	"time"
 
 	"yore/internal/config"
@@ -112,6 +113,13 @@ func pokeDaemon(dir string) {
 // spawnDaemon starts `yore daemon` fully detached. The daemon itself
 // handles the already-running race (store lock loser exits silently).
 func spawnDaemon() {
+	// Never re-exec under `go test`: os.Executable() is the test binary, so
+	// `<testbin> daemon` re-runs the whole suite (the arg is not a -run filter),
+	// which pokes the daemon again and re-spawns — a detached fork bomb that
+	// pegs every core and exhausts RAM. Production binaries return false here.
+	if testing.Testing() {
+		return
+	}
 	self, err := os.Executable()
 	if err != nil {
 		return
