@@ -192,16 +192,23 @@ filter by tag, separating "what I typed" from "what an agent ran".
 
 An agent whose commands run in a *non-interactive* shell (Claude Code's Bash
 tool is `zsh -c …`) is never seen by the rc hooks, so `yore init claude-code`
-installs Claude Code hooks: **PostToolUse** pipes each Bash command to
-`yore hook claude-code`, and **UserPromptSubmit** pipes each prompt to
-`yore hook claude-prompt`. The prompt hook writes the session's current prompt to
-a per-session state file; the command hook reads it and stamps `prompt_id` +
-`prompt` onto the record, so every command is traced to the prompt that triggered
-it. The browser's **prompt explorer** (`p`) groups on `prompt_id` — one row per
-prompt, `Enter` drilling into the exact command sequence it produced. Both hooks
-go through the same redaction gate as the shell path (a secret-bearing
-command or prompt is dropped). `yore init claude-code` writes ~/.claude/settings.json
-(or, with --project, ./.claude/settings.json), merging without disturbing other settings.
+installs three Claude Code hooks: **PostToolUse** pipes each *successful* Bash
+command to `yore hook claude-code`, **PostToolUseFailure** pipes each *failed*
+one to `yore hook claude-code-failure`, and **UserPromptSubmit** pipes each
+prompt to `yore hook claude-prompt`. The two command hooks record the command's
+**exit status** — an explicit `tool_response.exit_code` when present, else the
+event decides (PostToolUse → 0, PostToolUseFailure → nonzero) — and its
+**duration** when the payload's `tool_start_time`/`tool_end_time` allow it, so
+agent commands carry the same outcome data as shell ones (success rates,
+`what_failed`, risk of failed commands all work). The prompt hook writes the
+session's current prompt to a per-session state file; the command hooks read it
+and stamp `prompt_id` + `prompt` onto the record, so every command is traced to
+the prompt that triggered it. The browser's **prompt explorer** (`p`) groups on
+`prompt_id` — one row per prompt, `Enter` drilling into the exact command
+sequence it produced. All hooks go through the same redaction gate as the shell
+path (a secret-bearing command or prompt is dropped). `yore init claude-code`
+writes ~/.claude/settings.json (or, with --project, ./.claude/settings.json),
+merging without disturbing other settings.
 
 ## Shell integration modes
 

@@ -333,6 +333,12 @@ func newHookCmd() *cobra.Command {
 		RunE:  func(*cobra.Command, []string) error { runHookClaudeCode(); return nil },
 	})
 	cmd.AddCommand(&cobra.Command{
+		Use:   "claude-code-failure",
+		Short: "Record a failed Bash command from a Claude Code PostToolUseFailure hook (reads JSON on stdin)",
+		Args:  cobra.NoArgs,
+		RunE:  func(*cobra.Command, []string) error { runHookClaudeCodeFailure(); return nil },
+	})
+	cmd.AddCommand(&cobra.Command{
 		Use:   "claude-prompt",
 		Short: "Record a prompt from a Claude Code UserPromptSubmit hook (reads JSON on stdin)",
 		Args:  cobra.NoArgs,

@@ -31,24 +31,77 @@ type claudeHookInput struct {
 	ToolInput     struct {
 		Command string `json:"command"`
 	} `json:"tool_input"`
+	// ToolResponse is the tool's structured result. For Bash it carries an
+	// exit_code; kept raw so a non-object response (other tools) never fails the
+	// top-level decode.
+	ToolResponse json.RawMessage `json:"tool_response"`
+	// ISO-8601 tool timing, when the payload provides it; duration is derived.
+	ToolStartTime string `json:"tool_start_time"`
+	ToolEndTime   string `json:"tool_end_time"`
 	// Prompt is only present on a UserPromptSubmit payload (unused here; reserved
 	// for prompt tracing).
 	Prompt string `json:"prompt"`
 }
 
-// runHookClaudeCode ingests a Claude Code PostToolUse payload from stdin and
-// records the Bash command it describes, tagged claude-code.
+// responseExitCode extracts tool_response.exit_code when present, tolerating a
+// non-object response (returns nil then).
+func responseExitCode(raw json.RawMessage) *int {
+	if len(raw) == 0 {
+		return nil
+	}
+	var tr struct {
+		ExitCode *int `json:"exit_code"`
+	}
+	if json.Unmarshal(raw, &tr) == nil {
+		return tr.ExitCode
+	}
+	return nil
+}
+
+// deriveExit resolves a command's exit status: the payload's explicit exit_code
+// wins; otherwise the event decides — PostToolUse fires on success (0),
+// PostToolUseFailure on failure (nonzero, unknown code -> 1).
+func deriveExit(in claudeHookInput, failed bool) *int {
+	if c := responseExitCode(in.ToolResponse); c != nil {
+		return c
+	}
+	code := 0
+	if failed {
+		code = 1
+	}
+	return &code
+}
+
+// deriveDurMs computes the command's wall time from tool_start_time/end_time
+// when both are present and well-formed (ok=false otherwise, leaving it nil).
+func deriveDurMs(in claudeHookInput) (int64, bool) {
+	if in.ToolStartTime == "" || in.ToolEndTime == "" {
+		return 0, false
+	}
+	start, err1 := time.Parse(time.RFC3339, in.ToolStartTime)
+	end, err2 := time.Parse(time.RFC3339, in.ToolEndTime)
+	if err1 != nil || err2 != nil || end.Before(start) {
+		return 0, false
+	}
+	return end.Sub(start).Milliseconds(), true
+}
+
+// runHookClaudeCode ingests a Claude Code PostToolUse (success) payload.
+// runHookClaudeCodeFailure ingests a PostToolUseFailure payload; the only
+// difference is the exit status defaulted when the payload omits an explicit
+// exit_code.
+func runHookClaudeCode()        { ingestClaudeTool(false) }
+func runHookClaudeCodeFailure() { ingestClaudeTool(true) }
+
+// ingestClaudeTool records the Bash command described by a Claude Code tool hook
+// payload on stdin, tagged claude-code, with its exit status (and duration when
+// the payload timestamps allow it).
 //
 // Contract mirrors the shell fast path: it NEVER blocks, NEVER prints, and
 // ALWAYS exits 0 — a hook that errored or stalled would disrupt the agent it is
 // observing. A non-Bash tool call, an empty command, or malformed JSON is a
-// silent no-op.
-//
-// The command's exit status is NOT recorded: the documented PostToolUse payload
-// does not carry it (success and failure are separate events in Claude Code),
-// so the record's exit stays unknown rather than fabricated. Capturing exit
-// status is a follow-up once that event contract is pinned down.
-func runHookClaudeCode() {
+// silent no-op. failed selects the exit default (see deriveExit).
+func ingestClaudeTool(failed bool) {
 	raw, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
 	if err != nil {
 		return
@@ -71,6 +124,10 @@ func runHookClaudeCode() {
 		Cmd:     in.ToolInput.Command,
 		Cwd:     in.Cwd,
 		Tag:     agentClaudeCode,
+		Exit:    deriveExit(in, failed),
+	}
+	if d, ok := deriveDurMs(in); ok {
+		r.DurMs = &d
 	}
 	// Stamp the prompt this command served, if the UserPromptSubmit hook recorded
 	// one for this session. Best-effort: absent state just leaves it untraced.
@@ -166,8 +223,9 @@ func claudeSettingsPath(project bool) (string, error) {
 }
 
 // hook commands Claude Code runs, this binary ingesting the payload on stdin.
-func cmdPostToolUse(bin string) string      { return bin + " hook claude-code" }
-func cmdUserPromptSubmit(bin string) string { return bin + " hook claude-prompt" }
+func cmdPostToolUse(bin string) string        { return bin + " hook claude-code" }
+func cmdPostToolUseFailure(bin string) string { return bin + " hook claude-code-failure" }
+func cmdUserPromptSubmit(bin string) string   { return bin + " hook claude-prompt" }
 
 // buildMatcherBlock returns a hook block that runs command for the given tool
 // matcher (an empty matcher fires on every event of that kind).
@@ -208,13 +266,15 @@ func mergeHookInto(settings map[string]any, event, matcher, command string) bool
 	return true
 }
 
-// mergeClaudeHook installs both capture hooks: PostToolUse(Bash) records the
-// command, UserPromptSubmit records the prompt it served. Idempotent; returns
-// whether anything changed.
+// mergeClaudeHook installs the capture hooks: PostToolUse(Bash) records a
+// successful command, PostToolUseFailure(Bash) records a failed one (so exit
+// status is captured), and UserPromptSubmit records the prompt each served.
+// Idempotent; returns whether anything changed.
 func mergeClaudeHook(settings map[string]any, bin string) (added bool) {
 	a := mergeHookInto(settings, "PostToolUse", "Bash", cmdPostToolUse(bin))
+	f := mergeHookInto(settings, "PostToolUseFailure", "Bash", cmdPostToolUseFailure(bin))
 	b := mergeHookInto(settings, "UserPromptSubmit", "", cmdUserPromptSubmit(bin))
-	return a || b
+	return a || f || b
 }
 
 // runInitClaudeCode installs (or, with print, just shows) the Claude Code
@@ -270,8 +330,8 @@ func runInitClaudeCode(bin string, project, printOnly bool) int {
 		return 1
 	}
 
-	u.step("installed PostToolUse + UserPromptSubmit hooks", path)
-	u.step("captures every Bash command Claude Code runs", "tagged "+agentClaudeCode+", traced to its prompt")
+	u.step("installed PostToolUse + PostToolUseFailure + UserPromptSubmit hooks", path)
+	u.step("captures every Bash command Claude Code runs", "tagged "+agentClaudeCode+", with exit status, traced to its prompt")
 	u.blank()
 	u.next("see agent commands after Claude Code runs some:",
 		"yore search --tag "+agentClaudeCode,

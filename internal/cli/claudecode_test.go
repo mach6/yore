@@ -117,7 +117,53 @@ func TestRunHookClaudeCodeCaptures(t *testing.T) {
 	assert.Equal(t, "/work/proj", got.Cwd)
 	assert.Equal(t, "sess-1", got.Session)
 	assert.Equal(t, agentClaudeCode, got.Tag, "must be tagged claude-code")
-	assert.Nil(t, got.Exit, "exit is unknown (not carried by PostToolUse)")
+	require.NotNil(t, got.Exit, "PostToolUse fires on success -> exit recorded")
+	assert.Equal(t, 0, *got.Exit, "success defaults to exit 0")
+}
+
+// TestRunHookClaudeCodeExitAndDuration covers exit-status + duration capture:
+// an explicit tool_response.exit_code wins, the PostToolUseFailure hook records
+// a failure, and tool timestamps yield a duration.
+func TestRunHookClaudeCodeExitAndDuration(t *testing.T) {
+	t.Run("explicit exit_code wins", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("YORE_DIR", dir)
+		require.NoError(t, config.EnsureDir(dir))
+		payload := `{"tool_name":"Bash","cwd":"/w","tool_input":{"command":"false"},
+		  "tool_response":{"exit_code":3},
+		  "tool_start_time":"2024-01-15T10:30:00Z","tool_end_time":"2024-01-15T10:30:02Z"}`
+		feedStdin(t, payload, runHookClaudeCode)
+		rows := spooledRecords(t, dir)
+		require.Len(t, rows, 1)
+		require.NotNil(t, rows[0].Exit)
+		assert.Equal(t, 3, *rows[0].Exit, "exit_code from tool_response is used")
+		require.NotNil(t, rows[0].DurMs)
+		assert.Equal(t, int64(2000), *rows[0].DurMs, "duration derived from timestamps")
+	})
+
+	t.Run("failure hook defaults to nonzero", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("YORE_DIR", dir)
+		require.NoError(t, config.EnsureDir(dir))
+		payload := `{"tool_name":"Bash","cwd":"/w","tool_input":{"command":"make"},"error_message":"boom"}`
+		feedStdin(t, payload, runHookClaudeCodeFailure)
+		rows := spooledRecords(t, dir)
+		require.Len(t, rows, 1)
+		require.NotNil(t, rows[0].Exit)
+		assert.NotEqual(t, 0, *rows[0].Exit, "a failure without an explicit code is a nonzero exit")
+	})
+
+	t.Run("non-object tool_response is tolerated", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("YORE_DIR", dir)
+		require.NoError(t, config.EnsureDir(dir))
+		payload := `{"tool_name":"Bash","cwd":"/w","tool_input":{"command":"ok"},"tool_response":"plain string"}`
+		feedStdin(t, payload, runHookClaudeCode)
+		rows := spooledRecords(t, dir)
+		require.Len(t, rows, 1, "a string tool_response must not break the decode")
+		require.NotNil(t, rows[0].Exit)
+		assert.Equal(t, 0, *rows[0].Exit)
+	})
 }
 
 func TestRunHookClaudeCodeIgnoresNonBashAndJunk(t *testing.T) {
@@ -207,5 +253,11 @@ func TestMergeClaudeHookInstallsBothEvents(t *testing.T) {
 
 	hooks := settings["hooks"].(map[string]any)
 	require.Len(t, hooks["PostToolUse"].([]any), 1, "PostToolUse hook installed")
+	require.Len(t, hooks["PostToolUseFailure"].([]any), 1, "PostToolUseFailure hook installed")
 	require.Len(t, hooks["UserPromptSubmit"].([]any), 1, "UserPromptSubmit hook installed")
+
+	failBlk := hooks["PostToolUseFailure"].([]any)[0].(map[string]any)
+	assert.Equal(t, "Bash", failBlk["matcher"])
+	failCmd := failBlk["hooks"].([]any)[0].(map[string]any)
+	assert.Equal(t, "yore hook claude-code-failure", failCmd["command"])
 }
