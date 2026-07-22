@@ -141,6 +141,25 @@ func TestToolReplayAgentSession(t *testing.T) {
 	require.Contains(t, text, "go build ./...")
 }
 
+func TestToolAssessRisk(t *testing.T) {
+	resp := call(t, newTestServer(), "tools/call", map[string]any{
+		"name": "assess_risk", "arguments": map[string]any{"command": "rm -rf /tmp/x"},
+	})
+	require.Nil(t, resp.Error)
+	text := resultText(resp.Result)
+	require.Contains(t, text, "critical")
+	require.Contains(t, text, "destructive")
+	// History-aware: this command isn't in the sample, so it's never-run.
+	require.Contains(t, text, "never run before")
+
+	// A batch with a known command surfaces its cross-machine run history.
+	resp2 := call(t, newTestServer(), "tools/call", map[string]any{
+		"name": "assess_risk", "arguments": map[string]any{"commands": []string{"npm install"}},
+	})
+	require.Nil(t, resp2.Error)
+	require.Contains(t, resultText(resp2.Result), "run 1 time")
+}
+
 func TestResources(t *testing.T) {
 	s := newTestServer()
 	resp := call(t, s, "resources/list", nil)

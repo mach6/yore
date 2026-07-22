@@ -8,6 +8,7 @@ import (
 
 	"yore/internal/proto"
 	"yore/internal/rec"
+	"yore/internal/risk"
 )
 
 // sessionURIPrefix is the read-template for a single session's history.
@@ -53,6 +54,17 @@ func (s *Server) buildResources() []resourceDef {
 					return "", &rpcError{Code: codeInternal, Message: err.Error()}
 				}
 				return formatStats(rows, "", 1, s.excluded), nil
+			},
+		},
+		{
+			uri: "yore://risk/summary", name: "Risk Summary",
+			desc: "Risk assessment of recent agent commands (safe…critical).",
+			read: func() (string, *rpcError) {
+				rows, err := s.sample(proto.ScopeAll)
+				if err != nil {
+					return "", &rpcError{Code: codeInternal, Message: err.Error()}
+				}
+				return formatRiskSummary(rows), nil
 			},
 		},
 		{
@@ -174,6 +186,45 @@ func resultText(res any) string {
 	}
 	t, _ := first["text"].(string)
 	return t
+}
+
+// formatRiskSummary tallies recent agent commands by risk level and lists the
+// most severe ones — the pre-run safety picture for the current fleet.
+func formatRiskSummary(rows []rec.Record) string {
+	counts := map[risk.Level]int{}
+	var flagged []struct {
+		a risk.Assessment
+		r rec.Record
+	}
+	for i := range rows {
+		r := rows[i]
+		if r.Deleted() || r.Tag == "" {
+			continue
+		}
+		a := risk.Assess(r.Cmd)
+		counts[a.Level]++
+		if a.Level >= risk.High {
+			flagged = append(flagged, struct {
+				a risk.Assessment
+				r rec.Record
+			}{a, r})
+		}
+	}
+	var b strings.Builder
+	b.WriteString("Risk summary (recent agent commands)\n\n")
+	fmt.Fprintf(&b, "critical %d · high %d · medium %d · low %d · safe %d\n",
+		counts[risk.Critical], counts[risk.High], counts[risk.Medium], counts[risk.Low], counts[risk.None])
+	if len(flagged) > 0 {
+		b.WriteString("\nHigh/critical:\n")
+		sort.SliceStable(flagged, func(i, j int) bool { return flagged[i].a.Level > flagged[j].a.Level })
+		for i, f := range flagged {
+			if i >= 15 {
+				break
+			}
+			fmt.Fprintf(&b, "  [%s] %s — %s\n", f.a.Level, oneLine(f.r.Cmd, 80), f.a.Reason)
+		}
+	}
+	return b.String()
 }
 
 // formatAgentActivity summarizes per-executor activity (agent commands only)

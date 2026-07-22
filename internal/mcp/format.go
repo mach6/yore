@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"yore/internal/rec"
+	"yore/internal/risk"
 )
 
 // --- record formatting -------------------------------------------------------
@@ -386,6 +387,22 @@ func writeTop(b *strings.Builder, title string, m map[string]int, n int) {
 		fmt.Fprintf(b, "  %5d  %s\n", items[i].v, items[i].k)
 	}
 	b.WriteByte('\n')
+}
+
+// riskGlyph is a compact severity marker for risk output.
+func riskGlyph(l risk.Level) string {
+	switch l {
+	case risk.Critical:
+		return "⛔"
+	case risk.High:
+		return "⚠"
+	case risk.Medium:
+		return "▲"
+	case risk.Low:
+		return "•"
+	default:
+		return "✓"
+	}
 }
 
 func firstToken(cmd string) string {

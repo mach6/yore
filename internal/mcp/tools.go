@@ -9,6 +9,7 @@ import (
 
 	"yore/internal/proto"
 	"yore/internal/rec"
+	"yore/internal/risk"
 )
 
 // sampleCap bounds how many rows an aggregating tool pulls from the daemon in
@@ -157,6 +158,15 @@ func (s *Server) buildTools() []toolDef {
 				"limit":      intg("max commands (default 100)"),
 			}, "session_id"),
 			handler: s.toolReplayAgentSession,
+		},
+		{
+			name: "assess_risk",
+			desc: "Assess how dangerous a command is BEFORE running it: safe/low/medium/high/critical with a category and reason. Also reports how often it has run across your machines and whether it succeeded. Use it to check a destructive command first.",
+			schema: obj(map[string]any{
+				"command":  str("a single command to assess"),
+				"commands": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "assess several commands at once"},
+			}),
+			handler: s.toolAssessRisk,
 		},
 	}
 }
@@ -559,6 +569,48 @@ func (s *Server) toolReplayAgentSession(raw json.RawMessage) (any, *rpcError) {
 			fmt.Fprintf(&b, "▸ prompt: %s\n", oneLine(r.Prompt, 200))
 		}
 		fmt.Fprintf(&b, "    %s  %s  %s  (%s)\n", relTime(r.StartMs), exitGlyph(r), oneLine(r.Cmd, 100), r.Cwd)
+	}
+	return textResult(b.String()), nil
+}
+
+func (s *Server) toolAssessRisk(raw json.RawMessage) (any, *rpcError) {
+	var a struct {
+		Command  string   `json:"command"`
+		Commands []string `json:"commands"`
+	}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &a); err != nil {
+			return nil, &rpcError{Code: codeInvalidParams, Message: "invalid arguments"}
+		}
+	}
+	cmds := a.Commands
+	if a.Command != "" {
+		cmds = append([]string{a.Command}, cmds...)
+	}
+	if len(cmds) == 0 {
+		return toolError("provide a command (or commands)"), nil
+	}
+	var b strings.Builder
+	for _, c := range cmds {
+		v := risk.Assess(c)
+		fmt.Fprintf(&b, "%s  [%s / %s]  %s\n    %s\n", riskGlyph(v.Level), v.Level, v.Category, oneLine(c, 100), v.Reason)
+		// History-aware context (the cross-machine edge): how has this exact
+		// command fared before, anywhere? Best-effort; ignore query errors.
+		if rows, err := s.fetch(proto.QueryReq{Q: c, Scope: proto.ScopeAll, Limit: 500}); err == nil {
+			var exact []rec.Record
+			for _, r := range rows {
+				if strings.TrimSpace(r.Cmd) == strings.TrimSpace(c) {
+					exact = append(exact, r)
+				}
+			}
+			if len(exact) > 0 {
+				ok, fail, unknown := tallyExits(exact)
+				fmt.Fprintf(&b, "    history: run %d time(s) across your machines — %d ok, %d failed, %d unknown\n", len(exact), ok, fail, unknown)
+			} else {
+				b.WriteString("    history: never run before on any of your machines\n")
+			}
+		}
+		b.WriteByte('\n')
 	}
 	return textResult(b.String()), nil
 }
