@@ -158,22 +158,19 @@ printf 'y\n' | dc zsh yore devices approve "$PENDING_ID" >/dev/null
 ok "bash-box approved from zsh-box"
 
 # Configure ignore-dir + a short backup interval into each host's config BEFORE
-# recording (setup wrote config.json; we extend it while no daemon holds it yet).
+# recording (setup wrote config.toml; we extend it while no daemon holds it yet).
 # zsh-box additionally gets an ignore_dirs entry so the ignore-dir path is
 # exercised. Values are the same ones the sandbox always uses, so a full rewrite
 # is safe.
-write_cfg() {  # write_cfg <service> <ignore_dirs_json>
-  dc "$1" sh -c "cat > /root/.config/yore/config.json <<EOF
-{
-  \"server_url\": \"http://server:8080\",
-  \"token\": \"sandbox-token\",
-  \"integration\": \"takeover\",
-  \"backup_interval\": \"2s\",
-  \"backup_keep\": 3,
-  \"ignore_dirs\": $2
-}
+write_cfg() {  # write_cfg <service> <ignore_dirs_toml_array>
+  dc "$1" sh -c "cat > /root/.config/yore/config.toml <<EOF
+server_url = \"http://server:8080\"
+integration = \"takeover\"
+backup_interval = \"2s\"
+backup_keep = 3
+ignore_dirs = $2
 EOF
-chmod 600 /root/.config/yore/config.json"
+chmod 600 /root/.config/yore/config.toml"
 }
 write_cfg zsh  "[\"$IGNORE_DIR\"]"
 write_cfg bash "[]"

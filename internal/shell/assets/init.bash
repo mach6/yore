@@ -81,15 +81,14 @@ preexec_functions+=(__yore_bash_gate)
 {{- if .Bindings}}
 
 # Whether accepting a Ctrl-R result should run it immediately (Atuin parity).
-# Default: run the picked command on Enter; opt out with enter_executes:false to
-# insert it for review instead. Honors $YORE_DIR. NOTE: bash reads this at source
-# time to choose the Ctrl-R binding below (bash `bind -x` cannot itself accept the
-# line), so a change to "enter_executes" in config.json takes effect only in a new
-# shell / re-source. zsh, by contrast, re-reads it on every keypress.
+# Default: run the picked command on Enter; opt out with
+# `yore set-config enter_executes false` to insert it for review instead. NOTE:
+# bash reads this at source time to choose the Ctrl-R binding below (bash
+# `bind -x` cannot itself accept the line), so a change takes effect only in a
+# new shell / re-source. zsh, by contrast, re-reads it on every keypress. Fails
+# open to the default (run) if yore is unavailable.
 _yore_enter_executes() {
-	local f="${YORE_DIR:-$HOME/.config/yore}/config.json"
-	[[ -r $f ]] && grep -q '"enter_executes"[[:space:]]*:[[:space:]]*false' "$f" && return 1
-	return 0
+	[[ "$(command {{.Bin}} get-config enter_executes 2>/dev/null)" != false ]]
 }
 
 # Interactive search widget. The TUI draws on /dev/tty, so this command
@@ -128,10 +127,9 @@ else
 	bind '"\e[A": "\eyore"'
 fi
 {{- else}}
-# Coexist: bind Up to search only if the user opts in (config bind_up_arrow).
+# Coexist: bind Up to search only if the user opts in (bind_up_arrow).
 _yore_bind_up_arrow() {
-	local f="${YORE_DIR:-$HOME/.config/yore}/config.json"
-	[[ -r $f ]] && grep -q '"bind_up_arrow"[[:space:]]*:[[:space:]]*true' "$f"
+	[[ "$(command {{.Bin}} get-config bind_up_arrow 2>/dev/null)" == true ]]
 }
 if _yore_bind_up_arrow; then
 	if _yore_enter_executes; then

@@ -1,5 +1,5 @@
 // Package secret stores yore's sensitive material — the device private key —
-// outside of config.json, which stays plain, diffable, and safe to share.
+// outside of config.toml, which stays plain, diffable, and safe to share.
 //
 // It prefers the OS keyring (Secret Service on Linux, Keychain on macOS) and
 // falls back to a 0600 file under the state dir whenever no keyring is usable:

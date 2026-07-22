@@ -87,7 +87,7 @@ func (s *server) mintTicket() (proto.TicketInfo, error) {
 type remoteCache struct {
 	mu sync.RWMutex
 	// sy is nil until sync is configured. It is guarded by mu because the daemon
-	// may attach or replace it at runtime when config.json changes, while query
+	// may attach or replace it at runtime when config.toml changes, while query
 	// and status goroutines read it concurrently.
 	sy      *syncer.Syncer
 	records []rec.Record
@@ -113,7 +113,7 @@ type syncConf struct {
 // configured reports whether there is enough configuration to sync at all.
 func (sc syncConf) configured() bool { return sc.url != "" }
 
-// loadSyncConf resolves the sync-relevant configuration from config.json.
+// loadSyncConf resolves the sync-relevant configuration from config.toml.
 func loadSyncConf(dir string) syncConf {
 	cfg, _ := config.Load(dir)
 	return syncConf{url: cfg.ServerURL, pin: cfg.ServerPin, epoch: cfg.KeyEpochD()}
@@ -347,7 +347,7 @@ func (s *server) syncLoop() {
 	defer first.Stop()
 	defer tick.Stop()
 
-	// reload re-reads config.json and re-attaches the syncer when the server or
+	// reload re-reads config.toml and re-attaches the syncer when the server or
 	// identity changed, so `yore setup` (or a hand edit) takes effect live.
 	reload := func() {
 		sc := loadSyncConf(s.dir)
@@ -411,7 +411,7 @@ func pushArm(debounce time.Duration, pending bool) (arm, newPending bool) {
 
 // syncTick is the period between sync-loop wakeups: the configured sync
 // interval when sync is live, otherwise a short poll that exists only to notice
-// sync being configured (a stat of config.json, not a network call).
+// sync being configured (a stat of config.toml, not a network call).
 func syncTick(enabled bool, interval time.Duration) time.Duration {
 	if enabled {
 		return interval

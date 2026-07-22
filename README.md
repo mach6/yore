@@ -157,8 +157,10 @@ rm -rf ~/.config/yore         # all of yore's state
 - **Shell completions** (bash / zsh / fish); `vim` or `emacs` TUI keymaps.
 - **Diagnostics**: `yore doctor`, `yore status`.
 
-Configure via `~/.config/yore/config.json` (every key + default is in
-[architecture.md](docs/architecture.md)); all state lives under `~/.config/yore/`.
+Configure via `~/.config/yore/config.toml` — a plain TOML file, or use
+`yore get-config <key>` / `yore set-config <key> <value>` (every key + default is
+in [architecture.md](docs/architecture.md)); all state lives under
+`~/.config/yore/`.
 
 ## Everyday use
 

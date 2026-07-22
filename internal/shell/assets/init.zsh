@@ -75,14 +75,12 @@ add-zsh-hook zshaddhistory _yore_addhistory
 {{- if .Bindings}}
 
 # Whether accepting a Ctrl-R result should run it immediately (Atuin parity).
-# Default: run the picked command on Enter; opt out with enter_executes:false to
-# insert it for review instead. Read from config.json at call time — NOT at
-# source time — so toggling "enter_executes" takes effect without re-sourcing.
-# Honors $YORE_DIR.
+# Default: run the picked command on Enter; opt out with
+# `yore set-config enter_executes false` to insert it for review instead. Asked
+# of yore at call time — NOT cached at source time — so the setting takes effect
+# without re-sourcing. Fails open to the default (run) if yore is unavailable.
 _yore_enter_executes() {
-	local f="${YORE_DIR:-$HOME/.config/yore}/config.json"
-	[[ -r $f ]] && grep -q '"enter_executes"[[:space:]]*:[[:space:]]*false' "$f" && return 1
-	return 0
+	[[ "$(command {{.Bin}} get-config enter_executes 2>/dev/null)" != false ]]
 }
 
 # Interactive search widget. The TUI draws on /dev/tty, so this command
@@ -104,10 +102,9 @@ _yore_search_widget() {
 	zle reset-prompt
 }
 {{- if not .Takeover}}
-# Coexist mode: bind Up to search only if the user opts in (config bind_up_arrow).
+# Coexist mode: bind Up to search only if the user opts in (bind_up_arrow).
 _yore_bind_up_arrow() {
-	local f="${YORE_DIR:-$HOME/.config/yore}/config.json"
-	[[ -r $f ]] && grep -q '"bind_up_arrow"[[:space:]]*:[[:space:]]*true' "$f"
+	[[ "$(command {{.Bin}} get-config bind_up_arrow 2>/dev/null)" == true ]]
 }
 {{- end}}
 if [[ -o interactive ]]; then

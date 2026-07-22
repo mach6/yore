@@ -94,6 +94,8 @@ func newRootCmd() *cobra.Command {
 		newStatusCmd(),
 		newStopCmd(),
 		newDoctorCmd(),
+		newGetConfigCmd(),
+		newSetConfigCmd(),
 		newVersionCmd(),
 	)
 	return root
@@ -508,6 +510,24 @@ func newDoctorCmd() *cobra.Command {
 		Short: "Run environment diagnostics",
 		Args:  cobra.NoArgs,
 		RunE:  func(*cobra.Command, []string) error { return code(runDoctor()) },
+	}
+}
+
+func newGetConfigCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "get-config <key>",
+		Short: "Print the effective value of a config key",
+		Args:  cobra.ExactArgs(1),
+		RunE:  func(_ *cobra.Command, args []string) error { return code(runGetConfig(args[0])) },
+	}
+}
+
+func newSetConfigCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "set-config <key> <value>",
+		Short: "Set a config key and save config.toml",
+		Args:  cobra.ExactArgs(2),
+		RunE:  func(_ *cobra.Command, args []string) error { return code(runSetConfig(args[0], args[1])) },
 	}
 }
 

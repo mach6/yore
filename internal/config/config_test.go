@@ -75,11 +75,50 @@ func TestLoadSeedsDefaultsAndOverrides(t *testing.T) {
 	// An absent enter_executes must remain the default (true), not fall to the
 	// bool zero value.
 	dir2 := t.TempDir()
-	require.NoError(t, os.WriteFile(ConfigPath(dir2), []byte(`{"server_url":"https://x"}`), 0o600))
+	require.NoError(t, os.WriteFile(ConfigPath(dir2), []byte("server_url = \"https://x\"\n"), 0o600))
 	got2, err := Load(dir2)
 	require.NoError(t, err)
 	assert.True(t, got2.EnterExecutes, "absent key keeps default")
 	assert.True(t, got2.LogSilent, "absent key keeps default")
+	assert.Equal(t, "https://x", got2.ServerURL)
+}
+
+// TestGetSet covers the config accessor pair the shell integration and
+// get-config/set-config rely on: values round-trip through config.toml by their
+// TOML key, defaults are reported for absent keys, and type/key errors are
+// reported rather than silently written.
+func TestGetSet(t *testing.T) {
+	dir := t.TempDir()
+
+	// A default-true bool reads back "true" before anything is written.
+	v, err := Get(dir, "enter_executes")
+	require.NoError(t, err)
+	assert.Equal(t, "true", v, "default reported for an absent key")
+
+	// Set flips it and persists; Get reflects the new value.
+	require.NoError(t, Set(dir, "enter_executes", "false"))
+	v, err = Get(dir, "enter_executes")
+	require.NoError(t, err)
+	assert.Equal(t, "false", v, "set value round-trips")
+
+	// A string key and an int key round-trip too.
+	require.NoError(t, Set(dir, "server_url", "https://sync.example"))
+	require.NoError(t, Set(dir, "backup_keep", "7"))
+	got, err := Load(dir)
+	require.NoError(t, err)
+	assert.Equal(t, "https://sync.example", got.ServerURL)
+	assert.Equal(t, 7, got.BackupKeep)
+	assert.False(t, got.EnterExecutes, "earlier set is preserved across further sets")
+
+	// A bad type and an unknown key are errors, and neither writes anything.
+	require.Error(t, Set(dir, "backup_keep", "not-a-number"), "non-integer rejected")
+	require.Error(t, Set(dir, "no_such_key", "x"), "unknown key rejected")
+	_, err = Get(dir, "no_such_key")
+	require.Error(t, err, "unknown key on Get is an error")
+
+	after, err := Load(dir)
+	require.NoError(t, err)
+	assert.Equal(t, 7, after.BackupKeep, "a rejected Set left the file unchanged")
 }
 
 // TestTypedAccessorDefaults covers the string-backed settings, which default

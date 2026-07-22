@@ -346,7 +346,7 @@ forces everything back into the directory. The files:
 
 | Path | What |
 |---|---|
-| `config.json` | settings (0600) |
+| `config.toml` | settings (0600) |
 | `redact.yml` | editable, seeded secret-redaction rules (0600) |
 | `data.db` | local bbolt store — this host's history only |
 | `device.key` | device X25519+Ed25519 identity — kept in the **OS keyring** when one is usable, else this file (0600; refused if group/other-readable) |
@@ -356,9 +356,14 @@ forces everything back into the directory. The files:
 | `daemon.log` | bounded daemon log (+ rotated segments) |
 | `backups/` | rolling local `data.db` snapshots |
 
-## Config (`~/.config/yore/config.json`)
+## Config (`~/.config/yore/config.toml`)
 
-Zero values mean "use default"; accessors apply defaults so callers never branch.
+A plain [TOML](https://toml.io) file. Read and written by hand, or through
+`yore get-config <key>` and `yore set-config <key> <value>` — the one
+authoritative accessor pair (`config.Get`/`config.Set`). Nothing else parses the
+file: the emitted shell integration, for instance, asks `yore get-config
+enter_executes` at call time rather than grepping. Zero values mean "use
+default"; accessors apply defaults so callers never branch.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -384,14 +389,14 @@ Zero values mean "use default"; accessors apply defaults so callers never branch
 | `log_silent` | `true` | suppress daemon logging entirely (no `daemon.log`); set `false` to log for debugging |
 
 Defaults are applied the plain-Go way: `config.Load` starts from `config.Defaults()`
-and `json.Unmarshal`s the file over it, so an omitted key keeps its default and an
+and decodes the TOML file over it, so an omitted key keeps its default and an
 explicit value — including `false` or `0` — overrides it. Booleans that default to
 `true` (`auto_deepen`, `enter_executes`, `log_silent`) are written without
 `omitempty` so an explicit `false` round-trips; there are no `*bool` "was it set?"
 fields. String-backed durations/sizes are stored verbatim and parsed by typed
 accessors that fall back to the default on a malformed value.
 
-Server-side settings are env vars, not config.json: `$YORE_TOKEN` /
+Server-side settings are env vars, not config.toml: `$YORE_TOKEN` /
 `$YORE_TOKEN_FILE`, `$YORE_TOKENS_FILE`, `$YORE_BACKUP_INTERVAL`,
 `$YORE_BACKUP_KEEP`.
 

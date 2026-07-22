@@ -35,7 +35,7 @@ func TestLoadSyncConfChange(t *testing.T) {
 	dir := t.TempDir()
 
 	unset := loadSyncConf(dir)
-	assert.False(t, unset.configured(), "no config.json should not be configured")
+	assert.False(t, unset.configured(), "no config.toml should not be configured")
 
 	require.NoError(t, config.Save(dir, config.Config{ServerURL: "https://a.example"}), "save")
 	first := loadSyncConf(dir)

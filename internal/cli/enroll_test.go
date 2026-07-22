@@ -32,7 +32,7 @@ func newSetupServer(t *testing.T) string {
 
 // TestRunSetup exercises the validate-before-persist contract: a setup that the
 // server rejects (or a flag conflict caught before contacting it) must leave
-// config.json untouched, while a setup the server accepts bootstraps the group
+// config.toml untouched, while a setup the server accepts bootstraps the group
 // and writes the correct server + token.
 func TestRunSetup(t *testing.T) {
 	tests := []struct {
@@ -40,9 +40,9 @@ func TestRunSetup(t *testing.T) {
 		token       string // token passed to runSetup
 		pin         bool
 		clearPin    bool
-		preseedGood bool // seed a valid config.json before running
+		preseedGood bool // seed a valid config.toml before running
 		wantCode    int
-		// assertConfig runs after runSetup; before is config.json's bytes prior to
+		// assertConfig runs after runSetup; before is config.toml's bytes prior to
 		// the run (nil when it was absent), base the server URL.
 		assertConfig func(t *testing.T, dir, base string, before []byte)
 	}{
@@ -52,7 +52,7 @@ func TestRunSetup(t *testing.T) {
 			wantCode: 1,
 			assertConfig: func(t *testing.T, dir, _ string, _ []byte) {
 				_, err := os.Stat(config.ConfigPath(dir))
-				require.True(t, os.IsNotExist(err), "config.json must not be created by a failed setup")
+				require.True(t, os.IsNotExist(err), "config.toml must not be created by a failed setup")
 			},
 		},
 		{
@@ -62,9 +62,9 @@ func TestRunSetup(t *testing.T) {
 			wantCode:    1,
 			assertConfig: func(t *testing.T, dir, _ string, before []byte) {
 				after, err := os.ReadFile(config.ConfigPath(dir))
-				require.NoError(t, err, "read config.json")
-				require.True(t, bytes.Equal(before, after), "failed setup must not modify config.json")
-				require.NotContains(t, string(after), "wrong-token", "bad token must not reach config.json")
+				require.NoError(t, err, "read config.toml")
+				require.True(t, bytes.Equal(before, after), "failed setup must not modify config.toml")
+				require.NotContains(t, string(after), "wrong-token", "bad token must not reach config.toml")
 			},
 		},
 		{
@@ -73,14 +73,14 @@ func TestRunSetup(t *testing.T) {
 			wantCode: 0,
 			assertConfig: func(t *testing.T, dir, base string, _ []byte) {
 				cfg, err := config.Load(dir)
-				require.NoError(t, err, "load config.json")
+				require.NoError(t, err, "load config.toml")
 				require.Equal(t, base, cfg.ServerURL, "saved server URL")
 				require.Equal(t, "takeover", cfg.Integration, "saved integration")
 
-				// The token belongs in the secret store, never in config.json.
+				// The token belongs in the secret store, never in config.toml.
 				raw, err := os.ReadFile(config.ConfigPath(dir))
-				require.NoError(t, err, "read config.json")
-				require.NotContains(t, string(raw), setupTestToken, "token must not appear in config.json")
+				require.NoError(t, err, "read config.toml")
+				require.NotContains(t, string(raw), setupTestToken, "token must not appear in config.toml")
 
 			},
 		},
@@ -92,7 +92,7 @@ func TestRunSetup(t *testing.T) {
 			wantCode: 1,
 			assertConfig: func(t *testing.T, dir, _ string, _ []byte) {
 				_, err := os.Stat(config.ConfigPath(dir))
-				require.True(t, os.IsNotExist(err), "config.json must not be created on a flag conflict")
+				require.True(t, os.IsNotExist(err), "config.toml must not be created on a flag conflict")
 			},
 		},
 	}

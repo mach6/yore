@@ -4,14 +4,17 @@
 package config
 
 import (
-	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 // Dir returns the state directory: $YORE_DIR, else ~/.config/yore.
@@ -27,69 +30,70 @@ func Dir() string {
 }
 
 func DBPath(dir string) string     { return filepath.Join(dir, "data.db") }
-func KeyPath(dir string) string    { return filepath.Join(dir, "device.key") }
 func SpoolDir(dir string) string   { return filepath.Join(dir, "spool") }
 func SocketPath(dir string) string { return filepath.Join(dir, "daemon.sock") }
-func ConfigPath(dir string) string { return filepath.Join(dir, "config.json") }
+func ConfigPath(dir string) string { return filepath.Join(dir, "config.toml") }
 func RedactPath(dir string) string { return filepath.Join(dir, "redact.yml") }
 func BackupDir(dir string) string  { return filepath.Join(dir, "backups") }
 
-// Config is ~/.config/yore/config.json.
+// Config is ~/.config/yore/config.toml (TOML — no JSON quoting or trailing-comma
+// quirks to trip over in a hand-edited file).
 //
-// Defaults come from Defaults(), which Load() seeds *before* unmarshalling the
-// file over it — so an absent key keeps its default and an explicit value
-// (including false / 0) overrides it, using encoding/json's own semantics rather
-// than any *bool "was it set?" bookkeeping. Booleans therefore carry their
-// effective value directly (no accessor indirection). Duration and size settings
-// are stored as human strings ("24h", "5MB") and resolved by the typed accessors
+// Defaults come from Defaults(), which Load() seeds *before* decoding the file
+// over it — so an absent key keeps its default and an explicit value (including
+// false / 0) overrides it, using go-toml's decode-into semantics rather than any
+// *bool "was it set?" bookkeeping. Booleans therefore carry their effective
+// value directly (no accessor indirection). Duration and size settings are
+// stored as human strings ("24h", "5MB") and resolved by the typed accessors
 // below (KeyEpochD, LogMaxBytes, …), which also fall back to the default if the
-// stored value is malformed.
+// stored value is malformed. No consumer parses this file by hand — the shell
+// integration and other callers read values through Get / `yore get-config`.
 type Config struct {
-	ServerURL string `json:"server_url,omitempty"`
+	ServerURL string `toml:"server_url,omitempty"`
 	// TokenFile optionally points at a file holding the auth token, for setups
 	// that manage it externally. The token itself is NEVER stored here — it
 	// lives in the OS keyring, or a 0600 file when no keyring is available (see
-	// internal/secret) — so config.json holds no secrets and stays safe to
+	// internal/secret) — so config.toml holds no secrets and stays safe to
 	// read, diff, and share.
-	TokenFile string `json:"token_file,omitempty"`
+	TokenFile string `toml:"token_file,omitempty"`
 	// ServerPin, when set, pins the server's TLS certificate: the base64 SHA-256
 	// of its SubjectPublicKeyInfo. The syncer refuses to connect unless the
 	// leaf cert matches — defeating TLS-inspecting proxies (fail-closed) but
 	// also preventing sync through one. Captured at `yore setup --pin`.
-	ServerPin    string `json:"server_pin,omitempty"`
-	KeyEpoch     string `json:"key_epoch,omitempty"`     // default 24h
-	DaemonIdle   string `json:"daemon_idle,omitempty"`   // default 30m
-	SyncInterval string `json:"sync_interval,omitempty"` // default 5m
+	ServerPin    string `toml:"server_pin,omitempty"`
+	KeyEpoch     string `toml:"key_epoch,omitempty"`     // default 24h
+	DaemonIdle   string `toml:"daemon_idle,omitempty"`   // default 30m
+	SyncInterval string `toml:"sync_interval,omitempty"` // default 5m
 	// PushDebounce is EXPERIMENTAL and OFF by default. Set it (e.g. "2s") to have
 	// the daemon push shortly after a command is recorded — coalescing a burst
 	// into one delta push — so cross-host propagation is seconds instead of up to
 	// SyncInterval. Empty/"0"/invalid leaves it disabled; only the periodic tick
 	// pushes. (Note: an agent that fires commands in bursts will push at up to one
 	// cycle per PushDebounce for the whole run — that's why it's opt-in.)
-	PushDebounce string `json:"push_debounce,omitempty"` // EXPERIMENTAL; default off
+	PushDebounce string `toml:"push_debounce,omitempty"` // EXPERIMENTAL; default off
 
 	// AutoDeepen lets a shallow (local) search that finds little transparently
 	// extend to all hosts when the server is reachable. Defaults true — so it has
 	// no omitempty: an explicit false must survive a Save/Load round-trip.
-	AutoDeepen bool `json:"auto_deepen"` // default true
+	AutoDeepen bool `toml:"auto_deepen"` // default true
 
 	// EnterExecutes controls the Ctrl-R search widget: when true, accepting a
 	// result with Enter runs it immediately (Atuin parity); false inserts it into
-	// the prompt for review instead. Read directly by the emitted shell
-	// integration, which greps this key at runtime (see internal/shell/assets), so
-	// an explicit false must be written to the file — hence no omitempty.
-	EnterExecutes bool `json:"enter_executes"` // default true
+	// the prompt for review instead. The emitted shell integration reads this at
+	// runtime via `yore get-config enter_executes` (never by parsing the file),
+	// so an explicit false must round-trip — hence no omitempty.
+	EnterExecutes bool `toml:"enter_executes"` // default true
 
 	// BindUpArrow also binds the Up arrow to the search TUI (in addition to
 	// Ctrl-R), Atuin-style. Off by default because it changes a very
-	// muscle-memoried key. Read by the emitted shell integration.
-	BindUpArrow bool `json:"bind_up_arrow,omitempty"` // default false
+	// muscle-memoried key. The shell integration reads it via `yore get-config`.
+	BindUpArrow bool `toml:"bind_up_arrow,omitempty"` // default false
 
 	// Keymap selects the interactive key style for the TUIs (Atuin keymap_mode
 	// parity): "emacs" (default, also the empty value) or "vim". Vim mode adds
 	// vi-style navigation to `yore browse` and an insert/normal sub-mode to the
 	// Ctrl-R search widget. The CLI passes this through to each TUI's Options.
-	Keymap string `json:"keymap,omitempty"` // default "emacs"
+	Keymap string `toml:"keymap,omitempty"` // default "emacs"
 
 	// Integration picks how deeply the emitted shell hooks take over history:
 	//   "takeover" (default) — yore is the single source of truth: the shell's
@@ -100,20 +104,20 @@ type Config struct {
 	//   "coexist"  — record alongside the shell's own history (untouched); rebind
 	//     Ctrl-R and add h/hs. Native !N works against native history.
 	//   "capture"  — only record; no keybinding or alias changes.
-	Integration string `json:"integration,omitempty"` // default "takeover"
+	Integration string `toml:"integration,omitempty"` // default "takeover"
 
 	// Recording filters (see internal/redact). Commands matching a built-in
 	// secret pattern or any of these user regexes are never recorded; commands
 	// run under an ignored directory are never recorded; a leading space skips
 	// recording (histignorespace convention) unless RecordSpacePrefixed=true.
-	IgnorePatterns      []string `json:"ignore_patterns,omitempty"`
-	IgnoreDirs          []string `json:"ignore_dirs,omitempty"`
-	RecordSpacePrefixed bool     `json:"record_space_prefixed,omitempty"` // default false
+	IgnorePatterns      []string `toml:"ignore_patterns,omitempty"`
+	IgnoreDirs          []string `toml:"ignore_dirs,omitempty"`
+	RecordSpacePrefixed bool     `toml:"record_space_prefixed,omitempty"` // default false
 
 	// Rolling local-db backup. The daemon writes a consistent snapshot of
 	// data.db into BackupDir on BackupInterval, keeping the newest BackupKeep.
-	BackupInterval string `json:"backup_interval,omitempty"` // default 1h; "0" disables
-	BackupKeep     int    `json:"backup_keep,omitempty"`     // default 3
+	BackupInterval string `toml:"backup_interval,omitempty"` // default 1h; "0" disables
+	BackupKeep     int    `toml:"backup_keep,omitempty"`     // default 3
 
 	// daemon.log size cap. When LogMaxSize > 0 the log rotates once it would
 	// exceed that many bytes, keeping LogKeep old segments; "0" disables
@@ -121,17 +125,17 @@ type Config struct {
 	// (no file is created and logging is a no-op) — the default; set it false to
 	// write a rotating daemon.log for debugging. Defaults true, so no omitempty:
 	// an explicit false must round-trip.
-	LogMaxSize string `json:"log_max_size,omitempty"` // default "5MB"; "0" disables rotation
-	LogKeep    int    `json:"log_keep,omitempty"`     // default 1
-	LogSilent  bool   `json:"log_silent"`             // default true (no daemon.log)
+	LogMaxSize string `toml:"log_max_size,omitempty"` // default "5MB"; "0" disables rotation
+	LogKeep    int    `toml:"log_keep,omitempty"`     // default 1
+	LogSilent  bool   `toml:"log_silent"`             // default true (no daemon.log)
 }
 
-// Defaults returns the configuration used when config.json is absent. Load()
-// seeds this before unmarshalling the file over it, so every setting the user
-// does not mention keeps the value here. Booleans whose default is true are the
-// reason this exists — encoding/json cannot distinguish "absent" from "false"
-// once seeded, which is exactly the behavior we want: absent → default, present
-// → override. String/int settings left at their zero value here are defaulted by
+// Defaults returns the configuration used when config.toml is absent. Load()
+// seeds this before decoding the file over it, so every setting the user does
+// not mention keeps the value here. Booleans whose default is true are the
+// reason this exists — a decoder cannot distinguish "absent" from "false" once
+// seeded, which is exactly the behavior we want: absent → default, present →
+// override. String/int settings left at their zero value here are defaulted by
 // their typed accessors instead (single source of truth for those).
 func Defaults() Config {
 	return Config{
@@ -231,7 +235,7 @@ func parseSize(s string, def int64) int64 {
 	return n * mult
 }
 
-// Load reads config.json from dir over a Defaults() base: a missing file yields
+// Load reads config.toml from dir over a Defaults() base: a missing file yields
 // Defaults(); a present file overrides only the keys it names. A read or parse
 // error returns Defaults() (plus the error) so callers that ignore it still get
 // a usable configuration rather than an empty one.
@@ -244,18 +248,18 @@ func Load(dir string) (Config, error) {
 	if err != nil {
 		return Defaults(), err
 	}
-	if err := json.Unmarshal(b, &c); err != nil {
+	if err := toml.Unmarshal(b, &c); err != nil {
 		return Defaults(), err
 	}
 	return c, nil
 }
 
-// Save writes config.json (0600).
+// Save writes config.toml (0600).
 func Save(dir string, c Config) error {
 	if err := EnsureDir(dir); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(c, "", "  ")
+	b, err := toml.Marshal(c)
 	if err != nil {
 		return err
 	}
@@ -269,4 +273,104 @@ func EnsureDir(dir string) error {
 	}
 	// MkdirAll leaves pre-existing dirs' modes alone; enforce ours.
 	return os.Chmod(dir, 0o700)
+}
+
+// Get returns the effective value of a config key (its TOML field name) as a
+// string: "true"/"false" for booleans, the raw text for strings, a decimal for
+// integers, comma-separated items for string lists. An empty string means the
+// key is at its default. This is the one authoritative reader — the shell
+// integration and `yore get-config` use it, so nothing parses config.toml by
+// hand. An unknown key is an error.
+func Get(dir, key string) (string, error) {
+	c, err := Load(dir)
+	if err != nil {
+		return "", err
+	}
+	f, ok := fieldByKey(reflect.ValueOf(c), key)
+	if !ok {
+		return "", fmt.Errorf("unknown config key %q", key)
+	}
+	return formatField(f), nil
+}
+
+// Set assigns a config key from a string value and persists config.toml
+// (creating it if absent). The value is parsed into the field's type — bool,
+// string, integer, or comma-separated list; a value that does not fit the type
+// is an error and nothing is written. An unknown key is an error.
+func Set(dir, key, value string) error {
+	c, err := Load(dir)
+	if err != nil {
+		return err
+	}
+	f, ok := fieldByKey(reflect.ValueOf(&c).Elem(), key)
+	if !ok {
+		return fmt.Errorf("unknown config key %q", key)
+	}
+	if err := assignField(f, value); err != nil {
+		return fmt.Errorf("config %s: %w", key, err)
+	}
+	return Save(dir, c)
+}
+
+// fieldByKey finds the Config field whose TOML tag name equals key.
+func fieldByKey(v reflect.Value, key string) (reflect.Value, bool) {
+	t := v.Type()
+	for i := range t.NumField() {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("toml"), ",")
+		if name == key {
+			return v.Field(i), true
+		}
+	}
+	return reflect.Value{}, false
+}
+
+// formatField renders a field value as the string get-config prints.
+func formatField(f reflect.Value) string {
+	switch f.Kind() {
+	case reflect.Bool:
+		return strconv.FormatBool(f.Bool())
+	case reflect.String:
+		return f.String()
+	case reflect.Int, reflect.Int64:
+		return strconv.FormatInt(f.Int(), 10)
+	case reflect.Slice:
+		parts := make([]string, f.Len())
+		for i := range parts {
+			parts[i] = f.Index(i).String()
+		}
+		return strings.Join(parts, ",")
+	default:
+		return ""
+	}
+}
+
+// assignField parses value into f according to f's kind.
+func assignField(f reflect.Value, value string) error {
+	switch f.Kind() {
+	case reflect.Bool:
+		b, err := strconv.ParseBool(strings.TrimSpace(value))
+		if err != nil {
+			return fmt.Errorf("want a boolean (true/false), got %q", value)
+		}
+		f.SetBool(b)
+	case reflect.String:
+		f.SetString(value)
+	case reflect.Int, reflect.Int64:
+		n, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+		if err != nil {
+			return fmt.Errorf("want an integer, got %q", value)
+		}
+		f.SetInt(n)
+	case reflect.Slice:
+		parts := []string{}
+		for _, p := range strings.Split(value, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				parts = append(parts, p)
+			}
+		}
+		f.Set(reflect.ValueOf(parts))
+	default:
+		return fmt.Errorf("unsupported field kind %s", f.Kind())
+	}
+	return nil
 }

@@ -162,7 +162,7 @@ func runSetup(server, ticket, name, integration string, pin, clearPin bool) int 
 	u.step("device key ready", fmt.Sprintf("secrets kept in the %s", secret.Open(dir).Backend()))
 	seedRedact(dir)
 
-	// Build the syncer from the in-memory values, so config.json is written only
+	// Build the syncer from the in-memory values, so config.toml is written only
 	// after the server has actually accepted this machine. A rejected ticket or
 	// an unreachable server must leave no configuration behind to wedge the next
 	// run.
