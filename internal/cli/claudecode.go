@@ -324,8 +324,10 @@ func installMcpServer(bin string, project bool, u *ui) error {
 	cfg := map[string]any{}
 	if data, rerr := os.ReadFile(path); rerr == nil {
 		if json.Unmarshal(data, &cfg) != nil {
+			// A malformed existing config is non-fatal: skip registration rather
+			// than clobber a file we can't safely parse.
 			u.step("skipped MCP registration (existing file is not valid JSON)", path)
-			return nil
+			return nil //nolint:nilerr // intentional: leave the unparseable file untouched
 		}
 	} else if !os.IsNotExist(rerr) {
 		return rerr

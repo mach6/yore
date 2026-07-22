@@ -42,7 +42,7 @@ func formatCommandList(title string, rows []rec.Record, localHost string) string
 }
 
 // formatChronological renders rows oldest-first with interleaved prompts.
-func formatChronological(title string, rows []rec.Record, localHost string) string {
+func formatChronological(title string, rows []rec.Record) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s — %d command(s)\n\n", title, len(rows))
 	for _, r := range rows {
@@ -358,16 +358,19 @@ func formatStats(rows []rec.Record, dir string, days int, excluded func(string) 
 		success = fmt.Sprintf("%.0f%%", 100*float64(ok)/float64(known))
 	}
 	fmt.Fprintf(&b, "Total %d · Success %s · Hosts %d\n\n", total, success, len(hosts))
-	writeTop(&b, "Top programs", programs, 8)
-	writeTop(&b, "Top directories", dirs, 8)
-	writeTop(&b, "By executor", execs, 8)
+	writeTop(&b, "Top programs", programs)
+	writeTop(&b, "Top directories", dirs)
+	writeTop(&b, "By executor", execs)
 	if len(hosts) > 1 {
-		writeTop(&b, "By host", hosts, 8)
+		writeTop(&b, "By host", hosts)
 	}
 	return b.String()
 }
 
-func writeTop(b *strings.Builder, title string, m map[string]int, n int) {
+// topRows is how many entries each ranked list in a stats report shows.
+const topRows = 8
+
+func writeTop(b *strings.Builder, title string, m map[string]int) {
 	type kv struct {
 		k string
 		v int
@@ -383,7 +386,7 @@ func writeTop(b *strings.Builder, title string, m map[string]int, n int) {
 		return items[i].k < items[j].k
 	})
 	fmt.Fprintf(b, "%s:\n", title)
-	for i := 0; i < len(items) && i < n; i++ {
+	for i := 0; i < len(items) && i < topRows; i++ {
 		fmt.Fprintf(b, "  %5d  %s\n", items[i].v, items[i].k)
 	}
 	b.WriteByte('\n')

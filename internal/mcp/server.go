@@ -111,7 +111,7 @@ const (
 // Serve runs the read-dispatch-write loop until in reaches EOF. Each stdin line
 // is one JSON-RPC message; responses are written to out, one per line. A
 // notification (no id) yields no response. Malformed lines get a parse error.
-func (s *Server) Serve(in io.Reader, out io.Writer, logw io.Writer) error {
+func (s *Server) Serve(in io.Reader, out, logw io.Writer) error {
 	_ = logw // reserved for future diagnostics; the transport is stdout-only
 	br := bufio.NewReaderSize(in, 1<<20)
 	for {
@@ -135,7 +135,7 @@ func (s *Server) Serve(in io.Reader, out io.Writer, logw io.Writer) error {
 // handleLine parses and dispatches one line, returning the response to write and
 // whether to write it (notifications and blank lines produce none).
 func (s *Server) handleLine(line []byte) (rpcResponse, bool) {
-	if len(strings.TrimSpace(string(line))) == 0 {
+	if strings.TrimSpace(string(line)) == "" {
 		return rpcResponse{}, false
 	}
 	var req rpcRequest

@@ -377,7 +377,7 @@ func (s *Server) toolSessionHistory(raw json.RawMessage) (any, *rpcError) {
 		return textResult("No commands for session " + a.SessionID), nil
 	}
 	sortChronological(rows)
-	return textResult(formatChronological("session "+a.SessionID, capRows(rows, a.limitOr(100)), s.opts.LocalHost)), nil
+	return textResult(formatChronological("session "+a.SessionID, capRows(rows, a.limitOr(100)))), nil
 }
 
 func (s *Server) toolListSessions(raw json.RawMessage) (any, *rpcError) {
