@@ -158,7 +158,7 @@ func newSearchCmd() *cobra.Command {
 			if headless {
 				return code(headlessSearch(q, scope, tag, sortMode, fuzzy, limit, headlessShowHost(scope, noHost)))
 			}
-			return code(interactiveSearch(q, scope))
+			return code(interactiveSearch(q, scope, tag))
 		},
 	}
 	cmd.Flags().StringVar(&query, "query", "", "initial query")

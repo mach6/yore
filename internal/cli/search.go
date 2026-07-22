@@ -14,7 +14,7 @@ import (
 // interactiveSearch runs the inline TUI. Contract with the shell widgets:
 // the accepted command is the ONLY thing printed to stdout (exit 0); cancel
 // prints nothing and exits 1. Falls back to headless when no TTY exists.
-func interactiveSearch(initialQuery, scope string) int {
+func interactiveSearch(initialQuery, scope, tag string) int {
 	c, err := daemon.EnsureRunning(stateDir())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "yore: daemon unavailable:", err)
@@ -27,6 +27,7 @@ func interactiveSearch(initialQuery, scope string) int {
 	cmd, ok, err := search.Run(c, search.Options{
 		InitialQuery: initialQuery,
 		Scope:        scope,
+		Tag:          tag,
 		Session:      os.Getenv("YORE_SESSION"),
 		Cwd:          cwd,
 		Version:      Version,
@@ -34,10 +35,15 @@ func interactiveSearch(initialQuery, scope string) int {
 	})
 	if err != nil {
 		// No /dev/tty (or the TUI failed): behave like headless so pipes
-		// and odd environments still get results. showHost=false: this feeds
-		// the Ctrl-R `$(yore search …)` capture, whose contract is that ONLY
-		// the bare command is printed — a host prefix would corrupt the buffer.
-		return headlessSearch(initialQuery, proto.ScopeLocal, "", "", false, 0, false)
+		// and odd environments still get results, preserving the scope and
+		// tag filters the caller asked for. showHost=false: this feeds the
+		// Ctrl-R `$(yore search …)` capture, whose contract is that ONLY the
+		// bare command is printed — a host prefix would corrupt the buffer.
+		fallbackScope := scope
+		if fallbackScope == "" {
+			fallbackScope = proto.ScopeLocal
+		}
+		return headlessSearch(initialQuery, fallbackScope, tag, "", false, 0, false)
 	}
 	if !ok {
 		return 1
