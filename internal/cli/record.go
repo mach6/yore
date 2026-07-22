@@ -34,20 +34,7 @@ func runRecord(exit int, durMs, startMs int64, session, cwd, tag string) {
 		return
 	}
 
-	// Recording gate. Any rejection returns silently (exit 0) — never break the
-	// shell, never explain why (that would itself leak that a secret was typed).
 	dir := stateDir()
-	cfg, _ := config.Load(dir)
-	// histignorespace: a leading space opts a command out of history unless the
-	// user has explicitly turned that off. Checked on the raw text.
-	if !cfg.RecordSpacePrefixed && cmd != "" && (cmd[0] == ' ' || cmd[0] == '\t') {
-		return
-	}
-	filter, _ := redact.Load(dir, cfg.IgnorePatterns, cfg.IgnoreDirs)
-	if filter.SkipDir(cwd) || filter.Sensitive(cmd) {
-		return
-	}
-
 	start := startMs
 	if start == 0 {
 		start = time.Now().UnixMilli()
@@ -60,7 +47,6 @@ func runRecord(exit int, durMs, startMs int64, session, cwd, tag string) {
 		tagVal = executorTag()
 	}
 	r := rec.Record{
-		ID:      rec.NewID(),
 		Session: session,
 		Cmd:     cmd,
 		Cwd:     cwd,
@@ -73,7 +59,33 @@ func runRecord(exit int, durMs, startMs int64, session, cwd, tag string) {
 	if durMs >= 0 {
 		r.DurMs = rec.Int64Ptr(durMs)
 	}
+	spoolRecord(dir, r)
+}
 
+// spoolRecord applies the recording gate and, if the command passes, assigns an
+// id, spools the record (fsync'd), and pokes the daemon. It is the shared tail
+// of every capture path — the shell fast path (runRecord) and the agent hooks
+// (internal/cli/claudecode.go). It NEVER blocks or prints and treats any
+// rejection or error as a silent no-op, so a capture can never disrupt the
+// shell or an agent.
+func spoolRecord(dir string, r rec.Record) {
+	cfg, _ := config.Load(dir)
+	// histignorespace: a leading space opts a command out of history unless the
+	// user has turned that off. Any rejection returns silently — never explain
+	// why (that would itself leak that a secret was typed).
+	if !cfg.RecordSpacePrefixed && r.Cmd != "" && (r.Cmd[0] == ' ' || r.Cmd[0] == '\t') {
+		return
+	}
+	filter, _ := redact.Load(dir, cfg.IgnorePatterns, cfg.IgnoreDirs)
+	if filter.SkipDir(r.Cwd) || filter.Sensitive(r.Cmd) {
+		return
+	}
+	if r.ID == "" {
+		r.ID = rec.NewID()
+	}
+	if r.StartMs == 0 {
+		r.StartMs = time.Now().UnixMilli()
+	}
 	if spool.Append(config.SpoolDir(dir), r) == nil {
 		pokeDaemon(dir)
 	}

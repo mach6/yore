@@ -190,6 +190,13 @@ regex is skipped with a warning while the rest stay active. `yore setup` seeds
 `cursor`, `AIDER_MODEL` → `aider`, etc.), else `""` (interactive). Search can
 filter by tag, separating "what I typed" from "what an agent ran".
 
+An agent whose commands run in a *non-interactive* shell (Claude Code's Bash
+tool is `zsh -c …`) is never seen by the rc hooks, so `yore init claude-code`
+installs a Claude Code **PostToolUse** hook that pipes each Bash command to
+`yore hook claude-code`, which records it (tagged `claude-code`) through the same
+redaction gate as the shell path. It writes ~/.claude/settings.json (or, with
+--project, ./.claude/settings.json), merging without disturbing other settings.
+
 ## Shell integration modes
 
 `config.integration` (default `takeover`, overridable per `yore init --mode`)

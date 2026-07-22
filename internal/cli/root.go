@@ -83,6 +83,7 @@ func newRootCmd() *cobra.Command {
 		newDaemonCmd(),
 		newImportCmd(),
 		newInitCmd(),
+		newHookCmd(),
 		newSetupCmd(),
 		newDevicesCmd(),
 		newRecoverCmd(),
@@ -264,29 +265,58 @@ func newImportCmd() *cobra.Command {
 
 func newInitCmd() *cobra.Command {
 	var (
-		noAliases bool
-		bin       string
-		mode      string
+		noAliases     bool
+		bin           string
+		mode          string
+		project, prnt bool
 	)
 	cmd := &cobra.Command{
-		Use:   "init zsh|bash",
-		Short: "Print the shell integration script",
-		Long: "init prints the shell integration script to eval in your rc file:\n" +
+		Use:   "init zsh|bash|claude-code",
+		Short: "Set up shell or agent integration",
+		Long: "init wires yore into a shell or an agent.\n\n" +
+			"Shells print a script to eval in your rc file:\n" +
 			"  eval \"$(yore init zsh)\"   # ~/.zshrc\n" +
-			"  eval \"$(yore init bash)\"  # ~/.bashrc\n\n" +
+			"  eval \"$(yore init bash)\"  # ~/.bashrc\n" +
 			"Integration mode comes from --mode, else config.integration (default\n" +
-			"takeover). Modes: takeover (yore is the single source of truth), coexist\n" +
-			"(record alongside native history), capture (record only, no keybindings).",
+			"takeover). Modes: takeover (single source of truth), coexist, capture.\n\n" +
+			"claude-code installs a Claude Code PostToolUse hook that records every\n" +
+			"Bash command the agent runs (tagged claude-code), since an agent's\n" +
+			"non-interactive shell never loads the rc hooks:\n" +
+			"  yore init claude-code             # writes ~/.claude/settings.json\n" +
+			"  yore init claude-code --project   # writes ./.claude/settings.json\n" +
+			"  yore init claude-code --print     # print the JSON, install by hand",
 		Args:      cobra.ExactArgs(1),
-		ValidArgs: []cobra.Completion{"zsh", "bash"},
+		ValidArgs: []cobra.Completion{"zsh", "bash", "claude-code"},
 		RunE: func(_ *cobra.Command, args []string) error {
+			if args[0] == "claude-code" {
+				return code(runInitClaudeCode(bin, project, prnt))
+			}
 			return code(runInit(args[0], bin, mode, noAliases))
 		},
 	}
-	cmd.Flags().BoolVar(&noAliases, "no-aliases", false, "omit the h/hs convenience aliases")
+	cmd.Flags().BoolVar(&noAliases, "no-aliases", false, "omit the h/hs convenience aliases (shells)")
 	cmd.Flags().StringVar(&bin, "bin", shell.DefaultBin, "binary name or path the hooks should invoke")
-	cmd.Flags().StringVar(&mode, "mode", "", "integration mode: takeover|coexist|capture (default: config)")
+	cmd.Flags().StringVar(&mode, "mode", "", "integration mode: takeover|coexist|capture (shells; default: config)")
+	cmd.Flags().BoolVar(&project, "project", false, "claude-code: write ./.claude/settings.json instead of the user file")
+	cmd.Flags().BoolVar(&prnt, "print", false, "claude-code: print the hook JSON instead of writing settings.json")
 	_ = cmd.RegisterFlagCompletionFunc("mode", fixedComp("takeover", "coexist", "capture"))
+	return cmd
+}
+
+// newHookCmd is the agent-hook capture entrypoint: hidden because it is invoked
+// by an agent's hook config (see `yore init claude-code`), not typed by users.
+func newHookCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:    "hook",
+		Short:  "Ingest an agent hook payload (invoked by agent hook config)",
+		Hidden: true,
+	}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "claude-code",
+		Short: "Record a Bash command from a Claude Code PostToolUse hook (reads JSON on stdin)",
+		Args:  cobra.NoArgs,
+		RunE:  func(*cobra.Command, []string) error { return code(runHookClaudeCode()) },
+	})
 	return cmd
 }
 

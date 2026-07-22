@@ -143,8 +143,11 @@ rm -rf ~/.config/yore         # all of yore's state
   (yore leaves your own `h` alone.)
 - **`hs` + scoped `hsa`/`hss`/`hsc`/`hsw`** search aliases; `yore search
   --headless` for scripts and pipes.
-- **Agent tagging** — auto-detects `CLAUDECODE` / Cursor / aider (or `$YORE_TAG`);
-  filter with `yore search --tag …`.
+- **Agent tagging** — commands an agent runs are tagged so you can tell them
+  from what you typed. In your interactive shell, `CLAUDECODE` / Cursor / aider
+  (or `$YORE_TAG`) auto-detect. For Claude Code specifically — whose Bash tool
+  runs a *non-interactive* shell the rc hooks never see — install its hook with
+  `yore init claude-code`. Filter either with `yore search --tag …`.
 - **Secrets redaction** from an editable, fail-safe `~/.config/yore/redact.yml`;
   runs on capture, on import, and on the history seed.
 - **Import** your existing history idempotently (`yore import auto`).
@@ -163,6 +166,7 @@ Configure via `~/.config/yore/config.json` (every key + default is in
 | Cycle search scope (host / all / session / dir / repo) | `Ctrl-R` again inside the search |
 | Rank by frequency×recency, or fuzzy-match | frecency / fuzzy toggles inside the search |
 | Browse, inspect, get stats, manage devices | `hb` — `Enter` recalls, `y` copies, `D` for devices |
+| Capture what Claude Code runs | `yore init claude-code` (once) |
 | See only what an agent ran | `yore search --tag claude-code` |
 | Grep history in a script | `hs <query>` \| … or `yore search --headless <query>` |
 | Force a sync now | `yore sync` (or `S` in `hb`) |
