@@ -3,9 +3,11 @@ package cli
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"yore/internal/config"
+	"yore/internal/proto"
 	"yore/internal/rec"
 )
 
@@ -161,5 +163,18 @@ func TestFormatHeadless(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.want, formatHeadless(tc.rows, tc.showHost))
 		})
+	}
+}
+
+// TestHeadlessShowHost pins the rule that only `--scope all` (hsa) leads results
+// with the host column — every single-host scope stays a bare command list.
+func TestHeadlessShowHost(t *testing.T) {
+	assert.True(t, headlessShowHost(proto.ScopeAll, false), "all-scope shows the host column")
+	assert.False(t, headlessShowHost(proto.ScopeAll, true), "--no-host suppresses it even for all-scope")
+
+	for _, scope := range []string{
+		proto.ScopeLocal, proto.ScopeHost, proto.ScopeSession, proto.ScopeCwd, proto.ScopeWorkspace,
+	} {
+		assert.False(t, headlessShowHost(scope, false), "single-host scope %q hides the host column", scope)
 	}
 }

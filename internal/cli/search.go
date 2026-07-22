@@ -74,10 +74,19 @@ func headlessSearch(q, scope, tag, sortMode string, fuzzy bool, limit int, showH
 	return 0
 }
 
-// formatHeadless renders query rows as headless output lines. With showHost the
-// hostname leads each line, left-padded to the widest hostname in rows and
-// followed by two spaces, so the command column aligns; without it each line is
-// the bare command (the Ctrl-R capture contract). It's a pure helper so the
+// headlessShowHost decides whether headless output leads each line with a host
+// column. Only `--scope all` (hsa) can return other hosts' rows, so only there
+// is the column meaningful; every other scope is this host alone. --no-host
+// suppresses it even for all-scope.
+func headlessShowHost(scope string, noHost bool) bool {
+	return !noHost && scope == proto.ScopeAll
+}
+
+// formatHeadless renders query rows as headless output lines. With showHost —
+// only `--scope all` (hsa), where results span hosts — the hostname leads each
+// line, left-padded to the widest hostname in rows and followed by two spaces,
+// so the command column aligns; without it each line is the bare command (every
+// single-host scope, and the Ctrl-R capture contract). It's a pure helper so the
 // column math stays unit-testable. Embedded newlines in a command are passed
 // through unchanged, matching the previous fmt.Println behavior.
 func formatHeadless(rows []rec.Record, showHost bool) []string {
