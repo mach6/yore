@@ -84,6 +84,7 @@ func newRootCmd() *cobra.Command {
 		newImportCmd(),
 		newInitCmd(),
 		newHookCmd(),
+		newMcpServeCmd(),
 		newSetupCmd(),
 		newDevicesCmd(),
 		newRecoverCmd(),
@@ -303,6 +304,18 @@ func newInitCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&prnt, "print", false, "claude-code: print the hook JSON instead of writing settings.json")
 	_ = cmd.RegisterFlagCompletionFunc("mode", fixedComp("takeover", "coexist", "capture"))
 	return cmd
+}
+
+// newMcpServeCmd runs the Model Context Protocol server on stdio. Hidden: it is
+// launched by an agent's MCP config (see `yore init claude-code`), not by users.
+func newMcpServeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:    "mcp-serve",
+		Short:  "Serve shell history to AI agents over MCP (stdio JSON-RPC)",
+		Args:   cobra.NoArgs,
+		Hidden: true,
+		RunE:   func(*cobra.Command, []string) error { return code(runMcpServe()) },
+	}
 }
 
 // newHookCmd is the agent-hook capture entrypoint: hidden because it is invoked
