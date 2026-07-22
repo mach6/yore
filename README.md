@@ -148,11 +148,25 @@ rm -rf ~/.config/yore         # all of yore's state
   copies. (yore leaves your own `h` alone.)
 - **`hs` + scoped `hsa`/`hss`/`hsc`/`hsw`** search aliases; `yore search
   --headless` for scripts and pipes.
-- **Agent tagging** — commands an agent runs are tagged so you can tell them
-  from what you typed. In your interactive shell, `CLAUDECODE` / Cursor / aider
-  (or `$YORE_TAG`) auto-detect. For Claude Code specifically — whose Bash tool
-  runs a *non-interactive* shell the rc hooks never see — install its hook with
-  `yore init claude-code`. Filter either with `yore search --tag …`.
+- **Freeform tags** — label commands and sessions with any tags you like
+  (`yore tag add refactor`), filter with `yore search --tag refactor`. A record
+  can carry several. The agent/executor is just an **auto-applied** tag, so an
+  agent's refactor commands can read `claude-code` *and* `refactor` at once.
+  `auto_tags` config tags commands by directory. Tags sync end-to-end.
+- **Agent tracking** — commands an agent runs are auto-tagged so you can tell
+  them from what you typed (`yore search --executor claude-code`). In your
+  interactive shell, `CLAUDECODE` / Cursor / aider (or `$YORE_TAG`) auto-detect.
+  For Claude Code — whose Bash tool runs a *non-interactive* shell the rc hooks
+  never see — `yore init claude-code` installs its hooks (with exit status,
+  duration, and prompt tracing) and registers the MCP server.
+- **MCP server for your agents** — `yore init claude-code` wires up a local,
+  read-only MCP server so a coding agent can query your history back: search,
+  failures, prompts, stats, and `assess_risk` — **across every machine you own**
+  (end-to-end encrypted, nothing leaves your devices). Ask *"have I run this
+  migration anywhere?"* or *"what failed in this project recently?"*.
+- **Risk checks** — a deterministic classifier rates a command `safe…critical`
+  with a reason, exposed to agents via `assess_risk` (history-aware: *"run 3×
+  across your machines, 1 failed"*).
 - **Secrets redaction** from an editable, fail-safe `~/.config/yore/redact.yml`;
   runs on capture, on import, and on the history seed.
 - **Import** your existing history idempotently (`yore import auto`).
@@ -174,8 +188,10 @@ in [architecture.md](docs/architecture.md)); all state lives under
 | Rank by frequency×recency, or fuzzy-match | frecency / fuzzy toggles inside the search |
 | Browse, get stats, watch agents, manage devices | `hb` — `s` stats, `a` agents, `p` prompts, `D` devices; `Enter` recalls, `y` copies |
 | See an agent's prompt and drill into its commands | `hb`, then `p`; `Enter` on a prompt |
-| Capture what Claude Code runs | `yore init claude-code` (once) |
-| See only what an agent ran | `yore search --tag claude-code` |
+| Capture what Claude Code runs + let it query history (MCP) | `yore init claude-code` (once) |
+| See only what an agent ran | `yore search --executor claude-code` |
+| Tag commands/sessions and filter by tag | `yore tag add refactor` · `yore search --tag refactor` |
+| Let an agent check a command's risk / history | it calls the `assess_risk` MCP tool |
 | Grep history in a script | `hs <query>` \| … or `yore search --headless <query>` |
 | Force a sync now | `yore sync` (or `S` in `hb`) |
 | Add another machine | `yore devices ticket`, then `yore setup --ticket …` there |

@@ -184,11 +184,23 @@ back to the compiled-in built-ins (never "redact nothing"); an individual invali
 regex is skipped with a warning while the rest stay active. `yore setup` seeds
 `redact.yml` from the built-ins without ever clobbering edits.
 
-**Executor tagging.** Each record carries a `tag` naming what ran it: an explicit
-`--tag`, else `$YORE_TAG`, else auto-detection from agent env markers
-(`CLAUDECODE`/`CLAUDE_CODE_ENTRYPOINT` → `claude-code`, `CURSOR_TRACE_ID` →
-`cursor`, `AIDER_MODEL` → `aider`, etc.), else `""` (interactive). Search can
-filter by tag, separating "what I typed" from "what an agent ran".
+**Executor tagging.** Each record carries an executor `tag` naming what ran it:
+an explicit `--executor`, else `$YORE_TAG`, else auto-detection from agent env
+markers (`CLAUDECODE`/`CLAUDE_CODE_ENTRYPOINT` → `claude-code`, `CURSOR_TRACE_ID`
+→ `cursor`, `AIDER_MODEL` → `aider`, etc.), else `""` (interactive). `yore
+search --executor claude-code` separates "what I typed" from "what an agent ran".
+
+**User tags** are freeform labels, and a record can carry several — the executor
+above is just one *auto-applied* tag. A `tag` record (`Type == "tag"`) adds or
+removes a named label on a command (`target_id`) or a session, and rides the
+same E2E stream as commands: sealed per record, remapped by name on sync (names
+are the identity, so no id reconciliation), server ciphertext-only. The daemon
+folds tag records into an in-RAM index (`command|session → {tags}`, fed by both
+local ingest and remote pull) and resolves each row's **effective tags** at
+query time — executor auto-tag ∪ command tags ∪ session tags ∪ `auto_tags`
+(cwd-prefix rules from config, applied at read time so there is no record-path
+cost and rules apply retroactively). `yore tag add/rm/list/create`; `yore search
+--tag <name>` matches any effective tag (so `--tag claude-code` still works).
 
 An agent whose commands run in a *non-interactive* shell (Claude Code's Bash
 tool is `zsh -c …`) is never seen by the rc hooks, so `yore init claude-code`
@@ -209,6 +221,27 @@ sequence it produced. All hooks go through the same redaction gate as the shell
 path (a secret-bearing command or prompt is dropped). `yore init claude-code`
 writes ~/.claude/settings.json (or, with --project, ./.claude/settings.json),
 merging without disturbing other settings.
+
+## MCP server (`internal/mcp`)
+
+`yore mcp-serve` is a local, read-only [Model Context Protocol](https://modelcontextprotocol.io)
+server — stdio JSON-RPC, no network port — that lets a coding agent query the
+history it is creating. It is a thin adapter over the daemon's query layer (it
+dials the unix socket and issues `OpQuery`; it never opens the store), so it
+inherits the single-writer guarantee and, crucially, the **cross-machine** RAM
+corpus: tools take a `scope` (`local`/`all`), and `all` answers over every
+enrolled device while the sync server still holds only ciphertext — a question
+like *"have I run this migration anywhere?"* a single-machine tool cannot answer.
+It exposes tools (`search_commands`, `command_status`, `what_failed`,
+`get_prompts`, `replay_agent_session`, `assess_risk`, …) and auto-injected
+resources (`yore://history/recent`, `…/risk/summary`, …). `yore init claude-code`
+registers it in `~/.claude.json` (or `./.mcp.json` with `--project`).
+
+**Risk** (`internal/risk`) is a deterministic, explainable classifier
+(`safe…critical` with a category and reason, highest-severity-wins; a command
+that only reads or prints is safe). It backs the `assess_risk` tool — which also
+reports how often the command has run across your machines and whether it
+succeeded — and the `risk/summary` resource. No model is involved.
 
 ## Shell integration modes
 
@@ -394,6 +427,7 @@ default"; accessors apply defaults so callers never branch.
 | `ignore_patterns` | — | extra user secret regexes (never recorded) |
 | `ignore_dirs` | — | cwd prefixes whose commands are never recorded |
 | `record_space_prefixed` | `false` | record leading-space commands too |
+| `auto_tags` | — | cwd-prefix → tag rules (`/work=refactor,…`); tags matching commands at query time |
 | `capture_spool_only` | `false` | capture writes to the spool only — never pokes/spawns the daemon; the spool is drained the next time a daemon runs |
 | `backup_interval` | `1h` | local db backup cadence; `"0"` disables |
 | `backup_keep` | `3` | local db backups retained |
