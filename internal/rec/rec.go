@@ -16,6 +16,13 @@ import (
 const (
 	TypeCmd    = ""       // a captured shell command (the zero value)
 	TypeDelete = "delete" // a tombstone; TargetID names the record it deletes
+	TypeTag    = "tag"    // a user-tag op: add/remove a freeform label on a command or session
+)
+
+// TagOp values for Record.TagOp (on TypeTag records).
+const (
+	TagOpAdd    = ""       // add the tag to the target (the zero value)
+	TagOpRemove = "remove" // remove the tag from the target
 )
 
 // Record is one captured shell command (or tombstone) as spooled, stored,
@@ -45,6 +52,20 @@ type Record struct {
 	// carried on each member so the grouping survives sync without a join.
 	PromptID string `json:"prompt_id,omitempty"`
 	Prompt   string `json:"prompt,omitempty"`
+
+	// User tags (Type == TypeTag record carries these; TargetID names a command
+	// or Session names a session it applies to — neither = a bare definition).
+	// TagName is the freeform label, TagDesc an optional description, TagOp the
+	// add/remove op. Names are the identity, so tags remap across machines for
+	// free on sync.
+	TagName string `json:"tag_name,omitempty"`
+	TagDesc string `json:"tag_desc,omitempty"`
+	TagOp   string `json:"tag_op,omitempty"`
+
+	// Tags is the record's resolved freeform tags, filled by the daemon at query
+	// time (executor auto-tag ∪ command tags ∪ session tags). Never stored or
+	// synced — it is derived on read.
+	Tags []string `json:"tags,omitempty"`
 
 	DeletedMs int64  `json:"deleted_ms,omitempty"` // tombstone applied locally
 	KeyID     string `json:"key_id,omitempty"`     // DEK that sealed this record in transit

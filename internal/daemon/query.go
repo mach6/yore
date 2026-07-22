@@ -98,6 +98,18 @@ func (s *server) runQuery(f *match.Filter, q proto.QueryReq) proto.QueryResp {
 		rows = kept
 	}
 
+	// Freeform user-tag filter: matches any of a row's effective tags (the
+	// executor auto-tag, command tags, or session tags).
+	if q.Tag != "" {
+		kept := rows[:0]
+		for _, r := range rows {
+			if s.tags.has(r, q.Tag) {
+				kept = append(kept, r)
+			}
+		}
+		rows = kept
+	}
+
 	if q.Sort == proto.SortFrecency {
 		// Frecency ranking inherently collapses to one row per command.
 		rows = frecencyRank(rows, q.Cwd, s.nowMs())
@@ -144,6 +156,11 @@ func (s *server) runQuery(f *match.Filter, q proto.QueryReq) proto.QueryResp {
 	windowed := rows[lo:hi]
 	if windowed == nil {
 		windowed = []rec.Record{}
+	}
+	// Resolve each returned row's effective tags for display (rows are copies, so
+	// this does not touch the corpus).
+	for i := range windowed {
+		windowed[i].Tags = s.tags.effective(windowed[i])
 	}
 
 	return proto.QueryResp{

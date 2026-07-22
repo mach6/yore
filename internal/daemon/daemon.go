@@ -80,6 +80,10 @@ type server struct {
 	cmds    []string
 	lastSeq uint64
 
+	// tags resolves user-tag associations (fed by both local ingest and remote
+	// pull); read at query time to resolve each row's effective tags.
+	tags *tagIndex
+
 	// Live connections, so shutdown can unblock handlers parked in ReadMsg.
 	conns   map[net.Conn]struct{}
 	closing bool
@@ -123,6 +127,7 @@ func Run(dir string, opts Options) error {
 	logFile, logger := openLog(dir, cfg)
 
 	sc := loadSyncConf(dir)
+	tags := newTagIndex()
 	s := &server{
 		dir:         dir,
 		opts:        opts,
@@ -132,7 +137,8 @@ func Run(dir string, opts Options) error {
 		logger:      logger,
 		idleTimeout: idle,
 		startTime:   time.Now(),
-		remote:      newRemote(dir, st, sc),
+		tags:        tags,
+		remote:      newRemote(dir, st, sc, tags),
 		syncConf:    sc,
 		conns:       make(map[net.Conn]struct{}),
 		wake:        make(chan struct{}, 1),
@@ -183,6 +189,18 @@ func Run(dir string, opts Options) error {
 	}
 	if err := s.loadCorpus(); err != nil {
 		return bail(err)
+	}
+	// Seed the tag index from the store: tag records are not part of the command
+	// corpus (nor the warm snapshot), so they are folded from their own scan.
+	if trecs, terr := st.TagRecords(); terr != nil {
+		s.logf("tag seed error: %v", terr)
+	} else {
+		for i := range trecs {
+			s.tags.apply(trecs[i])
+		}
+		if len(trecs) > 0 {
+			s.logf("seeded tag index from %d tag records", len(trecs))
+		}
 	}
 	s.logf("started pid=%d corpus=%d idle=%s", os.Getpid(), len(s.corpus), idle)
 
@@ -392,6 +410,10 @@ func (s *server) dispatch(req *proto.Request, f *match.Filter) (proto.Response, 
 		st := s.status()
 		return proto.Response{OK: true, Status: &st}, false
 
+	case proto.OpTags:
+		ti := proto.TagsInfo{Tags: s.tags.list()}
+		return proto.Response{OK: true, Tags: &ti}, false
+
 	case proto.OpSync:
 		// Explicit sync is synchronous: run a full cycle and respond after it
 		// finishes, so `yore sync` reflects the real outcome.
@@ -503,10 +525,13 @@ func (s *server) foldRows(rows []rec.Record) {
 			}
 			deleted[rows[i].TargetID] = struct{}{}
 		}
+		if rows[i].Type == rec.TypeTag {
+			s.tags.apply(rows[i]) // fold user tags into the index, not the corpus
+		}
 	}
 	for i := range rows {
 		r := rows[i]
-		if r.Type == rec.TypeDelete || r.DeletedMs != 0 {
+		if r.Type == rec.TypeDelete || r.Type == rec.TypeTag || r.DeletedMs != 0 {
 			continue
 		}
 		if _, gone := deleted[r.ID]; gone {

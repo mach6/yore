@@ -25,6 +25,7 @@ const (
 	OpTicket   = "ticket"   // mint a single-use enrollment ticket
 	OpStatus   = "status"   // daemon status
 	OpSync     = "sync"     // force a push/pull cycle now
+	OpTags     = "tags"     // list known user tags with counts
 	OpShutdown = "shutdown" // graceful exit
 )
 
@@ -61,6 +62,7 @@ type QueryReq struct {
 	Session  string `json:"session,omitempty"`  // session id for ScopeSession
 	Cwd      string `json:"cwd,omitempty"`      // directory for ScopeCwd
 	Executor string `json:"executor,omitempty"` // executor filter, e.g. "claude-code"; "" = any
+	Tag      string `json:"tag,omitempty"`      // freeform user-tag filter (matches any effective tag); "" = any
 	Sort     string `json:"sort,omitempty"`     // "" = recency (newest first); "frecency" = frequency×recency
 	Fuzzy    bool   `json:"fuzzy,omitempty"`    // subsequence (fzf-style) matching instead of substring
 	Limit    int    `json:"limit,omitempty"`    // 0 = server default (200)
@@ -130,6 +132,18 @@ type TicketInfo struct {
 	ExpiresMs int64  `json:"expires_ms"`
 }
 
+// TagCount is one known user tag with how many commands/sessions carry it.
+type TagCount struct {
+	Name  string `json:"name"`
+	Desc  string `json:"desc,omitempty"`
+	Count int    `json:"count"`
+}
+
+// TagsInfo answers OpTags: every known user tag, name-sorted.
+type TagsInfo struct {
+	Tags []TagCount `json:"tags"`
+}
+
 type Response struct {
 	OK      bool         `json:"ok"`
 	Err     string       `json:"err,omitempty"`
@@ -138,6 +152,7 @@ type Response struct {
 	Devices *DevicesInfo `json:"devices,omitempty"`
 	Ticket  *TicketInfo  `json:"ticket,omitempty"`
 	Status  *StatusResp  `json:"status,omitempty"`
+	Tags    *TagsInfo    `json:"tags,omitempty"`
 }
 
 // WriteMsg writes v as one JSON line.

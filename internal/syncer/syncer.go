@@ -104,6 +104,9 @@ type payload struct {
 	TargetID string `json:"target_id,omitempty"`
 	PromptID string `json:"prompt_id,omitempty"`
 	Prompt   string `json:"prompt,omitempty"`
+	TagName  string `json:"tag_name,omitempty"`
+	TagDesc  string `json:"tag_desc,omitempty"`
+	TagOp    string `json:"tag_op,omitempty"`
 }
 
 // marshalPayload renders a record's meaningful fields as the sealed plaintext.
@@ -124,6 +127,9 @@ func marshalPayload(r rec.Record) ([]byte, error) {
 		TargetID: r.TargetID,
 		PromptID: r.PromptID,
 		Prompt:   r.Prompt,
+		TagName:  r.TagName,
+		TagDesc:  r.TagDesc,
+		TagOp:    r.TagOp,
 	})
 }
 
@@ -151,6 +157,9 @@ func recordFromPayload(pt []byte, hostID string, seq uint64, keyID string) (rec.
 		Tag:      p.Tag,
 		PromptID: p.PromptID,
 		Prompt:   p.Prompt,
+		TagName:  p.TagName,
+		TagDesc:  p.TagDesc,
+		TagOp:    p.TagOp,
 		KeyID:    keyID,
 	}, nil
 }

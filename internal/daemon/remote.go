@@ -95,6 +95,10 @@ type remoteCache struct {
 	cursors map[string]uint64
 	state   string
 	lastMs  int64
+
+	// tags is the shared server tag index; remote tag records are folded here so
+	// tags applied on one machine resolve on this one too.
+	tags *tagIndex
 }
 
 // syncConf is the resolved subset of configuration that decides WHICH server the
@@ -136,8 +140,8 @@ func newSyncer(dir string, st *store.Store, sc syncConf) *syncer.Syncer {
 // token, or device key yields a disabled cache (state "off") rather than an
 // error; the daemon re-checks the configuration as it runs, so sync configured
 // later comes alive without a restart (see syncLoop).
-func newRemote(dir string, st *store.Store, sc syncConf) *remoteCache {
-	rc := &remoteCache{state: proto.RemoteOff, cursors: map[string]uint64{}}
+func newRemote(dir string, st *store.Store, sc syncConf, tags *tagIndex) *remoteCache {
+	rc := &remoteCache{state: proto.RemoteOff, cursors: map[string]uint64{}, tags: tags}
 	if sy := newSyncer(dir, st, sc); sy != nil {
 		rc.sy = sy
 		rc.state = proto.RemoteUnavailable // until the first successful sync
@@ -313,10 +317,13 @@ func (rc *remoteCache) foldRemote(recs []rec.Record) {
 			}
 			deleted[recs[i].TargetID] = struct{}{}
 		}
+		if recs[i].Type == rec.TypeTag && rc.tags != nil {
+			rc.tags.apply(recs[i]) // fold remote tags into the shared index
+		}
 	}
 	for i := range recs {
 		r := recs[i]
-		if r.Type == rec.TypeDelete || r.DeletedMs != 0 {
+		if r.Type == rec.TypeDelete || r.Type == rec.TypeTag || r.DeletedMs != 0 {
 			continue
 		}
 		if _, gone := deleted[r.ID]; gone {

@@ -13,6 +13,7 @@ import (
 
 	"yore/internal/config"
 	"yore/internal/proto"
+	"yore/internal/rec"
 )
 
 const (
@@ -104,7 +105,7 @@ func EnsureRunning(dir string) (*Client, error) {
 
 // Ping resets the daemon's idle timer and nudges spool ingest.
 func (c *Client) Ping() error {
-	return c.ok(proto.Request{Op: proto.OpPing}, opDeadline)
+	return c.ok(proto.Request{Op: proto.OpPing})
 }
 
 // Query runs a search.
@@ -120,6 +121,27 @@ func (c *Client) Query(q proto.QueryReq) (proto.QueryResp, error) {
 		return proto.QueryResp{}, errors.New("daemon: query response missing body")
 	}
 	return *resp.Query, nil
+}
+
+// SubmitRecord delivers one record to the daemon for immediate ingest. Used for
+// non-command records — user-tag ops — that the shell fast path never produces.
+func (c *Client) SubmitRecord(r rec.Record) error {
+	return c.ok(proto.Request{Op: proto.OpRecord, Record: &r})
+}
+
+// Tags lists the known user tags with their counts.
+func (c *Client) Tags() (proto.TagsInfo, error) {
+	resp, err := c.roundtrip(proto.Request{Op: proto.OpTags}, opDeadline)
+	if err != nil {
+		return proto.TagsInfo{}, err
+	}
+	if !resp.OK {
+		return proto.TagsInfo{}, respErr(resp)
+	}
+	if resp.Tags == nil {
+		return proto.TagsInfo{}, errors.New("daemon: tags response missing body")
+	}
+	return *resp.Tags, nil
 }
 
 // Status reports daemon status.
@@ -154,7 +176,7 @@ func (c *Client) Hosts() (proto.HostsInfo, error) {
 
 // Delete tombstones one record by id.
 func (c *Client) Delete(id string) error {
-	return c.ok(proto.Request{Op: proto.OpDelete, DeleteID: id}, opDeadline)
+	return c.ok(proto.Request{Op: proto.OpDelete, DeleteID: id})
 }
 
 // Devices lists enrolled devices (via the daemon's syncer).
@@ -204,15 +226,15 @@ func (c *Client) Sync() error {
 
 // Shutdown asks the daemon to exit gracefully.
 func (c *Client) Shutdown() error {
-	return c.ok(proto.Request{Op: proto.OpShutdown}, opDeadline)
+	return c.ok(proto.Request{Op: proto.OpShutdown})
 }
 
 // Close closes the connection (it does not stop the daemon).
 func (c *Client) Close() error { return c.conn.Close() }
 
-// ok performs a roundtrip and checks Response.OK.
-func (c *Client) ok(req proto.Request, deadline time.Duration) error {
-	resp, err := c.roundtrip(req, deadline)
+// ok performs a roundtrip (under the short op deadline) and checks Response.OK.
+func (c *Client) ok(req proto.Request) error {
+	resp, err := c.roundtrip(req, opDeadline)
 	if err != nil {
 		return err
 	}

@@ -85,6 +85,7 @@ func newRootCmd() *cobra.Command {
 		newInitCmd(),
 		newHookCmd(),
 		newMcpServeCmd(),
+		newTagCmd(),
 		newSetupCmd(),
 		newDevicesCmd(),
 		newRecoverCmd(),
@@ -140,9 +141,9 @@ func newRecordCmd() *cobra.Command {
 
 func newSearchCmd() *cobra.Command {
 	var (
-		query, scope, executor, sortMode string
-		headless, fuzzy, noHost          bool
-		limit                            int
+		query, scope, executor, tag, sortMode string
+		headless, fuzzy, noHost               bool
+		limit                                 int
 	)
 	cmd := &cobra.Command{
 		Use:   "search [query...]",
@@ -157,9 +158,9 @@ func newSearchCmd() *cobra.Command {
 				q = strings.Join(args, " ")
 			}
 			if headless {
-				return code(headlessSearch(q, scope, executor, sortMode, fuzzy, limit, headlessShowHost(scope, noHost)))
+				return code(headlessSearch(q, scope, executor, tag, sortMode, fuzzy, limit, headlessShowHost(scope, noHost)))
 			}
-			return code(interactiveSearch(q, scope, executor))
+			return code(interactiveSearch(q, scope, executor, tag))
 		},
 	}
 	cmd.Flags().StringVar(&query, "query", "", "initial query")
@@ -168,6 +169,7 @@ func newSearchCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&noHost, "no-host", false, "headless: hide the host column (shown only for --scope all)")
 	cmd.Flags().StringVar(&scope, "scope", proto.ScopeLocal, "search scope: local|all|host|session|cwd|workspace")
 	cmd.Flags().StringVar(&executor, "executor", "", "filter by executor (e.g. claude-code)")
+	cmd.Flags().StringVar(&tag, "tag", "", "filter by a freeform tag (any effective tag on the record)")
 	cmd.Flags().StringVar(&sortMode, "sort", "", "sort: recency (default) or frecency")
 	cmd.Flags().BoolVar(&fuzzy, "fuzzy", false, "subsequence (fzf-style) matching")
 
@@ -304,6 +306,54 @@ func newInitCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&project, "project", false, "claude-code: write ./.claude/settings.json instead of the user file")
 	cmd.Flags().BoolVar(&prnt, "print", false, "claude-code: print the hook JSON instead of writing settings.json")
 	_ = cmd.RegisterFlagCompletionFunc("mode", fixedComp("takeover", "coexist", "capture"))
+	return cmd
+}
+
+// newTagCmd groups the user-tag commands: freeform labels on commands and
+// sessions that sync end-to-end. The executor/agent is auto-tagged; these are
+// the tags you set yourself.
+func newTagCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "tag",
+		Short: "Manage freeform tags on commands and sessions",
+		Long: "tag applies freeform labels to commands and sessions. A record can carry\n" +
+			"several tags; the agent/executor is auto-tagged, and you add your own\n" +
+			"(e.g. `refactor`). Filter with `yore search --tag <name>`. Tags sync\n" +
+			"end-to-end like everything else.",
+	}
+	var desc string
+	list := &cobra.Command{
+		Use: "list", Short: "List known tags with counts", Aliases: []string{"ls"},
+		Args: cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error { return code(runTagList()) },
+	}
+	create := &cobra.Command{
+		Use: "create <name>", Short: "Create a tag (name + optional description)",
+		Args: cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error { return code(runTagCreate(args[0], desc)) },
+	}
+	create.Flags().StringVarP(&desc, "description", "d", "", "optional tag description")
+
+	var command, session string
+	add := &cobra.Command{
+		Use: "add <name>", Short: "Add a tag to a command/session (default: current session)",
+		Aliases: []string{"associate"}, Args: cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return code(runTagAssociate(args[0], command, session, false))
+		},
+	}
+	rm := &cobra.Command{
+		Use: "rm <name>", Short: "Remove a tag from a command/session (default: current session)",
+		Aliases: []string{"remove"}, Args: cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return code(runTagAssociate(args[0], command, session, true))
+		},
+	}
+	for _, c := range []*cobra.Command{add, rm} {
+		c.Flags().StringVar(&command, "command", "", "target command id (default: current session)")
+		c.Flags().StringVar(&session, "session", "", "target session id (default: current session)")
+	}
+	cmd.AddCommand(list, create, add, rm)
 	return cmd
 }
 

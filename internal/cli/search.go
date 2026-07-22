@@ -14,7 +14,7 @@ import (
 // interactiveSearch runs the inline TUI. Contract with the shell widgets:
 // the accepted command is the ONLY thing printed to stdout (exit 0); cancel
 // prints nothing and exits 1. Falls back to headless when no TTY exists.
-func interactiveSearch(initialQuery, scope, executor string) int {
+func interactiveSearch(initialQuery, scope, executor, tag string) int {
 	c, err := daemon.EnsureRunning(stateDir())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "yore: daemon unavailable:", err)
@@ -28,6 +28,7 @@ func interactiveSearch(initialQuery, scope, executor string) int {
 		InitialQuery: initialQuery,
 		Scope:        scope,
 		Executor:     executor,
+		Tag:          tag,
 		Session:      os.Getenv("YORE_SESSION"),
 		Cwd:          cwd,
 		Version:      Version,
@@ -43,7 +44,7 @@ func interactiveSearch(initialQuery, scope, executor string) int {
 		if fallbackScope == "" {
 			fallbackScope = proto.ScopeLocal
 		}
-		return headlessSearch(initialQuery, fallbackScope, executor, "", false, 0, false)
+		return headlessSearch(initialQuery, fallbackScope, executor, tag, "", false, 0, false)
 	}
 	if !ok {
 		return 1
@@ -52,7 +53,7 @@ func interactiveSearch(initialQuery, scope, executor string) int {
 	return 0
 }
 
-func headlessSearch(q, scope, executor, sortMode string, fuzzy bool, limit int, showHost bool) int {
+func headlessSearch(q, scope, executor, tag, sortMode string, fuzzy bool, limit int, showHost bool) int {
 	c, err := daemon.EnsureRunning(stateDir())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "yore: daemon unavailable:", err)
@@ -60,7 +61,7 @@ func headlessSearch(q, scope, executor, sortMode string, fuzzy bool, limit int, 
 	}
 	defer func() { _ = c.Close() }()
 
-	req := proto.QueryReq{Q: q, Scope: scope, Executor: executor, Sort: sortMode, Fuzzy: fuzzy, Limit: limit, Dedupe: true}
+	req := proto.QueryReq{Q: q, Scope: scope, Executor: executor, Tag: tag, Sort: sortMode, Fuzzy: fuzzy, Limit: limit, Dedupe: true}
 	switch scope {
 	case proto.ScopeSession:
 		req.Session = os.Getenv("YORE_SESSION")

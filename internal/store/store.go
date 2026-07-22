@@ -253,7 +253,7 @@ func (s *Store) All() ([]rec.Record, error) {
 			if err := json.Unmarshal(v, &r); err != nil {
 				return err
 			}
-			if r.Type == rec.TypeDelete || r.DeletedMs != 0 {
+			if r.Type == rec.TypeDelete || r.Type == rec.TypeTag || r.DeletedMs != 0 {
 				continue
 			}
 			out = append(out, r)
@@ -296,7 +296,7 @@ func (s *Store) Count() (int, error) {
 			if err := json.Unmarshal(v, &r); err != nil {
 				return err
 			}
-			if r.Type == rec.TypeDelete || r.DeletedMs != 0 {
+			if r.Type == rec.TypeDelete || r.Type == rec.TypeTag || r.DeletedMs != 0 {
 				continue
 			}
 			n++
@@ -304,6 +304,27 @@ func (s *Store) Count() (int, error) {
 		return nil
 	})
 	return n, err
+}
+
+// TagRecords returns every TypeTag record in the stream, ascending. The daemon
+// scans these once at startup to seed its tag index, since tag records are not
+// part of the command corpus (and so not in the warm snapshot).
+func (s *Store) TagRecords() ([]rec.Record, error) {
+	var out []rec.Record
+	err := s.db.View(func(tx *bbolt.Tx) error {
+		c := tx.Bucket(bucketHistory).Cursor()
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			var r rec.Record
+			if err := json.Unmarshal(v, &r); err != nil {
+				return err
+			}
+			if r.Type == rec.TypeTag {
+				out = append(out, r)
+			}
+		}
+		return nil
+	})
+	return out, err
 }
 
 // LastSeq returns the highest seq assigned in the raw stream, or 0 if empty.
