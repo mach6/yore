@@ -64,6 +64,7 @@ const (
 	viewStats
 	viewDevices
 	viewAgents
+	viewPrompts
 )
 
 // hostItem is one row of the host sidebar. The first real host reported by the
@@ -140,6 +141,10 @@ type Model struct {
 	// stats
 	stats        *statsData
 	agents       *agentsData  // agent-monitor aggregation, from the same sample
+	prompts      *promptsData // prompt-explorer aggregation, from the same sample
+	promptSel    int          // selected row in the prompt-explorer table
+	promptDrill  bool         // drilled into the selected prompt's command list
+	drillSel     int          // selected row within the drilled command list
 	statsRows    []rec.Record // the full sample; re-aggregated when the period changes
 	statsPeriod  int          // index into statPeriods
 	statsErr     error
@@ -539,12 +544,20 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.toggleStats()
 	case "a":
 		return m.toggleAgents()
+	case "p":
+		return m.togglePrompts()
 	case "S":
 		return m.syncNow()
 	case "D":
 		m.view = viewDevices
 		m.devConfirm = ""
 		return m, m.devicesCmd()
+	}
+
+	// The prompt explorer is interactive (selection + drill-down), so it owns its
+	// keys rather than sharing the simple stats/agents handler.
+	if m.view == viewPrompts {
+		return m.handlePromptsKey(s)
 	}
 
 	if m.view == viewStats || m.view == viewAgents {
@@ -687,6 +700,8 @@ func (m *Model) recomputeStats() {
 	days := statPeriods[m.statsPeriod].days
 	m.stats = computeStats(m.statsRows, m.now(), days)
 	m.agents = computeAgents(m.statsRows, m.now(), days)
+	m.prompts = computePrompts(m.statsRows, m.now(), days)
+	m.clampPrompts()
 }
 
 // toggleAgents opens the agent-monitor view (or returns to browse), reusing the
@@ -703,6 +718,119 @@ func (m Model) toggleAgents() (tea.Model, tea.Cmd) {
 	}
 	m.statsSeq++
 	return m, m.statsCmd(m.statsSeq)
+}
+
+// togglePrompts opens the prompt-explorer view (or returns to browse), reusing
+// the stats sample query. Opening always starts at the top of the prompt list,
+// not drilled into a stale prompt.
+func (m Model) togglePrompts() (tea.Model, tea.Cmd) {
+	if m.view == viewPrompts {
+		m.view = viewBrowse
+		return m, nil
+	}
+	m.view = viewPrompts
+	m.promptDrill = false
+	m.promptSel = 0
+	m.drillSel = 0
+	if m.statsRows != nil {
+		m.recomputeStats()
+		return m, nil
+	}
+	m.statsSeq++
+	return m, m.statsCmd(m.statsSeq)
+}
+
+// handlePromptsKey services the prompt-explorer view: selection, drill-in
+// (Enter) and drill-out (Esc), plus the shared period tabs. The global keys
+// (p/s/a/q/S/D/?) are handled before this in handleKey, so they still work here.
+func (m Model) handlePromptsKey(s string) (tea.Model, tea.Cmd) {
+	switch s {
+	case "esc":
+		if m.promptDrill {
+			m.promptDrill = false // drill-out: back to the prompt list
+			return m, nil
+		}
+		m.view = viewBrowse
+		return m, nil
+	case "1", "2", "3", "4", "5":
+		if p := int(s[0] - '1'); p < len(statPeriods) {
+			m.statsPeriod = p
+			m.promptDrill = false // the prompt set changes; leave the drill
+			m.recomputeStats()
+		}
+		return m, nil
+	case "up", "k":
+		if m.promptDrill {
+			m.drillSel = clampIndex(m.drillSel-1, m.drillLen())
+		} else {
+			m.promptSel = clampIndex(m.promptSel-1, m.promptLen())
+		}
+		return m, nil
+	case "down", "j":
+		if m.promptDrill {
+			m.drillSel = clampIndex(m.drillSel+1, m.drillLen())
+		} else {
+			m.promptSel = clampIndex(m.promptSel+1, m.promptLen())
+		}
+		return m, nil
+	case "g", "home":
+		if m.promptDrill {
+			m.drillSel = 0
+		} else {
+			m.promptSel = 0
+		}
+		return m, nil
+	case "G", "end":
+		if m.promptDrill {
+			m.drillSel = clampIndex(m.drillLen()-1, m.drillLen())
+		} else {
+			m.promptSel = clampIndex(m.promptLen()-1, m.promptLen())
+		}
+		return m, nil
+	case "enter":
+		if !m.promptDrill && m.promptLen() > 0 {
+			m.promptDrill = true
+			m.drillSel = 0
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+// promptLen / drillLen are the row counts of the two prompt-explorer lists.
+func (m Model) promptLen() int {
+	if m.prompts == nil {
+		return 0
+	}
+	return len(m.prompts.prompts)
+}
+
+func (m Model) drillLen() int {
+	p, ok := m.drilledPrompt()
+	if !ok {
+		return 0
+	}
+	return len(p.cmds)
+}
+
+// clampPrompts keeps the prompt and drill selections in range after the sample
+// (and thus the prompt set) is recomputed.
+func (m *Model) clampPrompts() {
+	m.promptSel = clampIndex(m.promptSel, m.promptLen())
+	if m.promptDrill {
+		m.drillSel = clampIndex(m.drillSel, m.drillLen())
+	}
+}
+
+// clampIndex bounds i to [0, n-1], returning 0 when the list is empty.
+func clampIndex(i, n int) int {
+	if i >= n {
+		i = n - 1
+	}
+	if i < 0 {
+		i = 0
+	}
+	return i
 }
 
 func (m Model) toggleStats() (tea.Model, tea.Cmd) {

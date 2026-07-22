@@ -87,6 +87,8 @@ func (m Model) helpKeys() help.KeyMap {
 		return devicesKeys{}
 	case viewAgents:
 		return agentsKeys{}
+	case viewPrompts:
+		return promptsKeys{}
 	default:
 		return m.keys
 	}
@@ -119,6 +121,21 @@ func (agentsKeys) ShortHelp() []key.Binding {
 }
 
 func (k agentsKeys) FullHelp() [][]key.Binding { return [][]key.Binding{k.ShortHelp()} }
+
+// promptsKeys is the footer hint set for the prompt-explorer view.
+type promptsKeys struct{}
+
+func (promptsKeys) ShortHelp() []key.Binding {
+	return []key.Binding{
+		key.NewBinding(key.WithKeys("j", "k"), key.WithHelp("j/k", "move")),
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "commands")),
+		key.NewBinding(key.WithKeys("1", "2", "3", "4", "5"), key.WithHelp("1-5", "period")),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+		key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
+	}
+}
+
+func (k promptsKeys) FullHelp() [][]key.Binding { return [][]key.Binding{k.ShortHelp()} }
 
 // devicesKeys is the footer hint set for the devices view (see handleDevicesKey:
 // a/x act, r refetches, j/k move; esc/q/D return to browse, ctrl+c quits — q

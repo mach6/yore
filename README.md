@@ -141,9 +141,11 @@ rm -rf ~/.config/yore         # all of yore's state
 - **`hb` browser** — hosts / table / detail panes, plus full-screen **stats**
   (`s`: KPIs, top programs/commands/dirs, by-executor, per-day + hourly
   histograms, period tabs), an **agent monitor** (`a`: per-agent commands,
-  success rate, failures, avg duration), and **devices** (`D`). A tag column and
-  `t` filter, `S` sync-now; Enter recalls the pick, `y` copies. (yore leaves your
-  own `h` alone.)
+  success rate, failures, avg duration), a **prompt explorer** (`p`: one row per
+  agent prompt with executor, session, command count, status and duration —
+  `Enter` drills into the exact commands that prompt triggered), and **devices**
+  (`D`). A tag column and `t` filter, `S` sync-now; Enter recalls the pick, `y`
+  copies. (yore leaves your own `h` alone.)
 - **`hs` + scoped `hsa`/`hss`/`hsc`/`hsw`** search aliases; `yore search
   --headless` for scripts and pipes.
 - **Agent tagging** — commands an agent runs are tagged so you can tell them
@@ -170,7 +172,8 @@ in [architecture.md](docs/architecture.md)); all state lives under
 | Re-run an event by number | `!N`, `!!`, `!$` — native, against yore's history |
 | Cycle search scope (host / all / session / dir / repo) | `Ctrl-R` again inside the search |
 | Rank by frequency×recency, or fuzzy-match | frecency / fuzzy toggles inside the search |
-| Browse, get stats, watch agents, manage devices | `hb` — `s` stats, `a` agents, `D` devices; `Enter` recalls, `y` copies |
+| Browse, get stats, watch agents, manage devices | `hb` — `s` stats, `a` agents, `p` prompts, `D` devices; `Enter` recalls, `y` copies |
+| See an agent's prompt and drill into its commands | `hb`, then `p`; `Enter` on a prompt |
 | Capture what Claude Code runs | `yore init claude-code` (once) |
 | See only what an agent ran | `yore search --tag claude-code` |
 | Grep history in a script | `hs <query>` \| … or `yore search --headless <query>` |

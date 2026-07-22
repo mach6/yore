@@ -197,7 +197,9 @@ installs Claude Code hooks: **PostToolUse** pipes each Bash command to
 `yore hook claude-prompt`. The prompt hook writes the session's current prompt to
 a per-session state file; the command hook reads it and stamps `prompt_id` +
 `prompt` onto the record, so every command is traced to the prompt that triggered
-it. Both go through the same redaction gate as the shell path (a secret-bearing
+it. The browser's **prompt explorer** (`p`) groups on `prompt_id` — one row per
+prompt, `Enter` drilling into the exact command sequence it produced. Both hooks
+go through the same redaction gate as the shell path (a secret-bearing
 command or prompt is dropped). `yore init claude-code` writes ~/.claude/settings.json
 (or, with --project, ./.claude/settings.json), merging without disturbing other settings.
 

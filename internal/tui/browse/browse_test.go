@@ -799,3 +799,139 @@ func TestAgentsViewRenders(t *testing.T) {
 	m, _ = step(t, m, press("a"))
 	require.Equal(t, viewBrowse, m.view, "second `a` did not return to browse")
 }
+
+func TestPromptsViewRenders(t *testing.T) {
+	// Two commands under one prompt, one under another (with a failure).
+	rows := mkRows("cargo add tower", "cargo build", "cargo test")
+	for i := range rows {
+		rows[i].Tag = "claude-code"
+	}
+	rows[0].PromptID, rows[0].Prompt = "p1", "add rate limiting"
+	rows[1].PromptID, rows[1].Prompt = "p1", "add rate limiting"
+	rows[2].PromptID, rows[2].Prompt = "p2", "fix the N+1 query"
+	rows[2].Exit = rec.IntPtr(1)
+	f := &fakeBackend{
+		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 3}}},
+		resp:  mkResp(rows),
+	}
+	m := ready(t, f, 120, 40)
+
+	m, cmd := step(t, m, press("p"))
+	require.Equal(t, viewPrompts, m.view, "`p` did not switch to the prompts view")
+	require.NotNil(t, cmd, "opening prompts issued no aggregation query")
+	sr, ok := cmd().(statsResultMsg)
+	require.True(t, ok, "prompts command must yield a statsResultMsg (shared sample)")
+	m, _ = step(t, m, sr)
+
+	require.NotNil(t, m.prompts)
+	require.Len(t, m.prompts.prompts, 2, "two distinct prompts")
+	// p1 has two commands.
+	var p1 *promptStat
+	for i := range m.prompts.prompts {
+		if m.prompts.prompts[i].id == "p1" {
+			p1 = &m.prompts.prompts[i]
+		}
+	}
+	require.NotNil(t, p1)
+	require.Equal(t, 2, p1.count, "p1 grouped both of its commands")
+
+	out := strip(m.View())
+	require.Containsf(t, out, "add rate limiting", "prompt text missing:\n%s", out)
+	require.Containsf(t, out, "PROMPT", "prompts table header missing:\n%s", out)
+
+	m, _ = step(t, m, press("p"))
+	require.Equal(t, viewBrowse, m.view, "second `p` did not return to browse")
+}
+
+// openPrompts opens the prompt explorer and delivers the shared stats sample so
+// the aggregation is populated.
+func openPrompts(t *testing.T, m Model) Model {
+	t.Helper()
+	m, cmd := step(t, m, press("p"))
+	require.Equal(t, viewPrompts, m.view, "`p` did not switch to the prompts view")
+	require.NotNil(t, cmd, "opening prompts issued no aggregation query")
+	sr, ok := cmd().(statsResultMsg)
+	require.True(t, ok, "prompts command must yield a statsResultMsg")
+	m, _ = step(t, m, sr)
+	return m
+}
+
+func TestPromptsDrillDown(t *testing.T) {
+	// Two commands under p1, one under p2. p1 is newest, so it sorts first.
+	rows := mkRows("cargo add tower", "cargo build", "cargo test")
+	for i := range rows {
+		rows[i].Tag = "claude-code"
+		rows[i].DurMs = rec.Int64Ptr(1500)
+	}
+	rows[0].PromptID, rows[0].Prompt, rows[0].Session = "p1", "add rate limiting", "sessionAAAA1111"
+	rows[1].PromptID, rows[1].Prompt, rows[1].Session = "p1", "add rate limiting", "sessionAAAA1111"
+	rows[2].PromptID, rows[2].Prompt, rows[2].Session = "p2", "fix the N+1 query", "sessionBBBB2222"
+	f := &fakeBackend{
+		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 3}}},
+		resp:  mkResp(rows),
+	}
+	m := openPrompts(t, ready(t, f, 120, 40))
+
+	// The table carries the Session and Duration columns.
+	out := strip(m.View())
+	require.Containsf(t, out, "SESSION", "session column header missing:\n%s", out)
+	require.Containsf(t, out, "DUR", "duration column header missing:\n%s", out)
+	require.Containsf(t, out, "sessionA", "short session id missing from the row:\n%s", out)
+
+	// Cursor starts on the newest prompt (p1). Drilling shows its commands only.
+	require.Equal(t, 0, m.promptSel)
+	m, _ = step(t, m, press("enter"))
+	require.True(t, m.promptDrill, "enter did not drill into the prompt")
+	drill := strip(m.View())
+	require.Containsf(t, drill, "cargo add tower", "drill omitted a prompt command:\n%s", drill)
+	require.Containsf(t, drill, "cargo build", "drill omitted a prompt command:\n%s", drill)
+	require.NotContainsf(t, drill, "cargo test", "drill leaked another prompt's command:\n%s", drill)
+	require.Containsf(t, drill, "COMMAND", "drill command header missing:\n%s", drill)
+
+	// j moves the drill cursor; esc drills back out to the list, not to browse.
+	m, _ = step(t, m, press("j"))
+	require.Equal(t, 1, m.drillSel)
+	m, _ = step(t, m, press("esc"))
+	require.False(t, m.promptDrill, "esc did not drill out")
+	require.Equal(t, viewPrompts, m.view, "esc from the drill should return to the prompt list")
+
+	// esc from the list returns to browse.
+	m, _ = step(t, m, press("esc"))
+	require.Equal(t, viewBrowse, m.view, "esc from the prompt list did not return to browse")
+}
+
+func TestPromptsNavigationAndPeriod(t *testing.T) {
+	rows := mkRows("a", "b")
+	for i := range rows {
+		rows[i].Tag = "claude-code"
+	}
+	rows[0].PromptID, rows[0].Prompt = "p1", "newer prompt"
+	rows[1].PromptID, rows[1].Prompt = "p2", "older prompt"
+	f := &fakeBackend{
+		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 2}}},
+		resp:  mkResp(rows),
+	}
+	m := openPrompts(t, ready(t, f, 120, 40))
+	require.Len(t, m.prompts.prompts, 2)
+
+	// j/k move the prompt selection and clamp at the ends.
+	require.Equal(t, 0, m.promptSel)
+	m, _ = step(t, m, press("j"))
+	require.Equal(t, 1, m.promptSel)
+	m, _ = step(t, m, press("j"))
+	require.Equal(t, 1, m.promptSel, "selection must clamp at the last prompt")
+	m, _ = step(t, m, press("k"))
+	require.Equal(t, 0, m.promptSel)
+
+	// Selecting a narrow period that excludes everything empties the list without
+	// leaving a dangling selection, and a stale drill is dropped.
+	m.promptSel = 1
+	m.promptDrill = true
+	rows[0].StartMs = now - 10*86_400_000 // both prompts age out of "Today"
+	rows[1].StartMs = now - 10*86_400_000
+	m.statsRows = rows
+	m, _ = step(t, m, press("1")) // Today
+	require.False(t, m.promptDrill, "changing period must drop the drill")
+	require.Empty(t, m.prompts.prompts, "period should exclude the aged prompts")
+	require.Equal(t, 0, m.promptSel, "selection must clamp when the list empties")
+}

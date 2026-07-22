@@ -38,6 +38,9 @@ func (m Model) View() string {
 	case viewAgents:
 		top = m.agentsTitle(w)
 		mid = m.renderAgents(w, m.midHeight)
+	case viewPrompts:
+		top = m.promptsTitle(w)
+		mid = m.renderPrompts(w, m.midHeight)
 	default:
 		top = m.searchLine(w)
 		mid = m.renderPanes(w)
@@ -412,7 +415,7 @@ func (m Model) statusBar(w int) string {
 	// view and the Devices view there is no table row, so surface a summary that
 	// actually fits the view instead of a meaningless "row N/M".
 	switch m.view {
-	case viewStats, viewAgents:
+	case viewStats, viewAgents, viewPrompts:
 		// These aggregate views are self-describing (the panels/table show their
 		// own totals), so the status bar stays minimal — just any flash/error.
 	case viewDevices:
