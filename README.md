@@ -159,11 +159,12 @@ rm -rf ~/.config/yore         # all of yore's state
   For Claude Code — whose Bash tool runs a *non-interactive* shell the rc hooks
   never see — `yore init claude-code` installs its hooks (with exit status,
   duration, and prompt tracing) and registers the MCP server.
-- **MCP server for your agents** — `yore init claude-code` wires up a local,
-  read-only MCP server so a coding agent can query your history back: search,
-  failures, prompts, stats, and `assess_risk` — **across every machine you own**
-  (end-to-end encrypted, nothing leaves your devices). Ask *"have I run this
-  migration anywhere?"* or *"what failed in this project recently?"*.
+- **MCP server for your agents** — `yore init claude-code` (or `yore init
+  cursor`) wires up a local, read-only MCP server so a coding agent can query
+  your history back: search, failures, prompts, stats, and `assess_risk` —
+  **across every machine you own** (end-to-end encrypted, nothing leaves your
+  devices). Ask *"have I run this migration anywhere?"* or *"what failed in this
+  project recently?"*. `yore doctor` verifies the hooks + MCP registration.
 - **Risk checks** — a deterministic classifier rates a command `safe…critical`
   with a reason, exposed to agents via `assess_risk` (history-aware: *"run 3×
   across your machines, 1 failed"*).

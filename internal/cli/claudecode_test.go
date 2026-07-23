@@ -2,7 +2,9 @@ package cli
 
 import (
 	"encoding/json"
+	"io"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -81,6 +83,41 @@ func TestMergeMcpServerAddsAndIsIdempotent(t *testing.T) {
 	assert.False(t, hasType, "stdio entry needs no type")
 	_, hasURL := yore["url"]
 	assert.False(t, hasURL, "stdio entry has no url")
+}
+
+func TestRegisterMcpAtAndDetect(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mcp.json")
+	u := newUI()
+	u.w = io.Discard // keep the test quiet; theme is still wired
+
+	require.False(t, mcpRegistered(path), "absent before registration")
+	require.NoError(t, registerMcpAt(path, "yore", u))
+	require.True(t, mcpRegistered(path), "present after registration")
+
+	// Idempotent: a second call leaves exactly one yore entry and preserves other keys.
+	require.NoError(t, os.WriteFile(path, []byte(`{"mcpServers":{"other":{"command":"x"}}}`), 0o644))
+	require.NoError(t, registerMcpAt(path, "yore", u))
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var cfg map[string]any
+	require.NoError(t, json.Unmarshal(data, &cfg))
+	servers := cfg["mcpServers"].(map[string]any)
+	require.Contains(t, servers, "yore", "yore added")
+	require.Contains(t, servers, "other", "unrelated server preserved")
+
+	// A malformed file is left untouched (non-fatal).
+	require.NoError(t, os.WriteFile(path, []byte(`{not json`), 0o644))
+	require.NoError(t, registerMcpAt(path, "yore", u))
+	require.False(t, mcpRegistered(path), "malformed file left as-is")
+}
+
+func TestHookCmdPresent(t *testing.T) {
+	cfg := map[string]any{}
+	require.True(t, mergeClaudeHook(cfg, "yore"))
+	assert.True(t, hookCmdPresent(cfg, "PostToolUse", "yore hook claude-code"))
+	assert.True(t, hookCmdPresent(cfg, "PostToolUseFailure", "yore hook claude-code-failure"))
+	assert.False(t, hookCmdPresent(cfg, "PostToolUse", "yore hook nope"))
+	assert.False(t, hookCmdPresent(map[string]any{}, "PostToolUse", "yore hook claude-code"))
 }
 
 // feedStdin swaps os.Stdin for a pipe carrying payload, for the duration of fn.

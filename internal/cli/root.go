@@ -290,12 +290,18 @@ func newInitCmd() *cobra.Command {
 			"and registers yore's MCP server so the agent can query history back:\n" +
 			"  yore init claude-code             # ~/.claude/settings.json + ~/.claude.json\n" +
 			"  yore init claude-code --project   # ./.claude/settings.json + ./.mcp.json\n" +
-			"  yore init claude-code --print     # print the JSON, install by hand",
+			"  yore init claude-code --print     # print the JSON, install by hand\n\n" +
+			"cursor registers yore's MCP server so Cursor's agent can query your\n" +
+			"(cross-machine) history:\n" +
+			"  yore init cursor                  # ~/.cursor/mcp.json",
 		Args:      cobra.ExactArgs(1),
-		ValidArgs: []cobra.Completion{"zsh", "bash", "claude-code"},
+		ValidArgs: []cobra.Completion{"zsh", "bash", "claude-code", "cursor"},
 		RunE: func(_ *cobra.Command, args []string) error {
-			if args[0] == "claude-code" {
+			switch args[0] {
+			case "claude-code":
 				return code(runInitClaudeCode(bin, project, prnt))
+			case "cursor":
+				return code(runInitCursor(bin, project))
 			}
 			return code(runInit(args[0], bin, mode, noAliases))
 		},

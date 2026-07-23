@@ -314,13 +314,20 @@ func mcpConfigPath(project bool) (string, error) {
 	return filepath.Join(home, ".claude.json"), nil
 }
 
-// installMcpServer registers yore's MCP server in the right config file,
-// preserving everything else in it. A malformed existing file is left alone.
+// installMcpServer registers yore's MCP server in the Claude Code config file
+// (~/.claude.json, or ./.mcp.json with --project).
 func installMcpServer(bin string, project bool, u *ui) error {
 	path, err := mcpConfigPath(project)
 	if err != nil {
 		return err
 	}
+	return registerMcpAt(path, bin, u)
+}
+
+// registerMcpAt merges yore's MCP server into the mcpServers map of the JSON
+// config at path, preserving everything else. A malformed existing file is left
+// alone. Shared by the Claude Code and Cursor init paths.
+func registerMcpAt(path, bin string, u *ui) error {
 	cfg := map[string]any{}
 	if data, rerr := os.ReadFile(path); rerr == nil {
 		if json.Unmarshal(data, &cfg) != nil {
@@ -348,6 +355,93 @@ func installMcpServer(bin string, project bool, u *ui) error {
 	}
 	u.step("registered MCP server", path)
 	return nil
+}
+
+// mcpRegistered reports whether the JSON config at path has a "yore" entry in
+// its mcpServers map.
+func mcpRegistered(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var cfg map[string]any
+	if json.Unmarshal(data, &cfg) != nil {
+		return false
+	}
+	servers, _ := cfg["mcpServers"].(map[string]any)
+	_, ok := servers["yore"]
+	return ok
+}
+
+// hookCmdPresent reports whether the Claude settings config runs command under
+// hooks[event].
+func hookCmdPresent(cfg map[string]any, event, command string) bool {
+	hooks, _ := cfg["hooks"].(map[string]any)
+	blocks, _ := hooks[event].([]any)
+	for _, blk := range blocks {
+		bm, _ := blk.(map[string]any)
+		inner, _ := bm["hooks"].([]any)
+		for _, h := range inner {
+			if hm, ok := h.(map[string]any); ok && hm["command"] == command {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// claudeCaptureInstalled reports whether ~/.claude/settings.json has yore's
+// PostToolUse capture hook (for the given bin).
+func claudeCaptureInstalled(bin string) bool {
+	path, err := claudeSettingsPath(false)
+	if err != nil {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var cfg map[string]any
+	if json.Unmarshal(data, &cfg) != nil {
+		return false
+	}
+	return hookCmdPresent(cfg, "PostToolUse", cmdPostToolUse(bin))
+}
+
+// cursorMcpPath resolves Cursor's MCP config: the project .cursor/mcp.json with
+// --project, else the user ~/.cursor/mcp.json.
+func cursorMcpPath(project bool) (string, error) {
+	if project {
+		return filepath.Join(".cursor", "mcp.json"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".cursor", "mcp.json"), nil
+}
+
+// runInitCursor registers yore's MCP server with Cursor so its agent can query
+// your (cross-machine) history. Cursor auto-detects interactively via
+// $CURSOR_TRACE_ID, so no capture hook is installed here.
+func runInitCursor(bin string, project bool) int {
+	u := newUI()
+	u.title("yore init cursor")
+	path, err := cursorMcpPath(project)
+	if err != nil {
+		u.fail(err.Error())
+		return 1
+	}
+	if err := registerMcpAt(path, bin, u); err != nil {
+		u.fail(err.Error())
+		return 1
+	}
+	u.step("Cursor can now query your history via MCP", "cross-machine, end-to-end encrypted")
+	u.blank()
+	u.next("ask Cursor, e.g.:",
+		`"what commands failed in this project recently?"`,
+		`"have I run this migration on any machine?"`)
+	return 0
 }
 
 // runInitClaudeCode installs (or, with print, just shows) the Claude Code

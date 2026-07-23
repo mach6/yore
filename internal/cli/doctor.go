@@ -10,6 +10,7 @@ import (
 	"yore/internal/daemon"
 	"yore/internal/redact"
 	"yore/internal/secret"
+	"yore/internal/shell"
 	"yore/internal/syncer"
 )
 
@@ -51,6 +52,22 @@ func runDoctor() int {
 				warn("no history yet — add `eval \"$(yore init zsh)\"` to your rc, or `yore import auto`")
 			}
 		}
+	}
+
+	// Agent integration: capture hooks + MCP registration.
+	u.section("agents")
+	if claudeCaptureInstalled(shell.DefaultBin) {
+		ok("Claude Code capture hooks installed (~/.claude/settings.json)")
+	} else {
+		warn("Claude Code hooks not installed — run `yore init claude-code`")
+	}
+	if p, perr := mcpConfigPath(false); perr == nil && mcpRegistered(p) {
+		ok("MCP server registered for Claude Code (" + p + ")")
+	} else {
+		warn("MCP not registered for Claude Code — run `yore init claude-code`")
+	}
+	if p, perr := cursorMcpPath(false); perr == nil && mcpRegistered(p) {
+		ok("MCP server registered for Cursor (" + p + ")")
 	}
 
 	// Secrets filter.
