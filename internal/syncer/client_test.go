@@ -100,7 +100,7 @@ func TestHTTPClientDeviceLifecycle(t *testing.T) {
 	require.Equal(t, wire.DevicePending, resp.Device.Status)
 	require.False(t, resp.GroupFormed, "an empty group is not yet formed")
 
-	// Duplicate register is a typed 409. It needs its own ticket: the first
+	// Duplicate register is a typed 409. It needs its own token: the first
 	// enrollment consumed the bootstrap allowance only once a device is active,
 	// so reuse of the server token is what is being exercised here.
 	_, err = c.RegisterDevice(ctx, req, testToken)

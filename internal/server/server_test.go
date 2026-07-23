@@ -26,13 +26,13 @@ import (
 // must: every authenticated request is signed with reqsign over the request's
 // RequestURI and the exact body bytes. There is no bearer token — a client
 // without a signing identity can reach only the open endpoints and enrollment,
-// the latter authorized by ticket.
+// the latter authorized by token.
 type testClient struct {
-	t      *testing.T
-	base   string
-	ticket string // "" => send no X-Yore-Ticket header
-	devID  string
-	priv   ed25519.PrivateKey // nil => send no signature headers
+	t     *testing.T
+	base  string
+	token string // "" => send no X-Yore-Token header
+	devID string
+	priv  ed25519.PrivateKey // nil => send no signature headers
 }
 
 // anon returns a copy with no signing identity: an unenrolled caller.
@@ -42,10 +42,10 @@ func (c *testClient) anon() *testClient {
 	return &cp
 }
 
-// withTicket returns a copy presenting a specific enrollment ticket.
-func (c *testClient) withTicket(ticket string) *testClient {
+// withToken returns a copy presenting a specific enrollment token.
+func (c *testClient) withToken(token string) *testClient {
 	cp := *c
-	cp.ticket = ticket
+	cp.token = token
 	return &cp
 }
 
@@ -100,8 +100,8 @@ func (c *testClient) sendConcurrent(method, path string, body any) (status int, 
 	if err != nil {
 		return 0, nil, fmt.Errorf("new request: %w", err)
 	}
-	if c.ticket != "" {
-		req.Header.Set(hdrTicket, c.ticket)
+	if c.token != "" {
+		req.Header.Set(hdrToken, c.token)
 	}
 	if c.priv != nil {
 		hdrs, err := reqsign.Sign(c.devID, func(b []byte) []byte { return ed25519.Sign(c.priv, b) },
@@ -159,8 +159,8 @@ func (c *testClient) newRequest(method, path string, body []byte) *http.Request 
 	}
 	req, err := http.NewRequest(method, c.base+path, r)
 	require.NoError(c.t, err, "new request")
-	if c.ticket != "" {
-		req.Header.Set(hdrTicket, c.ticket)
+	if c.token != "" {
+		req.Header.Set(hdrToken, c.token)
 	}
 	return req
 }
@@ -204,16 +204,16 @@ func setup(t *testing.T) *testClient {
 	// The base client holds only the server's bootstrap token: it can form a
 	// group, but it is not a device and so cannot read anything. Tests obtain a
 	// usable identity with bootstrapActive / registerDevice.
-	return &testClient{t: t, base: srv.URL, ticket: "tok"}
+	return &testClient{t: t, base: srv.URL, token: "tok"}
 }
 
-// mintTicket asks the server for a single-use enrollment ticket, signed by c
+// mintToken asks the server for a single-use enrollment token, signed by c
 // (which must be an active device).
-func mintTicket(t *testing.T, c *testClient) string {
+func mintToken(t *testing.T, c *testClient) string {
 	t.Helper()
-	status, body := c.do("POST", "/v1/tickets", struct{}{})
-	require.Equalf(t, http.StatusOK, status, "mint ticket: body %s", body)
-	return mustJSON[wire.TicketResp](t, body).Ticket
+	status, body := c.do("POST", "/v1/tokens", struct{}{})
+	require.Equalf(t, http.StatusOK, status, "mint token: body %s", body)
+	return mustJSON[wire.TokenResp](t, body).Token
 }
 
 func mustJSON[T any](t *testing.T, data []byte) T {
@@ -239,21 +239,21 @@ func mkRecords(start, n uint64) []wire.PushRecord {
 
 func pubKey() []byte { return make([]byte, 32) }
 
-// registerDevice enrolls a new device into an existing group: it mints a ticket
+// registerDevice enrolls a new device into an existing group: it mints a token
 // with base (an active device) and registers id against it.
 func registerDevice(t *testing.T, base *testClient, id string) *testClient {
 	t.Helper()
-	return registerWithTicket(t, base, id, mintTicket(t, base))
+	return registerWithToken(t, base, id, mintToken(t, base))
 }
 
-// registerWithTicket generates a fresh Ed25519 keypair, self-signs a
-// registration for id authorized by ticket, and returns a client that signs
+// registerWithToken generates a fresh Ed25519 keypair, self-signs a
+// registration for id authorized by token, and returns a client that signs
 // later requests as that device.
-func registerWithTicket(t *testing.T, base *testClient, id, ticket string) *testClient {
+func registerWithToken(t *testing.T, base *testClient, id, token string) *testClient {
 	t.Helper()
 	pub, priv, err := ed25519.GenerateKey(nil)
 	require.NoError(t, err, "genkey")
-	dc := base.withKey(id, priv).withTicket(ticket)
+	dc := base.withKey(id, priv).withToken(token)
 	status, body := dc.do("POST", "/v1/devices", wire.RegisterReq{ID: id, Name: id, PubKey: pubKey(), SignKey: pub})
 	require.Equalf(t, http.StatusOK, status, "register %s: body %s", id, body)
 	return dc
@@ -274,7 +274,7 @@ func bootstrapActive(t *testing.T, base *testClient, id string) *testClient {
 	t.Helper()
 	// The very first device enrolls on the server's own token, which is accepted
 	// only while no device is active.
-	dc := registerWithTicket(t, base, id, base.ticket)
+	dc := registerWithToken(t, base, id, base.token)
 	activateDevice(t, dc, id) // bootstrap: the pending device self-activates
 	return dc
 }
@@ -296,9 +296,9 @@ func TestAuth(t *testing.T) {
 	status, _ := noAuth.do("GET", "/v1/health", nil)
 	require.Equal(t, http.StatusOK, status, "health no-auth")
 
-	// An unenrolled caller: no signing identity, and a ticket the server never
+	// An unenrolled caller: no signing identity, and a token the server never
 	// minted. Nothing beyond /v1/health is reachable.
-	wrong := &testClient{t: t, base: c.base, ticket: "nope"}
+	wrong := &testClient{t: t, base: c.base, token: "nope"}
 	routes := []struct{ method, path string }{
 		{"GET", "/v1/hosts"},
 		{"POST", "/v1/records"},

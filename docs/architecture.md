@@ -130,7 +130,7 @@ local bbolt store and the authority for all search.
 | `hosts` | per-host live-record counts (browse sidebar); warms the remote cache |
 | `delete` | tombstone one record by id (syncs as a tombstone) |
 | `devices` | list enrolled devices (proxied to the syncer) |
-| `ticket` | mint a single-use enrollment ticket (proxied to the syncer) |
+| `token` | mint a single-use enrollment token (proxied to the syncer) |
 | `approve` / `revoke` | approve a pending device / revoke+rotate keys |
 | `sync` | force a **synchronous** push/pull cycle (backs `yore sync`) |
 | `status` | daemon status (pid, uptime, local rows, remote state, version) |
@@ -291,9 +291,9 @@ device X25519 + Ed25519 keypairs   per machine; private halves never leave it
   Decryption failure is fatal to a pull (never silently skipped).
 - **No shared secret at all.** A device authenticates with its Ed25519 key on
   every request, reads included; there is no bearer token to capture. The
-  server's configured token is only an *enrollment ticket for an empty group* —
+  server's configured token is only an *enrollment token for an empty group* —
   once any device is active it enrolls nothing, and every later machine needs a
-  single-use ticket minted by one already enrolled.
+  single-use token minted by one already enrolled.
 - **Recovery.** Per-device keys mean losing every device would otherwise lose
   the archive for good, so bootstrap also seals HK to a key derived (Argon2id)
   from a one-time recovery phrase shown once and never stored. The server holds
@@ -343,7 +343,7 @@ handler operates on.
 
 - **Device → tenant.** The auth middleware finds the tenant holding the signing
   device's record (ids are globally-unique ULIDs, so at most one matches) and
-  caches the mapping. Enrollment routes by ticket, recovery by the tenant that
+  caches the mapping. Enrollment routes by token, recovery by the tenant that
   has recovery material. Bootstrap tokens are still compared constant-time against
   every configured token (no early break — a match leaks nothing about which or
   how many tenants exist) and binds that tenant's db into the request context. No
@@ -413,7 +413,7 @@ default"; accessors apply defaults so callers never branch.
 | Key | Default | Meaning |
 |---|---|---|
 | `server_url` | — | sync server base URL; empty = local-only |
-| `token_file` | — | path to a file holding an enrollment ticket, for setups that manage it externally |
+| `token_file` | — | path to a file holding an enrollment token, for setups that manage it externally |
 | `server_pin` | — | pinned server TLS SPKI (base64 SHA-256); set by `setup --pin` |
 | `integration` | `takeover` | `takeover` \| `coexist` \| `capture` |
 | `key_epoch` | `24h` | DEK epoch width |

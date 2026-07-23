@@ -56,9 +56,9 @@ func enrollPair(t *testing.T, url string) (a *Syncer, aStore *store.Store, b *Sy
 	b, bStore = newDevice(t, url)
 
 	requireBootstrap(t, a, "machine-A")
-	ticket, err := a.MintTicket(ctx)
-	require.NoError(t, err, "A.MintTicket")
-	_, _, err = b.Enroll(ctx, "machine-B", ticket.Ticket)
+	token, err := a.MintToken(ctx)
+	require.NoError(t, err, "A.MintToken")
+	_, _, err = b.Enroll(ctx, "machine-B", token.Token)
 	require.NoError(t, err, "B.Enroll")
 	pending, err := a.PendingDevices(ctx)
 	require.NoError(t, err, "A.PendingDevices")
@@ -336,9 +336,9 @@ func TestRevokeRotation(t *testing.T) {
 
 	// Enroll a fresh device C AFTER the rotation. It receives HK2.
 	c, _ := newDevice(t, url)
-	ticketC, err := a.MintTicket(ctx)
-	require.NoError(t, err, "A.MintTicket for C")
-	_, _, err = c.Enroll(ctx, "machine-C", ticketC.Ticket)
+	tokenC, err := a.MintToken(ctx)
+	require.NoError(t, err, "A.MintToken for C")
+	_, _, err = c.Enroll(ctx, "machine-C", tokenC.Token)
 	require.NoError(t, err, "C.Enroll")
 	require.NoError(t, a.Approve(ctx, c.DeviceID()), "A.Approve(C)")
 	hkC, verC, err := c.resolveHK(ctx)
@@ -392,11 +392,11 @@ func TestRecoverAfterLosingEveryDevice(t *testing.T) {
 	hk, hkVer, err := RecoverHK(ctx, rc, phrase)
 	require.NoError(t, err, "RecoverHK")
 
-	// The recovery key authorizes B's enrollment ticket, then B admits itself
+	// The recovery key authorizes B's enrollment token, then B admits itself
 	// with the recovered History Key.
-	tkt, err := rc.RecoveryTicket(ctx)
-	require.NoError(t, err, "RecoveryTicket")
-	_, _, err = b.Enroll(ctx, "machine-B", tkt.Ticket)
+	tkt, err := rc.RecoveryToken(ctx)
+	require.NoError(t, err, "RecoveryToken")
+	_, _, err = b.Enroll(ctx, "machine-B", tkt.Token)
 	require.NoError(t, err, "B.Enroll")
 	bPub := b.dev.Public()
 	blob, err := cryptobox.WrapHK(hk, bPub)

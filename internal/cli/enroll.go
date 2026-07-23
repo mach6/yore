@@ -21,27 +21,27 @@ import (
 	"yore/internal/wire"
 )
 
-// resolveServer returns the server URL and the single-use enrollment ticket for
-// this setup, from flags, then config (URL only), then $YORE_TICKET, prompting
+// resolveServer returns the server URL and the single-use enrollment token for
+// this setup, from flags, then config (URL only), then $YORE_TOKEN, prompting
 // on the tty for anything still missing.
 //
-// The ticket is NOT persisted anywhere: it authorizes exactly one enrollment
+// The token is NOT persisted anywhere: it authorizes exactly one enrollment
 // and is spent by it. Whatever credential a machine needs afterwards is its own
 // device key.
-func resolveServer(dir, serverFlag, ticketFlag string) (url, ticket string, err error) {
+func resolveServer(dir, serverFlag, tokenFlag string) (url, token string, err error) {
 	url, err = resolveServerURL(dir, serverFlag)
 	if err != nil {
 		return "", "", err
 	}
 
-	ticket = strings.TrimSpace(firstNonEmpty(ticketFlag, os.Getenv("YORE_TICKET")))
-	if ticket == "" {
-		ticket = strings.TrimSpace(prompt("Enrollment ticket (server token for the first machine): "))
+	token = strings.TrimSpace(firstNonEmpty(tokenFlag, os.Getenv("YORE_TOKEN")))
+	if token == "" {
+		token = strings.TrimSpace(prompt("Enrollment token (server token for the first machine): "))
 	}
-	if ticket == "" {
-		return "", "", errors.New("no enrollment ticket given")
+	if token == "" {
+		return "", "", errors.New("no enrollment token given")
 	}
-	return url, ticket, nil
+	return url, token, nil
 }
 
 // resolveServerURL returns the server URL from the flag, then config, then a
@@ -84,20 +84,20 @@ func syncerFor(dir, url, pin string) (*syncer.Syncer, error) {
 	return syncer.New(st, syncer.NewHTTPClient(url, pin), key, cfg.KeyEpochD()), nil
 }
 
-// runSetup enrolls this machine using a single-use enrollment ticket.
+// runSetup enrolls this machine using a single-use enrollment token.
 //
 // Nothing is persisted until the server has accepted the enrollment, so a wrong
-// ticket or an unreachable server leaves no config behind. The first machine to
+// token or an unreachable server leaves no config behind. The first machine to
 // enroll forms the group and is handed a recovery phrase; every later machine
 // registers as pending and needs approval from one already enrolled.
-func runSetup(server, ticket, name, integration string, pin, clearPin bool) int {
+func runSetup(server, token, name, integration string, pin, clearPin bool) int {
 	dir := stateDir()
 	u := newUI()
 	if pin && clearPin {
 		u.fail("--pin and --clear-pin are mutually exclusive")
 		return 1
 	}
-	url, tkt, err := resolveServer(dir, server, ticket)
+	url, tkt, err := resolveServer(dir, server, token)
 	if err != nil {
 		u.fail(err.Error())
 		return 1
@@ -105,7 +105,7 @@ func runSetup(server, ticket, name, integration string, pin, clearPin bool) int 
 	u.title("yore setup")
 
 	// Assemble the config in memory; it is written only after enrollment
-	// succeeds. The ticket is never written anywhere — it is spent by this run.
+	// succeeds. The token is never written anywhere — it is spent by this run.
 	cfg, _ := config.Load(dir)
 	cfg.ServerURL = url
 
@@ -163,7 +163,7 @@ func runSetup(server, ticket, name, integration string, pin, clearPin bool) int 
 	seedRedact(dir)
 
 	// Build the syncer from the in-memory values, so config.toml is written only
-	// after the server has actually accepted this machine. A rejected ticket or
+	// after the server has actually accepted this machine. A rejected token or
 	// an unreachable server must leave no configuration behind to wedge the next
 	// run.
 	sy, err := syncerFor(dir, url, cfg.ServerPin)
@@ -192,11 +192,11 @@ func runSetup(server, ticket, name, integration string, pin, clearPin bool) int 
 	if err != nil {
 		u.fail("enrollment refused by the server")
 		if isUnauthorized(err) {
-			u.note("Tickets are single-use and expire after 30 minutes.")
+			u.note("Tokens are single-use and expire after 30 minutes.")
 			u.note("The server's own token enrolls only while the group has no active device.")
 			fmt.Fprintln(os.Stderr)
-			u.next("mint a fresh ticket on a machine that is already enrolled:",
-				"yore devices ticket")
+			u.next("mint a fresh token on a machine that is already enrolled:",
+				"yore devices token")
 		} else {
 			u.note(err.Error())
 		}
@@ -248,8 +248,8 @@ func runSetup(server, ticket, name, integration string, pin, clearPin bool) int 
 		"It is the ONLY way back if you lose every enrolled",
 		"machine. Shown once, and never stored.")
 	u.next("add another machine:",
-		"yore devices ticket        (here)",
-		"yore setup --ticket <t>    (there)")
+		"yore devices token        (here)",
+		"yore setup --token <t>    (there)")
 	return 0
 }
 
@@ -397,8 +397,8 @@ func truncate(s string, n int) string {
 	return s[:n-1] + "…"
 }
 
-// runDevicesTicket mints a single-use enrollment ticket for adding a machine.
-func runDevicesTicket() int {
+// runDevicesToken mints a single-use enrollment token for adding a machine.
+func runDevicesToken() int {
 	u := newUI()
 	c, err := devicesClient()
 	if err != nil {
@@ -407,23 +407,23 @@ func runDevicesTicket() int {
 	}
 	defer func() { _ = c.Close() }()
 
-	t, err := c.Ticket()
+	t, err := c.Token()
 	if err != nil {
 		u.fail(err.Error())
 		return 1
 	}
 
-	// The ticket itself goes to STDOUT and nothing else does, so
-	// `TICKET=$(yore devices ticket)` captures exactly the ticket. Everything
+	// The token itself goes to STDOUT and nothing else does, so
+	// `TOKEN=$(yore devices token)` captures exactly the token. Everything
 	// below is decoration on stderr.
-	fmt.Println(t.Ticket)
+	fmt.Println(t.Token)
 
-	u.panel("Single-use enrollment ticket", t.Ticket,
+	u.panel("Single-use enrollment token", t.Token,
 		"",
 		"Valid until "+time.UnixMilli(t.ExpiresMs).Format("15:04 MST on Mon 2 Jan")+".",
 		"It admits exactly one machine, then it is spent.")
 	u.next("on the new machine:",
-		"yore setup --ticket "+t.Ticket)
+		"yore setup --token "+t.Token)
 	return 0
 }
 
@@ -477,10 +477,10 @@ func runRecover(server string) int {
 
 	// The machines we lost are still ACTIVE on the server, so no surviving
 	// device can vouch for this one and the bootstrap allowance does not apply.
-	// The recovery key authorizes its own enrollment ticket instead.
-	tktResp, err := rc.RecoveryTicket(ctx)
+	// The recovery key authorizes its own enrollment token instead.
+	tktResp, err := rc.RecoveryToken(ctx)
 	if err != nil {
-		u.fail("mint enrollment ticket: " + err.Error())
+		u.fail("mint enrollment token: " + err.Error())
 		return 1
 	}
 
@@ -494,7 +494,7 @@ func runRecover(server string) int {
 		return 1
 	}
 	name, _ := os.Hostname()
-	if _, _, err := sy.Enroll(ctx, name, tktResp.Ticket); err != nil {
+	if _, _, err := sy.Enroll(ctx, name, tktResp.Token); err != nil {
 		u.fail("enroll: " + err.Error())
 		return 1
 	}

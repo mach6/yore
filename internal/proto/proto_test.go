@@ -41,7 +41,7 @@ func TestResponseRoundTrip(t *testing.T) {
 			Scope:  ScopeLocal,
 			Remote: RemoteInfo{State: RemoteOK, Hosts: 2},
 		},
-		Ticket: &TicketInfo{Ticket: "tkt", ExpiresMs: 123},
+		Token: &TokenInfo{Token: "tkt", ExpiresMs: 123},
 	}
 	var got Response
 	roundtrip(t, resp, &got)

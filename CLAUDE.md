@@ -54,7 +54,7 @@ Drone (`.drone.yml`): `yamllint` → `golangci-lint` → `go test` (gotestfmt, c
 ## Workspace Rules
 
 - **No transient files in the working tree.** Debug scripts, scratch output, throwaway test data → `.agents/` (gitignored). Never litter the repo.
-- **No planning references in code or comments.** No roadmap/phase numbers, ticket IDs, group names, or session notes in source — a comment explains the code to a contributor who has never seen the plan. Planning docs live under `docs/`.
+- **No planning references in code or comments.** No roadmap/phase numbers, token IDs, group names, or session notes in source — a comment explains the code to a contributor who has never seen the plan. Planning docs live under `docs/`.
 - **Docs are maintained.** Update `README.md` and `docs/` (`architecture.md`, `protocol.md`) when you change a capability; explain design and rationale, not what the code makes obvious.
 
 ## Shortcuts & Personas

@@ -140,7 +140,7 @@ func TestLoadWithUserPatterns(t *testing.T) {
 
 	f, errs := Load(dir, []string{`INTERNAL-[0-9]{6}`}, []string{"/home/x/secrets"})
 	require.Empty(t, errs)
-	require.True(t, f.Sensitive(`deploy --ticket INTERNAL-004217`), "user pattern must apply")
+	require.True(t, f.Sensitive(`deploy --token INTERNAL-004217`), "user pattern must apply")
 	require.True(t, f.Sensitive(`export DB_PASSWORD=hunter2`), "seeded built-in must still apply")
 	require.True(t, f.SkipDir("/home/x/secrets/sub"), "ignore dir must apply")
 }

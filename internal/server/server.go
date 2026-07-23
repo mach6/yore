@@ -40,7 +40,7 @@ var (
 	bucketHKWraps  = []byte("hk_wraps")  // deviceID -> wire.HKWrap JSON
 	bucketDEKWraps = []byte("dek_wraps") // keyID -> wire.DEKWrap JSON
 	bucketMeta     = []byte("meta")      // k/v (hk_version)
-	bucketTickets  = []byte("tickets")   // sha256(ticket) -> ticket JSON
+	bucketTokens   = []byte("tokens")    // sha256(token) -> token JSON
 	bucketRecovery = []byte("recovery")  // fixed key -> wire.RecoveryInit JSON
 )
 
@@ -88,55 +88,55 @@ type tenant struct {
 
 // tokenTenant binds a tenant's configured bootstrap token to that tenant. The
 // token is no longer an API credential: it only authorizes forming a group that
-// has no active device yet (see tenantForTicket).
+// has no active device yet (see tenantForToken).
 type tokenTenant struct {
 	token  []byte
 	tenant *tenant
 }
 
-// hdrTicket carries a single-use enrollment ticket on a registration request.
-const hdrTicket = "X-Yore-Ticket"
+// hdrToken carries a single-use enrollment token on a registration request.
+const hdrToken = "X-Yore-Token"
 
-// ticketTTL bounds how long a minted enrollment ticket stays usable.
-const ticketTTL = 30 * time.Minute
+// tokenTTL bounds how long a minted enrollment token stays usable.
+const tokenTTL = 30 * time.Minute
 
-// storedTicket is one minted enrollment ticket. Only the hash of the ticket is
-// a key in the bucket, so the server never holds a usable ticket at rest.
-type storedTicket struct {
+// storedToken is one minted enrollment token. Only the hash of the token is
+// a key in the bucket, so the server never holds a usable token at rest.
+type storedToken struct {
 	CreatedMs int64 `json:"created_ms"`
 	ExpiresMs int64 `json:"expires_ms"`
 	Redeemed  bool  `json:"redeemed"`
 }
 
-// hashTicket maps a ticket to its storage key.
-func hashTicket(ticket string) []byte {
-	sum := sha256.Sum256([]byte("yore/ticket/v1|" + ticket))
+// hashToken maps a token to its storage key.
+func hashToken(token string) []byte {
+	sum := sha256.Sum256([]byte("yore/token/v1|" + token))
 	return sum[:]
 }
 
-// ticketValid reports whether sum names a ticket that is stored, unredeemed,
+// tokenValid reports whether sum names a token that is stored, unredeemed,
 // and unexpired.
-func ticketValid(tx *bbolt.Tx, sum []byte, now time.Time) bool {
-	raw := tx.Bucket(bucketTickets).Get(sum)
+func tokenValid(tx *bbolt.Tx, sum []byte, now time.Time) bool {
+	raw := tx.Bucket(bucketTokens).Get(sum)
 	if raw == nil {
 		return false
 	}
-	var st storedTicket
+	var st storedToken
 	if json.Unmarshal(raw, &st) != nil {
 		return false
 	}
 	return !st.Redeemed && now.UnixMilli() < st.ExpiresMs
 }
 
-// redeemTicket marks a ticket used. Redemption is single-use and happens in the
+// redeemToken marks a token used. Redemption is single-use and happens in the
 // same transaction as the device registration it authorizes, so two devices can
-// never enroll on one ticket.
-func redeemTicket(tx *bbolt.Tx, sum []byte, now time.Time) error {
-	raw := tx.Bucket(bucketTickets).Get(sum)
+// never enroll on one token.
+func redeemToken(tx *bbolt.Tx, sum []byte, now time.Time) error {
+	raw := tx.Bucket(bucketTokens).Get(sum)
 	if raw == nil {
 		return fail(http.StatusUnauthorized, "unauthorized")
 	}
-	var st storedTicket
+	var st storedToken
 	if err := json.Unmarshal(raw, &st); err != nil {
 		return err
 	}
@@ -148,7 +148,7 @@ func redeemTicket(tx *bbolt.Tx, sum []byte, now time.Time) error {
 	if err != nil {
 		return err
 	}
-	return tx.Bucket(bucketTickets).Put(sum, val)
+	return tx.Bucket(bucketTokens).Put(sum, val)
 }
 
 // Server is an open sync server. Each tenant has its own bbolt file; the bearer
@@ -356,7 +356,7 @@ func openTenantDB(path string) (*bbolt.DB, error) {
 		return nil, err
 	}
 	if err := db.Update(func(tx *bbolt.Tx) error {
-		for _, name := range [][]byte{bucketDevices, bucketHKWraps, bucketDEKWraps, bucketMeta, bucketTickets, bucketRecovery} {
+		for _, name := range [][]byte{bucketDevices, bucketHKWraps, bucketDEKWraps, bucketMeta, bucketTokens, bucketRecovery} {
 			if _, err := tx.CreateBucketIfNotExists(name); err != nil {
 				return err
 			}
@@ -455,7 +455,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/devices/{id}/revoke", s.handleRevoke)
 	mux.HandleFunc("POST /v1/keys/dek", s.handlePostDEK)
 	mux.HandleFunc("POST /v1/keys/rotate", s.handleRotate)
-	mux.HandleFunc("POST /v1/tickets", s.handleMintTicket)
+	mux.HandleFunc("POST /v1/tokens", s.handleMintToken)
 
 	// Recovery runs when no device survives to authenticate. The salt is public
 	// (it is an Argon2id input, not a secret) and must be readable before the
@@ -463,7 +463,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/recovery/salt", s.handleRecoverySalt)
 	mux.HandleFunc("GET /v1/recovery", s.handleGetRecovery)
 	mux.HandleFunc("POST /v1/recovery", s.handleInitRecovery)
-	mux.HandleFunc("POST /v1/recovery/ticket", s.handleRecoveryTicket)
+	mux.HandleFunc("POST /v1/recovery/token", s.handleRecoveryToken)
 	mux.HandleFunc("POST /v1/recovery/activate/{id}", s.handleRecoveryActivate)
 	return s.logging(s.limitBody(s.auth(mux)))
 }
@@ -558,7 +558,7 @@ func (s *Server) limitBody(next http.Handler) http.Handler {
 // device record carry their own routing instead:
 //
 //   - /v1/health is open.
-//   - enrollment (POST /v1/devices) routes by its X-Yore-Ticket header.
+//   - enrollment (POST /v1/devices) routes by its X-Yore-Token header.
 //   - recovery routes by the recovery public key that signed it.
 //
 // Signature verification happens downstream, per handler; this only decides
@@ -574,7 +574,7 @@ func (s *Server) auth(next http.Handler) http.Handler {
 		var matched *tenant
 		switch {
 		case isEnrollPath(r):
-			matched = s.tenantForTicket(r.Header.Get(hdrTicket))
+			matched = s.tenantForToken(r.Header.Get(hdrToken))
 		case isRecoveryPath(r):
 			matched = s.tenantWithRecovery()
 		default:
@@ -591,14 +591,14 @@ func (s *Server) auth(next http.Handler) http.Handler {
 }
 
 // isEnrollPath reports whether r is a device registration, which routes by
-// enrollment ticket rather than by an existing device record.
+// enrollment token rather than by an existing device record.
 func isEnrollPath(r *http.Request) bool {
 	return r.Method == http.MethodPost && r.URL.Path == "/v1/devices"
 }
 
 // isRecoveryPath reports whether r must route by the recovery material rather
 // than by a device record — the case when no device of this group survives to
-// authenticate: the recovery reads, and minting the ticket that lets a
+// authenticate: the recovery reads, and minting the token that lets a
 // replacement machine enroll.
 //
 // Publishing the material (POST /v1/recovery) is deliberately excluded: it
@@ -606,7 +606,7 @@ func isEnrollPath(r *http.Request) bool {
 // registering device is present to route by instead.
 func isRecoveryPath(r *http.Request) bool {
 	if r.Method == http.MethodPost {
-		return r.URL.Path == "/v1/recovery/ticket" ||
+		return r.URL.Path == "/v1/recovery/token" ||
 			strings.HasPrefix(r.URL.Path, "/v1/recovery/activate/")
 	}
 	return r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/recovery")
@@ -641,20 +641,20 @@ func (s *Server) tenantForDevice(deviceID string) *tenant {
 	return nil
 }
 
-// tenantForTicket finds the tenant that minted an unredeemed enrollment ticket,
+// tenantForToken finds the tenant that minted an unredeemed enrollment token,
 // or — while a tenant has no active device at all — the one whose configured
 // bootstrap token this is. The bootstrap allowance is what lets a brand-new (or
 // wiped) group form; once any device is active it stops applying, so every
-// later enrollment needs a ticket minted by an enrolled device.
-func (s *Server) tenantForTicket(ticket string) *tenant {
-	if ticket == "" {
+// later enrollment needs a token minted by an enrolled device.
+func (s *Server) tenantForToken(token string) *tenant {
+	if token == "" {
 		return nil
 	}
-	sum := hashTicket(ticket)
+	sum := hashToken(token)
 	for _, cand := range s.tenants {
 		valid := false
 		_ = cand.db.View(func(tx *bbolt.Tx) error {
-			valid = ticketValid(tx, sum, time.Now())
+			valid = tokenValid(tx, sum, time.Now())
 			return nil
 		})
 		if valid {
@@ -664,7 +664,7 @@ func (s *Server) tenantForTicket(ticket string) *tenant {
 	// Bootstrap: the configured token enrolls only into a tenant with no active
 	// device. Compared constant-time against every tenant without an early
 	// break, so a match leaks nothing about which tenants exist.
-	got := []byte(ticket)
+	got := []byte(token)
 	var matched *tenant
 	for i := range s.byToken {
 		if subtle.ConstantTimeCompare(got, s.byToken[i].token) == 1 {

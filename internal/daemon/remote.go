@@ -64,19 +64,19 @@ func (s *server) deviceOp(id string, approve bool) error {
 	return sy.Revoke(ctx, id)
 }
 
-// mintTicket issues a single-use enrollment ticket for adding another machine.
-func (s *server) mintTicket() (proto.TicketInfo, error) {
+// mintToken issues a single-use enrollment token for adding another machine.
+func (s *server) mintToken() (proto.TokenInfo, error) {
 	sy := s.remote.syncer()
 	if sy == nil {
-		return proto.TicketInfo{}, errSyncOff
+		return proto.TokenInfo{}, errSyncOff
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	t, err := sy.MintTicket(ctx)
+	t, err := sy.MintToken(ctx)
 	if err != nil {
-		return proto.TicketInfo{}, err
+		return proto.TokenInfo{}, err
 	}
-	return proto.TicketInfo{Ticket: t.Ticket, ExpiresMs: t.ExpiresMs}, nil
+	return proto.TokenInfo{Token: t.Token, ExpiresMs: t.ExpiresMs}, nil
 }
 
 // remoteCache holds other hosts' history, decrypted, in RAM ONLY — it is never
@@ -106,7 +106,7 @@ type remoteCache struct {
 // config change (re-attach) from an unrelated edit (leave the warm cache alone).
 //
 // There is no credential here: the device key IS the credential, so a machine
-// that holds one and knows the server URL can sync. Enrollment tickets are used
+// that holds one and knows the server URL can sync. Enrollment tokens are used
 // once by `yore setup` and never persisted.
 type syncConf struct {
 	url   string

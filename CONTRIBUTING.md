@@ -75,7 +75,7 @@ These are enforced by review (see `CLAUDE.md`):
 - **No transient files in the working tree.** Debug scripts, scratch output, and
   throwaway data go in `.agents/` (gitignored). Never litter the repo.
 - **No planning references in code or comments** — no roadmap/phase numbers,
-  ticket IDs, or session notes. A comment explains the code to someone who has
+  token IDs, or session notes. A comment explains the code to someone who has
   never seen the plan; planning lives under `docs/`.
 - **Never commit secrets or real history.** Device keys, tokens, and history live
   under `~/.config/yore/`, never in the repo or tests. `*.db` and `.env` are

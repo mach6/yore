@@ -24,8 +24,8 @@ type Device struct {
 	CreatedMs int64  `json:"created_ms"`
 }
 
-// RegisterReq enrolls a new pending device. The enrollment ticket authorizing
-// it travels in the X-Yore-Ticket header, not the body, so it is never stored
+// RegisterReq enrolls a new pending device. The enrollment token authorizing
+// it travels in the X-Yore-Token header, not the body, so it is never stored
 // alongside the device record.
 type RegisterReq struct {
 	ID      string `json:"id"`
@@ -43,10 +43,10 @@ type RegisterResp struct {
 	GroupFormed bool   `json:"group_formed"`
 }
 
-// TicketResp is a freshly minted enrollment ticket. The plaintext is returned
+// TokenResp is a freshly minted enrollment token. The plaintext is returned
 // exactly once, at mint time: the server keeps only its hash.
-type TicketResp struct {
-	Ticket    string `json:"ticket"`
+type TokenResp struct {
+	Token     string `json:"token"`
 	ExpiresMs int64  `json:"expires_ms"`
 }
 

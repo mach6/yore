@@ -16,7 +16,7 @@ Nothing is published to your host, and `down -v` removes every trace.
 The client config (server URL, integration mode) is pre-seeded into each
 container from the compose environment by `client-entrypoint.sh`, so `yore setup`
 runs without prompts. No credential is seeded — config.json holds no secrets.
-Enrolment is authorized by a **single-use ticket**, taken from `$YORE_TICKET`.
+Enrolment is authorized by a **single-use token**, taken from `$YORE_TOKEN`.
 
 ## Bring it up
 
@@ -30,7 +30,7 @@ docker compose up -d --build
 already has an active device refuses the bootstrap token by design — that is
 what makes it a *first* credential rather than a standing one. Sandbox clients
 are ephemeral, so their device keys die with the containers and nothing is left
-to mint a ticket: a reused volume leaves an orphaned group and every `yore setup`
+to mint a token: a reused volume leaves an orphaned group and every `yore setup`
 fails with `401 unauthorized`.
 
 A convenience wrapper for running yore in a container (used below):
@@ -45,14 +45,14 @@ dc() { docker compose -f docker/sandbox/compose.yml exec -T "$@"; }
 # 1) zsh-box becomes the first device and bootstraps the history group (the HK).
 #    The server's own token is accepted ONLY here, while the group is empty.
 #    This also prints a RECOVERY PHRASE — the way back if every device is lost.
-dc zsh yore setup --server http://server:8080 --ticket sandbox-token \
+dc zsh yore setup --server http://server:8080 --token sandbox-token \
       --integration takeover --name zsh-box
 
-# 2) Adding a machine needs a single-use ticket minted by an enrolled one.
-TICKET=$(dc zsh yore devices ticket)   # the ticket is the only thing on stdout
+# 2) Adding a machine needs a single-use token minted by an enrolled one.
+TOKEN=$(dc zsh yore devices token)   # the token is the only thing on stdout
 
 # 3) bash-box redeems it, registers as pending, and prints a verification code.
-dc bash yore setup --server http://server:8080 --ticket "$TICKET" \
+dc bash yore setup --server http://server:8080 --token "$TOKEN" \
       --integration takeover --name bash-box
 
 # 4) From the already-enrolled zsh-box, confirm the code matches and approve.

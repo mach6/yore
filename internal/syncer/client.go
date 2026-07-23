@@ -62,7 +62,7 @@ func (e *APIError) Error() string {
 // signed with the device's Ed25519 key (set once via SetSigner), so the only
 // credential is a private key that never leaves the machine. Enrollment, which
 // happens before a device record exists, is authorized instead by a single-use
-// ticket passed to RegisterDevice.
+// token passed to RegisterDevice.
 type HTTPClient struct {
 	baseURL  string
 	hc       *http.Client
@@ -249,27 +249,27 @@ func (c *HTTPClient) PullRecords(ctx context.Context, hostID string, after uint6
 }
 
 // RegisterDevice enrolls a new pending device, authorized by a single-use
-// enrollment ticket. The ticket rides in a header rather than the body so it is
+// enrollment token. The token rides in a header rather than the body so it is
 // never marshalled into anything the server persists.
-func (c *HTTPClient) RegisterDevice(ctx context.Context, req wire.RegisterReq, ticket string) (wire.RegisterResp, error) {
+func (c *HTTPClient) RegisterDevice(ctx context.Context, req wire.RegisterReq, token string) (wire.RegisterResp, error) {
 	var resp wire.RegisterResp
 	err := c.do(ctx, http.MethodPost, "/v1/devices", nil, req, &resp,
-		map[string]string{HdrTicket: ticket})
+		map[string]string{HdrToken: token})
 	return resp, err
 }
 
-// HdrTicket carries the single-use enrollment ticket (mirrors the server).
-const HdrTicket = "X-Yore-Ticket"
+// HdrToken carries the single-use enrollment token (mirrors the server).
+const HdrToken = "X-Yore-Token"
 
 // RecoveryDeviceID is the reserved signer id recovery requests use: the caller
 // has no enrolled device, and proves itself with the recovery key instead.
 const RecoveryDeviceID = "recovery"
 
-// MintTicket asks the server for a fresh single-use enrollment ticket. Only an
+// MintToken asks the server for a fresh single-use enrollment token. Only an
 // enrolled device can call it, which is what makes enrollment a closed loop.
-func (c *HTTPClient) MintTicket(ctx context.Context) (wire.TicketResp, error) {
-	var resp wire.TicketResp
-	err := c.do(ctx, http.MethodPost, "/v1/tickets", nil, struct{}{}, &resp, nil)
+func (c *HTTPClient) MintToken(ctx context.Context) (wire.TokenResp, error) {
+	var resp wire.TokenResp
+	err := c.do(ctx, http.MethodPost, "/v1/tokens", nil, struct{}{}, &resp, nil)
 	return resp, err
 }
 
@@ -287,12 +287,12 @@ func (c *HTTPClient) RecoverySalt(ctx context.Context) (wire.RecoverySalt, error
 	return resp, err
 }
 
-// RecoveryTicket mints an enrollment ticket authorized by the recovery key, so
+// RecoveryToken mints an enrollment token authorized by the recovery key, so
 // a replacement machine can enroll when no surviving device can vouch for it.
 // The client must already be signing with the recovery key.
-func (c *HTTPClient) RecoveryTicket(ctx context.Context) (wire.TicketResp, error) {
-	var resp wire.TicketResp
-	err := c.do(ctx, http.MethodPost, "/v1/recovery/ticket", nil, struct{}{}, &resp, nil)
+func (c *HTTPClient) RecoveryToken(ctx context.Context) (wire.TokenResp, error) {
+	var resp wire.TokenResp
+	err := c.do(ctx, http.MethodPost, "/v1/recovery/token", nil, struct{}{}, &resp, nil)
 	return resp, err
 }
 

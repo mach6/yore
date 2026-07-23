@@ -141,12 +141,12 @@ fi
 # ===========================================================================
 step "Enroll zsh-box (bootstrap) + bash-box (pending -> approved)"
 
-dc zsh yore setup --server http://server:8080 --ticket sandbox-token \
+dc zsh yore setup --server http://server:8080 --token sandbox-token \
      --integration takeover --name zsh-box >/dev/null
 ok "zsh-box enrolled (first device, history group bootstrapped)"
 
-TICKET=$(dc zsh yore devices ticket 2>/dev/null | tr -d '\r\n')
-dc bash yore setup --server http://server:8080 --ticket "$TICKET" \
+TOKEN=$(dc zsh yore devices token 2>/dev/null | tr -d '\r\n')
+dc bash yore setup --server http://server:8080 --token "$TOKEN" \
      --integration takeover --name bash-box >/dev/null
 ok "bash-box registered (pending)"
 

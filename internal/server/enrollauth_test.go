@@ -23,48 +23,48 @@ func TestBootstrapTokenOnlyFormsAnEmptyGroup(t *testing.T) {
 	// The very same token is now refused: an active device exists.
 	pub, priv, err := ed25519.GenerateKey(nil)
 	require.NoError(t, err, "genkey")
-	intruder := c.withKey("B", priv).withTicket("tok")
+	intruder := c.withKey("B", priv).withToken("tok")
 	status, _ := intruder.do("POST", "/v1/devices",
 		wire.RegisterReq{ID: "B", Name: "B", PubKey: pubKey(), SignKey: pub})
 	assert.Equal(t, http.StatusUnauthorized, status,
 		"the bootstrap token must not enroll a second device")
 }
 
-// TestTicketIsSingleUse pins redemption: one ticket admits exactly one machine.
-func TestTicketIsSingleUse(t *testing.T) {
+// TestTokenIsSingleUse pins redemption: one token admits exactly one machine.
+func TestTokenIsSingleUse(t *testing.T) {
 	c := setup(t)
 	dcA := bootstrapActive(t, c, "A")
 
-	ticket := mintTicket(t, dcA)
-	_ = registerWithTicket(t, c, "B", ticket)
+	token := mintToken(t, dcA)
+	_ = registerWithToken(t, c, "B", token)
 
-	// A second device presenting the same ticket is refused.
+	// A second device presenting the same token is refused.
 	pub, priv, err := ed25519.GenerateKey(nil)
 	require.NoError(t, err, "genkey")
-	second := c.withKey("C", priv).withTicket(ticket)
+	second := c.withKey("C", priv).withToken(token)
 	status, _ := second.do("POST", "/v1/devices",
 		wire.RegisterReq{ID: "C", Name: "C", PubKey: pubKey(), SignKey: pub})
-	assert.Equal(t, http.StatusUnauthorized, status, "a redeemed ticket must not enroll again")
+	assert.Equal(t, http.StatusUnauthorized, status, "a redeemed token must not enroll again")
 }
 
-func TestTicketRequiresAnEnrolledDevice(t *testing.T) {
+func TestTokenRequiresAnEnrolledDevice(t *testing.T) {
 	c := setup(t)
 	_ = bootstrapActive(t, c, "A")
 
-	// An unenrolled caller cannot mint tickets, so enrollment is a closed loop.
-	status, _ := c.anon().do("POST", "/v1/tickets", struct{}{})
+	// An unenrolled caller cannot mint tokens, so enrollment is a closed loop.
+	status, _ := c.anon().do("POST", "/v1/tokens", struct{}{})
 	assert.Equal(t, http.StatusUnauthorized, status, "minting must require an enrolled device")
 }
 
-func TestUnknownTicketIsRefused(t *testing.T) {
+func TestUnknownTokenIsRefused(t *testing.T) {
 	c := setup(t)
 	_ = bootstrapActive(t, c, "A")
 
 	pub, priv, err := ed25519.GenerateKey(nil)
 	require.NoError(t, err, "genkey")
-	status, _ := c.withKey("B", priv).withTicket("not-a-real-ticket").do("POST", "/v1/devices",
+	status, _ := c.withKey("B", priv).withToken("not-a-real-token").do("POST", "/v1/devices",
 		wire.RegisterReq{ID: "B", Name: "B", PubKey: pubKey(), SignKey: pub})
-	assert.Equal(t, http.StatusUnauthorized, status, "an unminted ticket must be refused")
+	assert.Equal(t, http.StatusUnauthorized, status, "an unminted token must be refused")
 }
 
 // ---- recovery ----
@@ -91,7 +91,7 @@ func TestRecoveryFlow(t *testing.T) {
 	// Published at bootstrap, by the forming device before it activates.
 	pub, priv, err := ed25519.GenerateKey(nil)
 	require.NoError(t, err, "genkey")
-	dcA := c.withKey("A", priv).withTicket("tok")
+	dcA := c.withKey("A", priv).withToken("tok")
 	status, body := dcA.do("POST", "/v1/devices",
 		wire.RegisterReq{ID: "A", Name: "A", PubKey: pubKey(), SignKey: pub})
 	require.Equalf(t, http.StatusOK, status, "register A: %s", body)

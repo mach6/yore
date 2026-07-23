@@ -78,9 +78,9 @@ func TestEnrollmentTypesRoundTrip(t *testing.T) {
 		roundtrip(t, v, &got)
 		require.Equal(t, v, got)
 	})
-	t.Run("TicketResp", func(t *testing.T) {
-		v := TicketResp{Ticket: "tkt", ExpiresMs: 123}
-		var got TicketResp
+	t.Run("TokenResp", func(t *testing.T) {
+		v := TokenResp{Token: "tkt", ExpiresMs: 123}
+		var got TokenResp
 		roundtrip(t, v, &got)
 		require.Equal(t, v, got)
 	})

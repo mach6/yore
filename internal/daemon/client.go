@@ -204,19 +204,19 @@ func (c *Client) Revoke(id string) error {
 	return c.soloOK(proto.Request{Op: proto.OpRevoke, DeviceID: id}, syncDeadline)
 }
 
-// Ticket mints a single-use enrollment ticket for adding another machine.
-func (c *Client) Ticket() (proto.TicketInfo, error) {
-	resp, err := c.solo(proto.Request{Op: proto.OpTicket}, syncDeadline)
+// Token mints a single-use enrollment token for adding another machine.
+func (c *Client) Token() (proto.TokenInfo, error) {
+	resp, err := c.solo(proto.Request{Op: proto.OpToken}, syncDeadline)
 	if err != nil {
-		return proto.TicketInfo{}, err
+		return proto.TokenInfo{}, err
 	}
 	if !resp.OK {
-		return proto.TicketInfo{}, respErr(resp)
+		return proto.TokenInfo{}, respErr(resp)
 	}
-	if resp.Ticket == nil {
-		return proto.TicketInfo{}, errors.New("daemon: ticket response missing body")
+	if resp.Token == nil {
+		return proto.TokenInfo{}, errors.New("daemon: token response missing body")
 	}
-	return *resp.Ticket, nil
+	return *resp.Token, nil
 }
 
 // Sync forces a synchronous push/pull cycle (no-op if sync isn't configured).

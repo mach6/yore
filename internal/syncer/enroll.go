@@ -14,21 +14,21 @@ import (
 // the group. The server accepts any version >= 1 at bootstrap and pins it.
 const bootstrapHKVersion = 1
 
-// Enroll registers this machine using a single-use enrollment ticket and
+// Enroll registers this machine using a single-use enrollment token and
 // reports which path it landed on.
 //
 // The server decides: with no active device in the group this machine forms it
 // (Bootstrap), otherwise it is pending and an enrolled machine must approve the
 // returned verification code. The newcomer cannot determine this itself — it is
 // not yet authorized to read anything — so the registration response carries it.
-func (s *Syncer) Enroll(ctx context.Context, deviceName, ticket string) (formed bool, code string, err error) {
+func (s *Syncer) Enroll(ctx context.Context, deviceName, token string) (formed bool, code string, err error) {
 	pub := s.dev.Public()
 	resp, err := s.http.RegisterDevice(ctx, wire.RegisterReq{
 		ID:      s.deviceID,
 		Name:    deviceName,
 		PubKey:  pub[:],
 		SignKey: s.dev.SignPublic(),
-	}, ticket)
+	}, token)
 	if err != nil {
 		return false, "", err
 	}
@@ -88,9 +88,9 @@ func (s *Syncer) Bootstrap(ctx context.Context, recovery cryptobox.RecoveryKey, 
 	return nil
 }
 
-// MintTicket issues a single-use enrollment ticket for adding another machine.
-func (s *Syncer) MintTicket(ctx context.Context) (wire.TicketResp, error) {
-	return s.http.MintTicket(ctx)
+// MintToken issues a single-use enrollment token for adding another machine.
+func (s *Syncer) MintToken(ctx context.Context) (wire.TokenResp, error) {
+	return s.http.MintToken(ctx)
 }
 
 // RecoverHK retrieves the History Key using only the recovery passphrase, for

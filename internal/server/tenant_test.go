@@ -36,8 +36,8 @@ func multiTenant(t *testing.T) (def, alice *testClient, s *Server, dbPath string
 	})
 	// Each tenant gets a bootstrapped active device: routing is now by device
 	// record, so a tenant with no device has nothing to route by.
-	def = bootstrapActive(t, &testClient{t: t, base: srv.URL, ticket: "default-tok"}, "def-root")
-	alice = bootstrapActive(t, &testClient{t: t, base: srv.URL, ticket: "alice-tok"}, "alice-root")
+	def = bootstrapActive(t, &testClient{t: t, base: srv.URL, token: "default-tok"}, "def-root")
+	alice = bootstrapActive(t, &testClient{t: t, base: srv.URL, token: "alice-tok"}, "alice-root")
 	return def, alice, s, dbPath
 }
 
@@ -99,7 +99,7 @@ func TestTenantIsolation(t *testing.T) {
 func TestTenantAuth(t *testing.T) {
 	def, alice, _, _ := multiTenant(t)
 
-	bad := def.anon().withTicket("garbage")
+	bad := def.anon().withToken("garbage")
 	status, _ := bad.do("GET", "/v1/devices", nil)
 	require.Equal(t, http.StatusUnauthorized, status, "unknown caller => 401")
 

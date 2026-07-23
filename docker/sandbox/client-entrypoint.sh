@@ -4,8 +4,8 @@
 # the container command.
 #
 # No credential is written here: config.toml holds no secrets. Enrollment is
-# authorized by a single-use ticket, which `yore setup` picks up from
-# $YORE_TICKET (set in compose) or from --ticket.
+# authorized by a single-use token, which `yore setup` picks up from
+# $YORE_TOKEN (set in compose) or from --token.
 set -e
 mkdir -p /root/.config/yore
 cat > /root/.config/yore/config.toml <<EOF

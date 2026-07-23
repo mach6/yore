@@ -401,26 +401,26 @@ func newHookCmd() *cobra.Command {
 // --- enrollment ------------------------------------------------------------
 
 func newSetupCmd() *cobra.Command {
-	var server, ticket, name, integration string
+	var server, token, name, integration string
 	var pin, clearPin bool
 	cmd := &cobra.Command{
 		Use:   "setup",
 		Short: "Enroll this machine with a sync server",
-		Long: "setup enrolls this machine using a single-use enrollment ticket. The first\n" +
+		Long: "setup enrolls this machine using a single-use enrollment token. The first\n" +
 			"machine forms the history group and is shown a recovery phrase; every later\n" +
 			"machine registers as pending and must be approved from one already enrolled.\n" +
-			"Get a ticket with `yore devices ticket` on an enrolled machine; the first\n" +
+			"Get a token with `yore devices token` on an enrolled machine; the first\n" +
 			"machine uses the server's own token. Nothing is saved if enrollment fails.\n\n" +
 			"--pin captures and pins the server's TLS certificate (do it on a trusted\n" +
 			"network): thereafter the client refuses any other cert, defeating a\n" +
 			"TLS-inspecting proxy — but it also won't sync through one. --clear-pin removes\n" +
 			"a previously pinned certificate.",
 		RunE: func(*cobra.Command, []string) error {
-			return code(runSetup(server, ticket, name, integration, pin, clearPin))
+			return code(runSetup(server, token, name, integration, pin, clearPin))
 		},
 	}
 	cmd.Flags().StringVar(&server, "server", "", "server URL")
-	cmd.Flags().StringVar(&ticket, "ticket", "", "single-use enrollment ticket (else $YORE_TICKET, else prompt)")
+	cmd.Flags().StringVar(&token, "token", "", "single-use enrollment token (else $YORE_TOKEN, else prompt)")
 	cmd.Flags().StringVar(&name, "name", "", "device name (default: hostname)")
 	cmd.Flags().StringVar(&integration, "integration", "", "shell integration: takeover|coexist|capture (default: prompt/takeover)")
 	cmd.Flags().BoolVar(&pin, "pin", false, "pin the server's TLS certificate (capture it now)")
@@ -456,15 +456,15 @@ func newDevicesCmd() *cobra.Command {
 			return code(runDevicesRevoke(args[0]))
 		},
 	}
-	ticket := &cobra.Command{
-		Use:   "ticket",
-		Short: "Mint a single-use enrollment ticket for another machine",
+	token := &cobra.Command{
+		Use:   "token",
+		Short: "Mint a single-use enrollment token for another machine",
 		Args:  cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
-			return code(runDevicesTicket())
+			return code(runDevicesToken())
 		},
 	}
-	cmd.AddCommand(approve, revoke, ticket)
+	cmd.AddCommand(approve, revoke, token)
 	return cmd
 }
 

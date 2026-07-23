@@ -28,7 +28,7 @@ device public keys — and can never read history. Design rationale is in
   secret exists to capture. The signer also **selects the tenant** (see
   "Multi-tenancy"). Two request classes predate having a device record and carry
   their own authorization: **enrollment** (`POST /v1/devices`) presents a
-  single-use **ticket** in `X-Yore-Ticket`, and **recovery** signs with the key
+  single-use **token** in `X-Yore-Token`, and **recovery** signs with the key
   derived from the recovery passphrase. Any failure → `401` (generic, so it
   never reveals which check failed).
 - **Certificate pinning (optional)**: a client enrolled with `yore setup --pin`
@@ -96,16 +96,16 @@ until caught up; decrypt each blob into the RAM cache. Pull cursors live in
 daemon RAM only (remote history is never persisted), so a fresh daemon re-pulls
 from `after=0`.
 
-**Enroll / key flow**: an enrolled device mints a single-use ticket
-(`POST /v1/tickets`); the newcomer presents it on `POST /v1/devices` and lands
+**Enroll / key flow**: an enrolled device mints a single-use token
+(`POST /v1/tokens`); the newcomer presents it on `POST /v1/devices` and lands
 *pending*. The registration response's `group_formed` tells the newcomer which
 path it is on, since it cannot yet read anything. An existing active device then
 fetches its pubkey via `GET /v1/devices`, wraps the History Key for it, and
 `POST /v1/devices/{id}/activate` → the new device can then `GET /v1/keys/hk` and
 page `GET /v1/keys/dek` to unwrap everything.
 
-**Bootstrap**: the very first device has no one to mint it a ticket, so the
-server's configured token is accepted as the ticket — but **only while the
+**Bootstrap**: the very first device has no one to mint it a token, so the
+server's configured token is accepted as the token — but **only while the
 tenant has no active device**. Once one exists the token enrolls nothing, which
 is what makes it a first credential rather than a standing one.
 **Revoke**: `POST /v1/devices/{id}/revoke` then `POST /v1/keys/rotate` (new HK,
@@ -146,22 +146,22 @@ Returns records with `seq > after`, ascending. `limit` default/cap 1000.
 unknown `host_id` returns an empty list (not `404`). `created_ms` is the server
 receive time (informational). Errors: `400` (invalid after/limit).
 
-### `POST /v1/devices` — register (enroll) *(self-signed + ticket)*
+### `POST /v1/devices` — register (enroll) *(self-signed + token)*
 Request `wire.RegisterReq`
 `{"id","name","pub_key":"<base64 32B X25519>","sign_key":"<base64 32B Ed25519>"}`,
-plus `X-Yore-Ticket: <ticket>`.
+plus `X-Yore-Token: <token>`.
 Must carry a valid signature made with the private key for `sign_key`, and
-`X-Yore-Device` must equal `id`. The ticket is **redeemed in the same
+`X-Yore-Device` must equal `id`. The token is **redeemed in the same
 transaction as the write**, so it can never admit two devices.
 → `200 wire.RegisterResp` `{device, group_formed}` — `group_formed` false means
 this device should form the group.
 Errors: `400` (empty id / keys not 32B / device-id mismatch), `401` (bad
-signature, or an unknown/redeemed/expired ticket), `409` (id already registered).
+signature, or an unknown/redeemed/expired token), `409` (id already registered).
 
-### `POST /v1/tickets` — mint an enrollment ticket *(signed)*
-→ `200 wire.TicketResp` `{ticket, expires_ms}`. Valid **30 minutes**, single-use.
+### `POST /v1/tokens` — mint an enrollment token *(signed)*
+→ `200 wire.TokenResp` `{token, expires_ms}`. Valid **30 minutes**, single-use.
 The plaintext is returned exactly once; the server stores only
-`sha256("yore/ticket/v1|" ‖ ticket)`, so a database read yields no usable ticket.
+`sha256("yore/token/v1|" ‖ token)`, so a database read yields no usable token.
 Redeemed and expired entries are pruned on each mint.
 
 ### `GET /v1/devices` — list
@@ -223,7 +223,7 @@ tenant-specific; the server routes each request by the identity that signed it.
 - **Device → tenant**: the auth middleware finds the tenant whose `devices`
   bucket holds `X-Yore-Device` (device ids are globally-unique ULIDs, so at most
   one can match) and binds that tenant's db into the request context. The lookup
-  is cached per device id. Enrollment routes by ticket instead, and recovery by
+  is cached per device id. Enrollment routes by token instead, and recovery by
   the tenant holding recovery material — with more than one such tenant the
   request is ambiguous and is refused rather than guessed at. No match → `401`.
   The configured bootstrap tokens are still compared constant-time with no early
@@ -245,7 +245,7 @@ Each tenant's db holds:
 - `devices`: device_id → `Device`
 - `hk_wraps`: device_id → `HKWrap`
 - `dek_wraps`: key_id → `DEKWrap`
-- `tickets`: sha256(ticket) → `{created_ms, expires_ms, redeemed}`
+- `tokens`: sha256(token) → `{created_ms, expires_ms, redeemed}`
 - `recovery`: fixed key → `RecoveryInit` (salt + recovery public keys + HK wrap)
 - `records:<host_id>` (one bucket per stream): seq (8-byte BE) → `{id, key_id, blob, created_ms}`
 - `meta`: `hk_version`
@@ -373,7 +373,7 @@ an error, never silently skipped.
   `GET /v1/recovery/salt` is open — the salt is an Argon2id input, not a secret,
   and is needed before any recovery signature is possible. Everything after it
   is signed with the recovery key: `GET /v1/recovery` returns the wrap,
-  `POST /v1/recovery/ticket` mints an enrollment ticket, and
+  `POST /v1/recovery/token` mints an enrollment token, and
   `POST /v1/recovery/activate/{id}` admits the replacement machine. Those last
   two exist because the lost machines are still *active* server-side: the
   bootstrap allowance does not apply and nothing survives to approve the new

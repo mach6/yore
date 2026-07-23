@@ -400,12 +400,12 @@ func (s *server) dispatch(req *proto.Request, f *match.Filter) (proto.Response, 
 		}
 		return proto.Response{OK: true}, false
 
-	case proto.OpTicket:
-		ti, err := s.mintTicket()
+	case proto.OpToken:
+		ti, err := s.mintToken()
 		if err != nil {
-			return proto.Response{Err: "ticket: " + err.Error()}, false
+			return proto.Response{Err: "token: " + err.Error()}, false
 		}
-		return proto.Response{OK: true, Ticket: &ti}, false
+		return proto.Response{OK: true, Token: &ti}, false
 
 	case proto.OpStatus:
 		st := s.status()

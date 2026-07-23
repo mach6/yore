@@ -24,7 +24,7 @@ Built for a threat model most history tools don't serve:
   re-encrypting a single record.
 - **No standing credential at all.** A device authenticates with its own key on
   every request — there is no bearer token to leak. Adding a machine takes a
-  **single-use enrollment ticket** minted by one already enrolled.
+  **single-use enrollment token** minted by one already enrolled.
 - **A recovery phrase, so per-device keys can't lock you out.** Shown once when
   you create the group; it is the way back if you lose every machine.
 - **Other machines' history never touches this disk** — it's fetched into the
@@ -108,9 +108,9 @@ docker stack deploy -c docker/swarm/stack.yml yore
 # RECOVERY PHRASE — write it down, it is shown once and never stored
 yore setup
 
-# each other machine needs a single-use ticket from one already enrolled:
-yore devices ticket                    # on an enrolled machine
-yore setup --ticket <ticket>           # on the new machine: registers PENDING
+# each other machine needs a single-use token from one already enrolled:
+yore devices token                    # on an enrolled machine
+yore setup --token <token>           # on the new machine: registers PENDING
 yore devices approve <id>              # back on the enrolled one; confirm the code
 ```
 
@@ -194,7 +194,7 @@ in [architecture.md](docs/architecture.md)); all state lives under
 | Let an agent check a command's risk / history | it calls the `assess_risk` MCP tool |
 | Grep history in a script | `hs <query>` \| … or `yore search --headless <query>` |
 | Force a sync now | `yore sync` (or `S` in `hb`) |
-| Add another machine | `yore devices ticket`, then `yore setup --ticket …` there |
+| Add another machine | `yore devices token`, then `yore setup --token …` there |
 | Get back in after losing every machine | `yore recover` (needs the recovery phrase) |
 | Diagnose / status | `yore doctor` / `yore status` |
 | Stop the daemon / server | `yore stop` / `yore server stop` |

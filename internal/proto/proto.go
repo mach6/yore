@@ -22,7 +22,7 @@ const (
 	OpDevices  = "devices"  // list enrolled devices
 	OpApprove  = "approve"  // approve a pending device (DeviceID)
 	OpRevoke   = "revoke"   // revoke a device and rotate keys (DeviceID)
-	OpTicket   = "ticket"   // mint a single-use enrollment ticket
+	OpToken    = "token"    // mint a single-use enrollment token
 	OpStatus   = "status"   // daemon status
 	OpSync     = "sync"     // force a push/pull cycle now
 	OpTags     = "tags"     // list known user tags with counts
@@ -125,10 +125,10 @@ type DevicesInfo struct {
 	Devices []DeviceInfo `json:"devices"`
 }
 
-// TicketInfo is a freshly minted single-use enrollment ticket, for adding
+// TokenInfo is a freshly minted single-use enrollment token, for adding
 // another machine. The plaintext exists only in this response.
-type TicketInfo struct {
-	Ticket    string `json:"ticket"`
+type TokenInfo struct {
+	Token     string `json:"token"`
 	ExpiresMs int64  `json:"expires_ms"`
 }
 
@@ -150,7 +150,7 @@ type Response struct {
 	Query   *QueryResp   `json:"query,omitempty"`
 	Hosts   *HostsInfo   `json:"hosts,omitempty"`
 	Devices *DevicesInfo `json:"devices,omitempty"`
-	Ticket  *TicketInfo  `json:"ticket,omitempty"`
+	Token   *TokenInfo   `json:"token,omitempty"`
 	Status  *StatusResp  `json:"status,omitempty"`
 	Tags    *TagsInfo    `json:"tags,omitempty"`
 }

@@ -48,12 +48,12 @@ func (s *Server) signed(h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// POST /v1/tickets — mint a single-use enrollment ticket *(signed)*
+// POST /v1/tokens — mint a single-use enrollment token *(signed)*
 //
 // This is how a second machine gets in: an already-enrolled device mints a
-// ticket, the new machine presents it once, and it is redeemed. There is no
+// token, the new machine presents it once, and it is redeemed. There is no
 // standing credential that enrolls devices.
-func (s *Server) handleMintTicket(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleMintToken(w http.ResponseWriter, r *http.Request) {
 	db, ok := mustDB(w, r)
 	if !ok {
 		return
@@ -66,32 +66,32 @@ func (s *Server) handleMintTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ticket, err := newTicket()
+	token, err := newToken()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	now := time.Now()
-	expires := now.Add(ticketTTL)
-	st := storedTicket{CreatedMs: now.UnixMilli(), ExpiresMs: expires.UnixMilli()}
+	expires := now.Add(tokenTTL)
+	st := storedToken{CreatedMs: now.UnixMilli(), ExpiresMs: expires.UnixMilli()}
 	err = db.Update(func(tx *bbolt.Tx) error {
-		pruneTickets(tx, now)
+		pruneTokens(tx, now)
 		val, merr := json.Marshal(st)
 		if merr != nil {
 			return merr
 		}
-		return tx.Bucket(bucketTickets).Put(hashTicket(ticket), val)
+		return tx.Bucket(bucketTokens).Put(hashToken(token), val)
 	})
 	if err != nil {
 		writeAPIErr(w, err)
 		return
 	}
-	// The plaintext ticket exists only in this response; the server kept a hash.
-	writeJSON(w, http.StatusOK, wire.TicketResp{Ticket: ticket, ExpiresMs: st.ExpiresMs})
+	// The plaintext token exists only in this response; the server kept a hash.
+	writeJSON(w, http.StatusOK, wire.TokenResp{Token: token, ExpiresMs: st.ExpiresMs})
 }
 
-// newTicket returns a fresh high-entropy enrollment ticket.
-func newTicket() (string, error) {
+// newToken returns a fresh high-entropy enrollment token.
+func newToken() (string, error) {
 	var b [32]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", err
@@ -99,14 +99,14 @@ func newTicket() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b[:]), nil
 }
 
-// pruneTickets drops expired and redeemed tickets so the bucket cannot grow
+// pruneTokens drops expired and redeemed tokens so the bucket cannot grow
 // without bound. Errors are ignored: pruning is housekeeping, never a reason to
 // fail the mint that triggered it.
-func pruneTickets(tx *bbolt.Tx, now time.Time) {
-	b := tx.Bucket(bucketTickets)
+func pruneTokens(tx *bbolt.Tx, now time.Time) {
+	b := tx.Bucket(bucketTokens)
 	var dead [][]byte
 	_ = b.ForEach(func(k, v []byte) error {
-		var st storedTicket
+		var st storedToken
 		if json.Unmarshal(v, &st) != nil || st.Redeemed || now.UnixMilli() >= st.ExpiresMs {
 			dead = append(dead, append([]byte(nil), k...))
 		}
@@ -218,14 +218,14 @@ func (s *Server) handleInitRecovery(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// POST /v1/recovery/ticket — mint an enrollment ticket
+// POST /v1/recovery/token — mint an enrollment token
 // *(signed by the recovery key)*
 //
 // Recovery would otherwise be unusable in the only situation it exists for:
 // the lost machines are still ACTIVE server-side, so the bootstrap allowance
-// does not apply and no surviving device can mint a ticket. Possession of the
+// does not apply and no surviving device can mint a token. Possession of the
 // recovery passphrase is the authorization instead.
-func (s *Server) handleRecoveryTicket(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleRecoveryToken(w http.ResponseWriter, r *http.Request) {
 	db, ok := mustDB(w, r)
 	if !ok {
 		return
@@ -247,26 +247,26 @@ func (s *Server) handleRecoveryTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ticket, err := newTicket()
+	token, err := newToken()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	now := time.Now()
-	st := storedTicket{CreatedMs: now.UnixMilli(), ExpiresMs: now.Add(ticketTTL).UnixMilli()}
+	st := storedToken{CreatedMs: now.UnixMilli(), ExpiresMs: now.Add(tokenTTL).UnixMilli()}
 	err = db.Update(func(tx *bbolt.Tx) error {
-		pruneTickets(tx, now)
+		pruneTokens(tx, now)
 		val, merr := json.Marshal(st)
 		if merr != nil {
 			return merr
 		}
-		return tx.Bucket(bucketTickets).Put(hashTicket(ticket), val)
+		return tx.Bucket(bucketTokens).Put(hashToken(token), val)
 	})
 	if err != nil {
 		writeAPIErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, wire.TicketResp{Ticket: ticket, ExpiresMs: st.ExpiresMs})
+	writeJSON(w, http.StatusOK, wire.TokenResp{Token: token, ExpiresMs: st.ExpiresMs})
 }
 
 // POST /v1/recovery/activate/{id} — admit a device during recovery
@@ -552,11 +552,11 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Authorization to enroll AT ALL comes from the ticket. The auth middleware
+	// Authorization to enroll AT ALL comes from the token. The auth middleware
 	// already used it to pick the tenant; redeeming it here, inside the same
 	// transaction as the write, is what makes it single-use.
-	ticket := r.Header.Get(hdrTicket)
-	bootstrap := s.isBootstrapToken(tenantFromContext(r), ticket) && !hasActiveDevice(db)
+	token := r.Header.Get(hdrToken)
+	bootstrap := s.isBootstrapToken(tenantFromContext(r), token) && !hasActiveDevice(db)
 
 	dev := wire.Device{
 		ID:        req.ID,
@@ -568,7 +568,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	err := db.Update(func(tx *bbolt.Tx) error {
 		if !bootstrap {
-			if rerr := redeemTicket(tx, hashTicket(ticket), time.Now()); rerr != nil {
+			if rerr := redeemToken(tx, hashToken(token), time.Now()); rerr != nil {
 				return rerr
 			}
 		}
@@ -676,13 +676,13 @@ func (s *Server) bootstrapSelfKeyAny(db *bbolt.DB, r *http.Request) []byte {
 	return key
 }
 
-// isBootstrapToken reports whether ticket is the configured bootstrap token of
+// isBootstrapToken reports whether token is the configured bootstrap token of
 // the named tenant, compared constant-time.
-func (s *Server) isBootstrapToken(name, ticket string) bool {
-	if name == "" || ticket == "" {
+func (s *Server) isBootstrapToken(name, token string) bool {
+	if name == "" || token == "" {
 		return false
 	}
-	got := []byte(ticket)
+	got := []byte(token)
 	match := false
 	for i := range s.byToken {
 		if s.byToken[i].tenant.name == name &&

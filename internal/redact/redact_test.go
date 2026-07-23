@@ -188,8 +188,8 @@ func TestNoIgnoreDirs(t *testing.T) {
 func TestUserPatternsValid(t *testing.T) {
 	f := mustFilter(t, []string{`INTERNAL-[0-9]{6}`, `(?i)my-corp-secret`}, nil)
 
-	require.True(t, f.Sensitive("deploy --ticket INTERNAL-004217"), "valid user pattern should match")
-	require.Equal(t, "user:INTERNAL-[0-9]{6}", f.Reason("deploy --ticket INTERNAL-004217"))
+	require.True(t, f.Sensitive("deploy --token INTERNAL-004217"), "valid user pattern should match")
+	require.Equal(t, "user:INTERNAL-[0-9]{6}", f.Reason("deploy --token INTERNAL-004217"))
 	require.True(t, f.Sensitive("echo MY-CORP-SECRET"), "case-insensitive user pattern should match")
 	// Built-ins still work alongside user patterns.
 	require.True(t, f.Sensitive("export DB_PASSWORD=hunter2"), "built-ins must still fire with user patterns present")

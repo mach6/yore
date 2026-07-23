@@ -16,8 +16,8 @@ import (
 // views look like one product.
 //
 // Everything here is decoration and goes to STDERR; any value a script would
-// want — a ticket, a device id — is printed bare on stdout by the caller, so
-// `$(yore devices ticket)` yields exactly the ticket and nothing else.
+// want — a token, a device id — is printed bare on stdout by the caller, so
+// `$(yore devices token)` yields exactly the token and nothing else.
 //
 // Colour degrades on its own: lipgloss detects the output's capabilities, so a
 // piped or NO_COLOR run gets plain text without any special-casing here.
