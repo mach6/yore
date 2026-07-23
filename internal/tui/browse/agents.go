@@ -148,7 +148,8 @@ func (m Model) renderAgents(w, h int) string {
 	header := agentRow(th.Dim, "EXECUTOR", "COMMANDS", "SUCCESS", "FAILS", "AVG", "LAST", nameW, numW, lastW)
 	lines := []string{header}
 	now := m.now()
-	for _, a := range m.agents.agents {
+	sel := clampIndex(m.agentSel, len(m.agents.agents))
+	for i, a := range m.agents.agents {
 		success := "n/a"
 		if a.successPS() >= 0 {
 			success = fmt.Sprintf("%.0f%%", a.successPS())
@@ -161,11 +162,78 @@ func (m Model) renderAgents(w, h int) string {
 		if a.failures == 0 {
 			fails = "·"
 		}
-		lines = append(lines, agentRow(th.Norm,
+		style := th.Norm
+		if i == sel {
+			style = th.Sel // selection bar
+		}
+		lines = append(lines, agentRow(style,
 			a.name, strconv.Itoa(a.count), success, fails, avg,
 			theme.RelTime(now, a.lastMs), nameW, numW, lastW))
 	}
-	return padLines(lines, w, h)
+
+	// A detail block for the selected agent fills the bottom: its most recent
+	// commands with outcome, so the table doubles as a drill-in.
+	detail := m.agentDetail(m.agents.agents[sel], w)
+	body := lines
+	if gap := h - len(lines) - len(detail); gap > 0 {
+		body = append(body, make([]string, gap)...)
+	}
+	body = append(body, detail...)
+	return padLines(body, w, h)
+}
+
+// agentLen is the number of rows in the agent-monitor table.
+func (m Model) agentLen() int {
+	if m.agents == nil {
+		return 0
+	}
+	return len(m.agents.agents)
+}
+
+// agentDetail renders the recent-commands block for one executor, drawn from the
+// held sample (newest first).
+func (m Model) agentDetail(a agentStat, w int) []string {
+	th := m.th
+	recents := m.recentByExecutor(a.name, 6)
+	lines := []string{
+		"",
+		th.Title.Render(fitPlain(fmt.Sprintf("▸ %s — recent commands", a.name), w)),
+	}
+	if len(recents) == 0 {
+		return append(lines, "  "+th.Dim.Render("(none)"))
+	}
+	now := m.now()
+	for _, r := range recents {
+		when := theme.RelTime(now, r.StartMs)
+		mark, mStyle := exitMarker(th, r)
+		row := "  " + th.Dim.Render(padRight(when, 6)) + " " + mStyle.Render(mark) + " " +
+			th.Norm.Render(clipW(oneLineCmd(r.Cmd), w-12))
+		lines = append(lines, row)
+	}
+	return lines
+}
+
+// recentByExecutor returns the newest n commands run by the given executor from
+// the held sample.
+func (m Model) recentByExecutor(tag string, n int) []rec.Record {
+	var out []rec.Record
+	for i := range m.statsRows {
+		r := m.statsRows[i]
+		if r.Deleted() || r.Tag != tag {
+			continue
+		}
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].StartMs > out[j].StartMs })
+	if len(out) > n {
+		out = out[:n]
+	}
+	return out
+}
+
+// oneLineCmd flattens a command to a single spaced line for compact display.
+func oneLineCmd(cmd string) string {
+	return strings.Join(strings.Fields(strings.ReplaceAll(cmd, "\n", " ")), " ")
 }
 
 // agentRow formats one fixed-width agent table row.

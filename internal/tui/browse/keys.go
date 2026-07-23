@@ -121,6 +121,7 @@ type agentsKeys struct{}
 
 func (agentsKeys) ShortHelp() []key.Binding {
 	return []key.Binding{
+		key.NewBinding(key.WithKeys("j", "k"), key.WithHelp("j/k", "select")),
 		key.NewBinding(key.WithKeys("1", "2", "3", "4", "5"), key.WithHelp("1-5", "period")),
 		key.NewBinding(key.WithKeys("a", "esc"), key.WithHelp("a/esc", "back")),
 		key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),

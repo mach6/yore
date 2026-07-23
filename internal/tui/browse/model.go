@@ -145,6 +145,7 @@ type Model struct {
 	promptSel    int          // selected row in the prompt-explorer table
 	promptDrill  bool         // drilled into the selected prompt's command list
 	drillSel     int          // selected row within the drilled command list
+	agentSel     int          // selected row in the agent-monitor table
 	statsRows    []rec.Record // the full sample; re-aggregated when the period changes
 	statsPeriod  int          // index into statPeriods
 	statsErr     error
@@ -564,6 +565,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch s {
 		case "esc":
 			m.view = viewBrowse
+		case "up", "k":
+			if m.view == viewAgents {
+				m.agentSel = clampIndex(m.agentSel-1, m.agentLen())
+			}
+		case "down", "j":
+			if m.view == viewAgents {
+				m.agentSel = clampIndex(m.agentSel+1, m.agentLen())
+			}
 		case "1", "2", "3", "4", "5":
 			// Period tabs: re-aggregate the held sample without a new query.
 			if p := int(s[0] - '1'); p < len(statPeriods) {
@@ -702,6 +711,9 @@ func (m *Model) recomputeStats() {
 	m.agents = computeAgents(m.statsRows, m.now(), days)
 	m.prompts = computePrompts(m.statsRows, m.now(), days)
 	m.clampPrompts()
+	if m.agents != nil {
+		m.agentSel = clampIndex(m.agentSel, len(m.agents.agents))
+	}
 }
 
 // toggleAgents opens the agent-monitor view (or returns to browse), reusing the
