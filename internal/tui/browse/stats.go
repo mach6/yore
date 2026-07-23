@@ -63,6 +63,7 @@ type statsData struct {
 	topCommands []cmdCount // by full command
 	topDirs     []cmdCount // by cwd
 	byExecutor  []cmdCount // by tag ("" -> "(you)")
+	byHost      []cmdCount // by hostname (cross-machine corpus)
 
 	spark    []int // per-day counts, oldest (left) .. newest (right)
 	sparkMax int
@@ -113,6 +114,7 @@ func computeStats(rows []rec.Record, now int64, periodDays int) *statsData {
 	commands := map[string]int{}
 	dirs := map[string]int{}
 	execs := map[string]int{}
+	hosts := map[string]int{}
 	var durSum float64
 	var durN int
 	var success int
@@ -132,6 +134,9 @@ func computeStats(rows []rec.Record, now int64, periodDays int) *statsData {
 			dirs[r.Cwd]++
 		}
 		execs[executorLabel(r.Tag)]++
+		if r.Hostname != "" {
+			hosts[r.Hostname]++
+		}
 		if r.Tag != "" {
 			s.agentPS++
 		}
@@ -171,6 +176,7 @@ func computeStats(rows []rec.Record, now int64, periodDays int) *statsData {
 	s.topCommands = topN(commands)
 	s.topDirs = topN(dirs)
 	s.byExecutor = topN(execs)
+	s.byHost = topN(hosts)
 
 	for _, c := range s.spark {
 		if c > s.sparkMax {
@@ -333,6 +339,7 @@ func (m Model) statColumns(s *statsData, w, bodyH int) []string {
 		{"Top commands", s.topCommands},
 		{"Top directories", s.topDirs},
 		{"By executor", s.byExecutor},
+		{"By host", s.byHost},
 	}
 
 	const gap, minCol = 2, 16
