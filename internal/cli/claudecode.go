@@ -421,12 +421,17 @@ func cursorMcpPath(project bool) (string, error) {
 	return filepath.Join(home, ".cursor", "mcp.json"), nil
 }
 
-// runInitCursor registers yore's MCP server with Cursor so its agent can query
-// your (cross-machine) history. Cursor auto-detects interactively via
-// $CURSOR_TRACE_ID, so no capture hook is installed here.
+// runInitCursor installs yore's Cursor capture hooks (so the commands Cursor's
+// agent runs are recorded, with duration + prompt tracing) and registers the
+// MCP server (so Cursor can query your cross-machine history back).
 func runInitCursor(bin string, project bool) int {
 	u := newUI()
 	u.title("yore init cursor")
+
+	if err := installCursorHooks(bin, project, u); err != nil {
+		u.fail(err.Error())
+		return 1
+	}
 	path, err := cursorMcpPath(project)
 	if err != nil {
 		u.fail(err.Error())
@@ -436,7 +441,8 @@ func runInitCursor(bin string, project bool) int {
 		u.fail(err.Error())
 		return 1
 	}
-	u.step("Cursor can now query your history via MCP", "cross-machine, end-to-end encrypted")
+	u.step("captures every command Cursor's agent runs", "tagged "+agentCursor+", traced to its prompt")
+	u.step("Cursor can also query your history via MCP", "cross-machine, end-to-end encrypted")
 	u.blank()
 	u.next("ask Cursor, e.g.:",
 		`"what commands failed in this project recently?"`,

@@ -66,6 +66,9 @@ func runDoctor() int {
 	} else {
 		warn("MCP not registered for Claude Code — run `yore init claude-code`")
 	}
+	if cursorCaptureInstalled(shell.DefaultBin) {
+		ok("Cursor capture hooks installed (~/.cursor/hooks.json)")
+	}
 	if p, perr := cursorMcpPath(false); perr == nil && mcpRegistered(p) {
 		ok("MCP server registered for Cursor (" + p + ")")
 	}

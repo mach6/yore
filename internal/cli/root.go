@@ -291,9 +291,9 @@ func newInitCmd() *cobra.Command {
 			"  yore init claude-code             # ~/.claude/settings.json + ~/.claude.json\n" +
 			"  yore init claude-code --project   # ./.claude/settings.json + ./.mcp.json\n" +
 			"  yore init claude-code --print     # print the JSON, install by hand\n\n" +
-			"cursor registers yore's MCP server so Cursor's agent can query your\n" +
-			"(cross-machine) history:\n" +
-			"  yore init cursor                  # ~/.cursor/mcp.json",
+			"cursor installs Cursor capture hooks (records the commands its agent\n" +
+			"runs, tagged cursor, traced to prompts) and registers the MCP server:\n" +
+			"  yore init cursor                  # ~/.cursor/hooks.json + ~/.cursor/mcp.json",
 		Args:      cobra.ExactArgs(1),
 		ValidArgs: []cobra.Completion{"zsh", "bash", "claude-code", "cursor"},
 		RunE: func(_ *cobra.Command, args []string) error {
@@ -400,6 +400,18 @@ func newHookCmd() *cobra.Command {
 		Short: "Record a prompt from a Claude Code UserPromptSubmit hook (reads JSON on stdin)",
 		Args:  cobra.NoArgs,
 		RunE:  func(*cobra.Command, []string) error { runHookClaudePrompt(); return nil },
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "cursor",
+		Short: "Record a command from a Cursor afterShellExecution hook (reads JSON on stdin)",
+		Args:  cobra.NoArgs,
+		RunE:  func(*cobra.Command, []string) error { runHookCursor(); return nil },
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "cursor-prompt",
+		Short: "Record a prompt from a Cursor beforeSubmitPrompt hook (reads JSON on stdin)",
+		Args:  cobra.NoArgs,
+		RunE:  func(*cobra.Command, []string) error { runHookCursorPrompt(); return nil },
 	})
 	return cmd
 }

@@ -156,9 +156,10 @@ rm -rf ~/.config/yore         # all of yore's state
 - **Agent tracking** — commands an agent runs are auto-tagged so you can tell
   them from what you typed (`yore search --executor claude-code`). In your
   interactive shell, `CLAUDECODE` / Cursor / aider (or `$YORE_TAG`) auto-detect.
-  For Claude Code — whose Bash tool runs a *non-interactive* shell the rc hooks
-  never see — `yore init claude-code` installs its hooks (with exit status,
-  duration, and prompt tracing) and registers the MCP server.
+  For agents whose commands run in a *non-interactive* shell the rc hooks never
+  see, `yore init claude-code` and `yore init cursor` install their native hooks
+  (with duration + prompt tracing; Claude Code also captures exit status) and
+  register the MCP server.
 - **MCP server for your agents** — `yore init claude-code` (or `yore init
   cursor`) wires up a local, read-only MCP server so a coding agent can query
   your history back: search, failures, prompts, stats, and `assess_risk` —

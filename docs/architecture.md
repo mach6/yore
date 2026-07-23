@@ -222,6 +222,14 @@ path (a secret-bearing command or prompt is dropped). `yore init claude-code`
 writes ~/.claude/settings.json (or, with --project, ./.claude/settings.json),
 merging without disturbing other settings.
 
+**Cursor** capture works the same way via `yore init cursor`, which installs
+Cursor's `afterShellExecution` + `beforeSubmitPrompt` hooks into
+`~/.cursor/hooks.json` (correlated by `conversation_id` → session `cursor-<id>`)
+and registers the MCP server in `~/.cursor/mcp.json`. Cursor's payload carries
+the command and a duration but no exit code, so Cursor commands record duration
+and prompt tracing with an unknown exit; its prompt hook always emits
+`{"continue": true}` so it never blocks a prompt.
+
 ## MCP server (`internal/mcp`)
 
 `yore mcp-serve` is a local, read-only [Model Context Protocol](https://modelcontextprotocol.io)
