@@ -21,6 +21,7 @@ type keyMap struct {
 	Copy    key.Binding
 	Delete  key.Binding
 	Tag     key.Binding
+	TagAdd  key.Binding
 	Stats   key.Binding
 	Agents  key.Binding
 	Prompts key.Binding
@@ -52,6 +53,7 @@ func defaultKeyMap(vim bool) keyMap {
 		Copy:    key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "copy")),
 		Delete:  key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
 		Tag:     key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "executor filter")),
+		TagAdd:  key.NewBinding(key.WithKeys("ctrl+t"), key.WithHelp("^t", "tag row")),
 		Stats:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "stats")),
 		Agents:  key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "agents")),
 		Prompts: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "prompts")),
@@ -78,8 +80,8 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		nav,
 		{k.Focus, k.Search, k.Accept, k.Copy, k.Delete},
-		{k.Tag, k.Stats, k.Agents, k.Prompts, k.Devices},
-		{k.Sync, k.Help, k.Quit},
+		{k.Tag, k.TagAdd, k.Stats, k.Agents, k.Prompts},
+		{k.Devices, k.Sync, k.Help, k.Quit},
 	}
 }
 

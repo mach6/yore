@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"yore/internal/proto"
@@ -27,6 +28,8 @@ type fakeBackend struct {
 	hostsCalls int // Hosts() invocations; the sidebar may re-fetch repeatedly
 	deleted    []string
 	delErr     error
+	submitted  []rec.Record
+	submitErr  error
 	devices    proto.DevicesInfo
 	approved   []string
 	revoked    []string
@@ -62,6 +65,13 @@ func (f *fakeBackend) Delete(id string) error {
 	}
 	f.deleted = append(f.deleted, id)
 	return nil
+}
+
+func (f *fakeBackend) SubmitRecord(r rec.Record) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.submitted = append(f.submitted, r)
+	return f.submitErr
 }
 
 func (f *fakeBackend) Devices() (proto.DevicesInfo, error) {
@@ -705,6 +715,31 @@ func TestTagFilter(t *testing.T) {
 	m, _ = step(t, m, press("t"))
 	require.Equal(t, "", m.executorFilter, "second t should clear the tag filter")
 	require.Equal(t, "", m.buildReq().Executor, "a cleared filter sends an empty Tag")
+}
+
+func TestTagRowPicker(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 40)
+	rows := mkRows("git status", "ls", "vim")
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(rows)})
+
+	// ctrl+t on the selected row opens the tag input.
+	m, _ = step(t, m, press("ctrl+t"))
+	require.True(t, m.tagging, "ctrl+t enters tagging mode")
+
+	// Type a name and submit.
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("refactor")})
+	m, _ = step(t, m, press("enter"))
+	require.False(t, m.tagging, "enter leaves tagging mode")
+
+	// A TypeTag record was submitted for the selected command, and the tag shows
+	// optimistically on the row.
+	require.Len(t, f.submitted, 1)
+	assert.Equal(t, "refactor", f.submitted[0].TagName)
+	assert.Equal(t, rows[0].ID, f.submitted[0].TargetID)
+	assert.Equal(t, "tag", f.submitted[0].Type)
+	assert.Contains(t, m.rows[0].Tags, "refactor", "row shows the new tag at once")
+	require.Contains(t, strip(m.View()), "tagged: refactor")
 }
 
 func TestTagFilterNoTag(t *testing.T) {

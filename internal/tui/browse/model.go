@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/cursor"
@@ -24,6 +25,7 @@ type Backend interface {
 	Query(proto.QueryReq) (proto.QueryResp, error)
 	Hosts() (proto.HostsInfo, error)
 	Delete(id string) error
+	SubmitRecord(rec.Record) error
 	Devices() (proto.DevicesInfo, error)
 	Approve(id string) error
 	Revoke(id string) error
@@ -158,6 +160,8 @@ type Model struct {
 	focus          focus
 	vim            bool // vi-style navigation (from Options.Keymap == "vim")
 	searching      bool
+	tagging        bool // ctrl+t: entering a freeform tag for the selected row
+	tagInput       textinput.Model
 	confirmDelete  bool
 	showHelp       bool
 	executorFilter string // active executor-tag filter (the t key); "" = no filter
@@ -212,6 +216,13 @@ func NewModel(b Backend, opts Options) Model {
 	ti.Cursor.SetMode(cursor.CursorStatic)
 	ti.Cursor.Style = th.Accent
 
+	tagInput := textinput.New()
+	tagInput.Prompt = "tag: "
+	tagInput.Placeholder = "name"
+	tagInput.TextStyle = th.Input
+	tagInput.Cursor.SetMode(cursor.CursorStatic)
+	tagInput.Cursor.Style = th.Accent
+
 	h := help.New()
 	h.Styles.ShortKey = th.Accent
 	h.Styles.ShortDesc = th.Dim
@@ -224,15 +235,16 @@ func NewModel(b Backend, opts Options) Model {
 	vp := viewport.New(0, 0)
 
 	m := Model{
-		b:      b,
-		opts:   opts,
-		th:     th,
-		keys:   defaultKeyMap(vim),
-		vim:    vim,
-		ti:     ti,
-		detail: vp,
-		help:   h,
-		hosts:  []hostItem{{label: "All hosts", scope: proto.ScopeAll}},
+		b:        b,
+		opts:     opts,
+		th:       th,
+		keys:     defaultKeyMap(vim),
+		vim:      vim,
+		ti:       ti,
+		tagInput: tagInput,
+		detail:   vp,
+		help:     h,
+		hosts:    []hostItem{{label: "All hosts", scope: proto.ScopeAll}},
 		// Stats open on the widest window; keys 1..4 narrow it.
 		statsPeriod: len(statPeriods) - 1,
 		focus:       focusTable,
@@ -525,6 +537,21 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	// Tag input focused: esc cancels, enter submits the tag, the rest edits.
+	if m.tagging {
+		switch s {
+		case "esc", "ctrl+c":
+			m.tagging = false
+			m.tagInput.Blur()
+			return m, nil
+		case "enter":
+			return m.submitTag()
+		}
+		var cmd tea.Cmd
+		m.tagInput, cmd = m.tagInput.Update(msg)
+		return m, cmd
+	}
+
 	// Devices view swallows its own keys.
 	if m.view == viewDevices {
 		return m.handleDevicesKey(s)
@@ -591,6 +618,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "t":
 		return m.toggleExecutorFilter()
+	case "ctrl+t":
+		if m.sel >= 0 && m.sel < len(m.rows) {
+			m.tagging = true
+			m.tagInput.SetValue("")
+			m.tagInput.Focus()
+		}
+		return m, nil
 	case "tab":
 		m.cycleFocus(1)
 		return m, nil
@@ -912,6 +946,37 @@ func (m Model) copySelected() (tea.Model, tea.Cmd) {
 		},
 		flashTick(id),
 	)
+}
+
+// submitTag sends a user-tag record for the selected row and optimistically
+// shows the tag at once (the daemon folds it on ingest; a later query confirms).
+func (m Model) submitTag() (tea.Model, tea.Cmd) {
+	name := strings.ToLower(strings.TrimSpace(m.tagInput.Value()))
+	m.tagging = false
+	m.tagInput.Blur()
+	if name == "" || m.sel < 0 || m.sel >= len(m.rows) {
+		return m, nil
+	}
+	r := m.rows[m.sel]
+	m.flashID++
+	if err := m.b.SubmitRecord(rec.Record{ID: rec.NewID(), Type: rec.TypeTag, TagName: name, TargetID: r.ID}); err != nil {
+		m.flash = "tag failed"
+		m.lastErr = err
+		return m, flashTick(m.flashID)
+	}
+	dup := false
+	for _, tg := range m.rows[m.sel].Tags {
+		if tg == name {
+			dup = true
+			break
+		}
+	}
+	if !dup {
+		m.rows[m.sel].Tags = append(m.rows[m.sel].Tags, name)
+		m.hasTags = true
+	}
+	m.flash = "tagged: " + name
+	return m, flashTick(m.flashID)
 }
 
 func (m Model) doDelete() (tea.Model, tea.Cmd) {

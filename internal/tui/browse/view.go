@@ -55,6 +55,10 @@ func (m Model) View() string {
 // searchLine draws the "❯ query" input row. It is never wider than w: the
 // input viewport is clamped in applyLayout and the prompt is two columns.
 func (m Model) searchLine(w int) string {
+	if m.tagging {
+		// tagInput already carries a "tag: " prompt.
+		return clipW(m.th.Prompt.Render("❯ ")+m.tagInput.View(), w)
+	}
 	prompt := m.th.Dim.Render("❯ ")
 	if m.searching {
 		prompt = m.th.Prompt.Render("❯ ")
