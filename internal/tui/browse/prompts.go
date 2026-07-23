@@ -182,20 +182,70 @@ func (m Model) renderPrompts(w, h int) string {
 	lines := []string{promptRow(th.Dim, th.Dim, false, w, th,
 		"WHEN", "SESSION", "EXECUTOR", "CMDS", "STATUS", "DUR", "PROMPT", c)}
 
-	visible := h - 1
+	// A preview of the selected prompt fills the bottom (its full text + rich
+	// metadata the compact row can't show), when the pane is tall enough.
+	var preview []string
+	sel := clampIndex(m.promptSel, len(m.prompts.prompts))
+	if h >= 12 {
+		preview = m.promptPreview(m.prompts.prompts[sel], w)
+	}
+
+	visible := h - 1 - len(preview)
 	if visible < 1 {
 		visible = 1
 	}
-	top := windowStart(m.promptSel, visible, len(m.prompts.prompts))
+	top := windowStart(sel, visible, len(m.prompts.prompts))
 	now := m.now()
 	for i := top; i < len(m.prompts.prompts) && i < top+visible; i++ {
 		p := m.prompts.prompts[i]
 		status, statusStyle := promptStatus(th, p)
-		lines = append(lines, promptRow(th.Norm, statusStyle, i == m.promptSel, w, th,
+		lines = append(lines, promptRow(th.Norm, statusStyle, i == sel, w, th,
 			theme.RelTime(now, p.lastMs), shortSession(p.session), p.executor,
 			strconv.Itoa(p.count), status, promptDur(p), oneLine(p.text), c))
 	}
+	if len(preview) > 0 {
+		if gap := h - len(lines) - len(preview); gap > 0 {
+			lines = append(lines, make([]string, gap)...)
+		}
+		lines = append(lines, preview...)
+	}
 	return padLines(lines, w, h)
+}
+
+// promptPreview renders the selected prompt's full text plus a metadata line
+// (executor, command count, ✓/✗ split, duration, time span, and modal cwd).
+func (m Model) promptPreview(p promptStat, w int) []string {
+	th := m.th
+	now := m.now()
+	meta := fmt.Sprintf("%s · %d cmds · ✓%d ✗%d · %s · %s→%s · %s",
+		p.executor, p.count, p.success, p.failures, promptDur(p),
+		theme.RelTime(now, p.firstMs), theme.RelTime(now, p.lastMs), modalCwd(p.cmds))
+	return []string{
+		"",
+		th.Title.Render(fitPlain("▸ prompt", w)),
+		"  " + th.Norm.Render(clipW(oneLine(p.text), w-2)),
+		"  " + th.Dim.Render(fitPlain(meta, w-2)),
+	}
+}
+
+// modalCwd returns the most common non-empty cwd across a prompt's commands.
+func modalCwd(cmds []rec.Record) string {
+	counts := map[string]int{}
+	best, bestN := "", 0
+	for i := range cmds {
+		cwd := cmds[i].Cwd
+		if cwd == "" {
+			continue
+		}
+		counts[cwd]++
+		if counts[cwd] > bestN {
+			best, bestN = cwd, counts[cwd]
+		}
+	}
+	if best == "" {
+		return "—"
+	}
+	return best
 }
 
 // renderPromptDrill draws the command list for the drilled prompt: the exact
