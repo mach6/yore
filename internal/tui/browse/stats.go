@@ -16,9 +16,18 @@ import (
 
 const sparkDays = 30
 
+// heatmapWeeks is the width (in weeks) of the contribution heatmap. Independent
+// of the selected period, it always shows this much history (like a GitHub
+// activity calendar), so the longer arc of activity is visible.
+const heatmapWeeks = 26
+
 // sparkBlocks are the eight ascending block glyphs used by the histograms
 // (level 1..8).
 var sparkBlocks = []rune("▁▂▃▄▅▆▇█")
+
+// heatShades are the intensity glyphs for the contribution heatmap: index 0 is
+// "no activity", 1..4 are increasing shading.
+var heatShades = []rune("·░▒▓█")
 
 // statPeriods are the selectable stats windows (keys 1..5). days == 0 means all
 // history.
@@ -60,8 +69,32 @@ type statsData struct {
 	hourly   [24]int // counts by hour-of-day (local)
 	hourMax  int
 
+	// Contribution heatmap: [weekday 0=Sun][week column] counts, newest week on
+	// the right. Always spans heatmapWeeks regardless of the period.
+	heat    [7][heatmapWeeks]int
+	heatMax int
+
 	periodLabel string
 	days        int // sparkline window
+}
+
+// foldHeat places a command's local date into the contribution grid: row =
+// weekday (0=Sun), column = weeks ago (0 = oldest shown .. heatmapWeeks-1 =
+// current week). Out-of-window dates are ignored. Pure, for unit testing.
+func foldHeat(heat *[7][heatmapWeeks]int, nowMs, startMs int64) {
+	now := time.UnixMilli(nowMs)
+	d := time.UnixMilli(startMs)
+	// Sunday that starts each date's week (local).
+	weekStart := func(t time.Time) time.Time {
+		t = time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+		return t.AddDate(0, 0, -int(t.Weekday()))
+	}
+	weeksAgo := int(weekStart(now).Sub(weekStart(d)).Hours()/24) / 7
+	col := (heatmapWeeks - 1) - weeksAgo
+	if col < 0 || col >= heatmapWeeks {
+		return
+	}
+	heat[int(d.Weekday())][col]++
 }
 
 // computeStats aggregates a broad row sample into the stats screen's data,
@@ -116,6 +149,7 @@ func computeStats(rows []rec.Record, now int64, periodDays int) *statsData {
 			s.spark[sparkDays-1-day]++
 		}
 		s.hourly[hourOfDay(r.StartMs)]++
+		foldHeat(&s.heat, now, r.StartMs)
 	}
 
 	s.unique = len(programs)
@@ -146,6 +180,13 @@ func computeStats(rows []rec.Record, now int64, periodDays int) *statsData {
 	for _, c := range s.hourly {
 		if c > s.hourMax {
 			s.hourMax = c
+		}
+	}
+	for row := range s.heat {
+		for _, c := range s.heat[row] {
+			if c > s.heatMax {
+				s.heatMax = c
+			}
 		}
 	}
 	return s
@@ -230,15 +271,20 @@ func (m Model) renderStats(w, h int) string {
 	out := make([]string, 0, h)
 	out = append(out, m.kpiHeader(s, w), "")
 
-	// Histograms occupy the bottom; columns fill what remains above them.
-	hist := m.histograms(s, w)
-	bodyH := h - len(out) - len(hist)
+	// The heatmap + histograms occupy the bottom; columns fill what remains above
+	// them. The heatmap (9 lines) is shown only when the pane is tall enough to
+	// still leave room for the ranked columns.
+	bottom := m.histograms(s, w)
+	if h >= 26 {
+		bottom = append(m.renderHeatmap(s, w), bottom...)
+	}
+	bodyH := h - len(out) - len(bottom)
 	if bodyH < 3 {
 		bodyH = 3
 	}
 
 	out = append(out, m.statColumns(s, w, bodyH)...)
-	out = append(out, hist...)
+	out = append(out, bottom...)
 	return padLines(out, w, h)
 }
 
@@ -246,10 +292,6 @@ func (m Model) renderStats(w, h int) string {
 // agent share.
 func (m Model) kpiHeader(s *statsData, w int) string {
 	th := m.th
-	success := "n/a"
-	if s.successPS >= 0 {
-		success = fmt.Sprintf("%.0f%%", s.successPS)
-	}
 	dur := "n/a"
 	if s.avgDurMs >= 0 {
 		dur = theme.Duration(int64(s.avgDurMs))
@@ -257,10 +299,22 @@ func (m Model) kpiHeader(s *statsData, w int) string {
 	seg := func(label, val string) string {
 		return th.Dim.Render(label+" ") + th.Norm.Render(val)
 	}
+	// Success rate is color-coded: green ≥90%, amber ≥70%, else red.
+	successSeg := th.Dim.Render("Success ") + th.Norm.Render("n/a")
+	if s.successPS >= 0 {
+		style := th.ExitErr
+		switch {
+		case s.successPS >= 90:
+			style = th.ExitOK
+		case s.successPS >= 70:
+			style = th.Match
+		}
+		successSeg = th.Dim.Render("Success ") + style.Render(fmt.Sprintf("%.0f%%", s.successPS))
+	}
 	parts := []string{
 		seg("Total", strconv.Itoa(s.total)),
 		seg("Unique", strconv.Itoa(s.unique)),
-		seg("Success", success),
+		successSeg,
 		seg("Avg", dur),
 		seg("Agent", fmt.Sprintf("%.0f%%", s.agentPS)),
 	}
@@ -388,6 +442,48 @@ func (m Model) histograms(s *statsData, w int) []string {
 		hourTitle,
 		renderBars(th, s.hourly[:], s.hourMax, w),
 	}
+}
+
+// heatLevel buckets a count into 0..4 by its fraction of the period's peak day.
+func heatLevel(cnt, peak int) int {
+	if cnt <= 0 || peak <= 0 {
+		return 0
+	}
+	switch {
+	case cnt*4 <= peak:
+		return 1
+	case cnt*2 <= peak:
+		return 2
+	case cnt*4 <= peak*3:
+		return 3
+	default:
+		return 4
+	}
+}
+
+// renderHeatmap draws the contribution calendar: 7 weekday rows × heatmapWeeks
+// columns, each cell shaded by activity intensity (a GitHub-style graph).
+func (m Model) renderHeatmap(s *statsData, w int) []string {
+	th := m.th
+	labels := [7]string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
+	lines := []string{
+		"",
+		th.Title.Render(fitPlain(fmt.Sprintf("Activity (last %d weeks) · peak %d/day", heatmapWeeks, s.heatMax), w)),
+	}
+	for row := 0; row < 7; row++ {
+		var b strings.Builder
+		b.WriteString(th.Dim.Render(labels[row] + " "))
+		for col := 0; col < heatmapWeeks; col++ {
+			lvl := heatLevel(s.heat[row][col], s.heatMax)
+			if lvl == 0 {
+				b.WriteString(th.Dim.Render(string(heatShades[0])))
+			} else {
+				b.WriteString(th.Accent.Render(string(heatShades[lvl])))
+			}
+		}
+		lines = append(lines, clipW(b.String(), w))
+	}
+	return lines
 }
 
 // renderBars draws a block-glyph histogram of vals, one glyph per value, capped
