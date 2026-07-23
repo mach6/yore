@@ -168,6 +168,60 @@ func installCodexHooks(bin string, project bool, u *ui) error {
 	return nil
 }
 
+// codexMcpMarker is the table header we search for to know MCP is registered.
+const codexMcpMarker = "[mcp_servers.yore]"
+
+// codexMcpBlock renders the TOML to register yore's MCP server with Codex.
+func codexMcpBlock(bin string) string {
+	return "\n# yore — MCP server (added by `yore init codex`)\n" +
+		codexMcpMarker + "\n" +
+		"command = \"" + bin + "\"\n" +
+		"args = [\"mcp-serve\"]\n"
+}
+
+// registerCodexMcp appends the MCP-server registration to config.toml unless it
+// is already present (idempotent).
+func registerCodexMcp(bin string, project bool, u *ui) error {
+	path, err := codexConfigPath(project)
+	if err != nil {
+		return err
+	}
+	existing := ""
+	if data, rerr := os.ReadFile(path); rerr == nil {
+		existing = string(data)
+	} else if !os.IsNotExist(rerr) {
+		return rerr
+	}
+	if strings.Contains(existing, codexMcpMarker) {
+		u.step("MCP server already registered", path)
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if existing != "" && !strings.HasSuffix(existing, "\n") {
+		existing += "\n"
+	}
+	if err := os.WriteFile(path, []byte(existing+codexMcpBlock(bin)), 0o644); err != nil {
+		return err
+	}
+	u.step("registered MCP server", path)
+	return nil
+}
+
+// codexMcpRegistered reports whether yore's MCP server is in ~/.codex/config.toml.
+func codexMcpRegistered() bool {
+	path, err := codexConfigPath(false)
+	if err != nil {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(data), codexMcpMarker)
+}
+
 // codexHooksInstalled reports whether ~/.codex/config.toml has yore's capture
 // hooks (for the given bin).
 func codexHooksInstalled(bin string) bool {
@@ -191,7 +245,11 @@ func runInitCodex(bin string, project bool) int {
 		u.fail(err.Error())
 		return 1
 	}
+	if err := registerCodexMcp(bin, project, u); err != nil {
+		u.step("could not register MCP server (capture still works)", err.Error())
+	}
 	u.step("captures every Bash command Codex runs", "tagged "+agentCodex+", traced to its prompt")
+	u.step("Codex can also query your history via MCP", "cross-machine, end-to-end encrypted")
 	u.blank()
 	u.next("start a new Codex session, then see agent commands with:",
 		"yore search --executor "+agentCodex,

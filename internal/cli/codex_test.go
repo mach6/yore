@@ -83,6 +83,25 @@ func TestCodexHooksBlockIsValidToml(t *testing.T) {
 	assert.Equal(t, "yore hook codex", inner[0].(map[string]any)["command"])
 }
 
+func TestCodexMcpBlockIsValidToml(t *testing.T) {
+	var parsed map[string]any
+	require.NoError(t, toml.Unmarshal([]byte(codexMcpBlock("yore")), &parsed))
+	servers := parsed["mcp_servers"].(map[string]any)
+	yore := servers["yore"].(map[string]any)
+	assert.Equal(t, "yore", yore["command"], "command is a string per Codex's schema")
+	assert.Equal(t, []any{"mcp-serve"}, yore["args"])
+}
+
+func TestCodexHooksAndMcpComposeAsValidToml(t *testing.T) {
+	// The two appended blocks together must parse as one valid config.
+	combined := "model = \"o1\"\n" + codexHooksBlock("yore") + codexMcpBlock("yore")
+	var parsed map[string]any
+	require.NoError(t, toml.Unmarshal([]byte(combined), &parsed))
+	assert.Equal(t, "o1", parsed["model"])
+	assert.Contains(t, parsed, "hooks")
+	assert.Contains(t, parsed, "mcp_servers")
+}
+
 func TestInstallCodexHooksPreservesExisting(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	require.NoError(t, os.WriteFile(path, []byte("model = \"o1\"\n[tui]\ntheme = \"dark\"\n"), 0o644))

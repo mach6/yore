@@ -194,6 +194,93 @@ func installOpenCodePlugin(bin string, project bool, u *ui) error {
 	return nil
 }
 
+// --- OpenCode MCP registration ----------------------------------------------
+
+// opencodeConfigPath resolves OpenCode's config file: the project opencode.json
+// with --project, else the user ~/.config/opencode/opencode.json.
+func opencodeConfigPath(project bool) (string, error) {
+	if project {
+		return "opencode.json", nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".config", "opencode", "opencode.json"), nil
+}
+
+// mergeOpenCodeMcp registers yore under the config's "mcp" map (a local stdio
+// server) unless it is already there. Returns whether it changed anything.
+func mergeOpenCodeMcp(cfg map[string]any, bin string) bool {
+	mcp, _ := cfg["mcp"].(map[string]any)
+	if mcp == nil {
+		mcp = map[string]any{}
+	}
+	if _, ok := mcp["yore"]; ok {
+		return false
+	}
+	mcp["yore"] = map[string]any{
+		"type":    "local",
+		"command": []any{bin, "mcp-serve"},
+		"enabled": true,
+	}
+	cfg["mcp"] = mcp
+	return true
+}
+
+// registerOpenCodeMcp merges yore's MCP server into OpenCode's config, preserving
+// everything else. A malformed existing file is left alone.
+func registerOpenCodeMcp(bin string, project bool, u *ui) error {
+	path, err := opencodeConfigPath(project)
+	if err != nil {
+		return err
+	}
+	cfg := map[string]any{}
+	if data, rerr := os.ReadFile(path); rerr == nil {
+		if json.Unmarshal(data, &cfg) != nil {
+			u.step("skipped MCP registration (existing opencode.json is not valid JSON)", path)
+			return nil //nolint:nilerr // intentional: leave the unparseable file untouched
+		}
+	} else if !os.IsNotExist(rerr) {
+		return rerr
+	}
+	if !mergeOpenCodeMcp(cfg, bin) {
+		u.step("MCP server already registered", path)
+		return nil
+	}
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, append(out, '\n'), 0o644); err != nil {
+		return err
+	}
+	u.step("registered MCP server", path)
+	return nil
+}
+
+// opencodeMcpRegistered reports whether yore's MCP server is in OpenCode's config.
+func opencodeMcpRegistered() bool {
+	path, err := opencodeConfigPath(false)
+	if err != nil {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var cfg map[string]any
+	if json.Unmarshal(data, &cfg) != nil {
+		return false
+	}
+	mcp, _ := cfg["mcp"].(map[string]any)
+	_, ok := mcp["yore"]
+	return ok
+}
+
 // opencodePluginInstalled reports whether yore's OpenCode plugin is present.
 func opencodePluginInstalled() bool {
 	path, err := opencodePluginPath(false)
@@ -213,7 +300,11 @@ func runInitOpenCode(bin string, project bool) int {
 		u.fail(err.Error())
 		return 1
 	}
+	if err := registerOpenCodeMcp(bin, project, u); err != nil {
+		u.step("could not register MCP server (capture still works)", err.Error())
+	}
 	u.step("captures every command OpenCode's agent runs", "tagged "+agentOpenCode+", traced to its prompt")
+	u.step("OpenCode can also query your history via MCP", "cross-machine, end-to-end encrypted")
 	u.blank()
 	u.next("restart OpenCode, then see agent commands with:",
 		"yore search --executor "+agentOpenCode,

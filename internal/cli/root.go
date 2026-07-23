@@ -294,11 +294,11 @@ func newInitCmd() *cobra.Command {
 			"cursor installs Cursor capture hooks (records the commands its agent\n" +
 			"runs, tagged cursor, traced to prompts) and registers the MCP server:\n" +
 			"  yore init cursor                  # ~/.cursor/hooks.json + ~/.cursor/mcp.json\n\n" +
-			"opencode installs a capture plugin so the commands its agent runs are\n" +
-			"recorded (tagged opencode, with exit status + prompt tracing):\n" +
-			"  yore init opencode                # ~/.config/opencode/plugins/yore.js\n\n" +
-			"codex installs PostToolUse + UserPromptSubmit hooks so the commands\n" +
-			"Codex runs are recorded (tagged codex, traced to prompts):\n" +
+			"opencode installs a capture plugin (records its agent's commands,\n" +
+			"tagged opencode, with exit + prompt tracing) and registers the MCP server:\n" +
+			"  yore init opencode                # ~/.config/opencode/{plugins/yore.js,opencode.json}\n\n" +
+			"codex installs PostToolUse + UserPromptSubmit hooks (tagged codex, traced\n" +
+			"to prompts) and registers the MCP server:\n" +
 			"  yore init codex                   # ~/.codex/config.toml",
 		Args:      cobra.ExactArgs(1),
 		ValidArgs: []cobra.Completion{"zsh", "bash", "claude-code", "cursor", "opencode", "codex"},

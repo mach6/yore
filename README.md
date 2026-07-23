@@ -159,7 +159,7 @@ rm -rf ~/.config/yore         # all of yore's state
   For agents whose commands run in a *non-interactive* shell the rc hooks never
   see, `yore init claude-code` / `cursor` / `opencode` / `codex` install their
   native hooks/plugin (with prompt tracing + exit status where the agent exposes
-  it) and, for Claude Code / Cursor, register the MCP server.
+  it) and register the MCP server so the agent can query your history back.
 - **MCP server for your agents** — `yore init claude-code` (or `yore init
   cursor`) wires up a local, read-only MCP server so a coding agent can query
   your history back: search, failures, prompts, stats, and `assess_risk` —

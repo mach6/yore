@@ -72,8 +72,14 @@ func runDoctor() int {
 	if opencodePluginInstalled() {
 		ok("OpenCode capture plugin installed (~/.config/opencode/plugins/yore.js)")
 	}
+	if opencodeMcpRegistered() {
+		ok("MCP server registered for OpenCode (~/.config/opencode/opencode.json)")
+	}
 	if codexHooksInstalled(shell.DefaultBin) {
 		ok("Codex capture hooks installed (~/.codex/config.toml)")
+	}
+	if codexMcpRegistered() {
+		ok("MCP server registered for Codex (~/.codex/config.toml)")
 	}
 	if p, perr := cursorMcpPath(false); perr == nil && mcpRegistered(p) {
 		ok("MCP server registered for Cursor (" + p + ")")

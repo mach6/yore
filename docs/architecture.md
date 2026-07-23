@@ -236,7 +236,8 @@ writes `~/.config/opencode/plugins/yore.js` (or `.opencode/plugins/` with
 `message.part.updated` events and pipes JSON to `yore hook opencode` /
 `opencode-prompt` — capturing command, cwd (`args.workdir`), **exit code**
 (`output.metadata.exit`), and the triggering prompt, correlated by session
-(`opencode-<id>`).
+(`opencode-<id>`). It also registers the MCP server under the `mcp` key of
+`~/.config/opencode/opencode.json` (a local stdio server).
 
 **Codex** (OpenAI's CLI) has Claude-Code-shaped hooks, so `yore init codex`
 appends `[[hooks.PostToolUse]]` (matcher `^Bash$`) and `[[hooks.UserPromptSubmit]]`
@@ -244,7 +245,11 @@ blocks to `~/.codex/config.toml` (running `yore hook codex` / `codex-prompt`).
 The payload shares `claudeHookInput`'s shape (`session_id`, `cwd`,
 `tool_input.command`, `tool_response`, `prompt`); Codex has no separate failure
 event and doesn't document its `tool_response` exit field, so exit is
-best-effort (`tool_response.exit_code` when present, else unknown).
+best-effort (`tool_response.exit_code` when present, else unknown). It also
+appends an `[mcp_servers.yore]` block registering the MCP server.
+
+All MCP/hook installers are additive and idempotent, preserve unrelated config,
+and are verified by `yore doctor` (per-agent capture + MCP registration checks).
 
 ## MCP server (`internal/mcp`)
 

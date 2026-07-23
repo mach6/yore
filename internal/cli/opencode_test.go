@@ -78,3 +78,15 @@ func TestOpenCodePluginPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ".opencode/plugins/yore.js", p, "project path is verbatim per OpenCode docs")
 }
+
+func TestMergeOpenCodeMcp(t *testing.T) {
+	cfg := map[string]any{"model": "x"}
+	require.True(t, mergeOpenCodeMcp(cfg, "yore"))
+	require.False(t, mergeOpenCodeMcp(cfg, "yore"), "idempotent")
+
+	assert.Equal(t, "x", cfg["model"], "unrelated keys preserved")
+	yore := cfg["mcp"].(map[string]any)["yore"].(map[string]any)
+	assert.Equal(t, "local", yore["type"])
+	assert.Equal(t, []any{"yore", "mcp-serve"}, yore["command"], "command is an array per OpenCode's schema")
+	assert.Equal(t, true, yore["enabled"])
+}
