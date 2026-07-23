@@ -175,6 +175,31 @@ func TestOutOfOrderResponseDiscarded(t *testing.T) {
 	require.NotContainsf(t, out, "stale-one", "view contains discarded stale-one:\n%s", out)
 }
 
+// TestHostColumnOnlyForScopeAll is the fix: only --scope all can return other
+// hosts' rows, so only there does the row prefix carry a host column. Every
+// other scope (local/session/cwd/workspace, and the Ctrl-R default) hides it.
+func TestHostColumnOnlyForScopeAll(t *testing.T) {
+	rows := []rec.Record{{
+		ID: "0", Cmd: "git status", Hostname: "zbox42",
+		StartMs: time.Now().UnixMilli(), Exit: rec.IntPtr(0),
+	}}
+
+	nonAll := []string{proto.ScopeLocal, proto.ScopeSession, proto.ScopeCwd, proto.ScopeWorkspace}
+	for _, scope := range nonAll {
+		m := NewModel(&fakeQuerier{}, Options{Scope: scope, Session: "S", Cwd: "/w"})
+		m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(rows)})
+		out := strip(m.View())
+		require.Containsf(t, out, "git status", "%s: row missing:\n%s", scope, out)
+		require.NotContainsf(t, out, "zbox42", "%s must NOT show the host column:\n%s", scope, out)
+	}
+
+	// --scope all shows the host column.
+	m := NewModel(&fakeQuerier{}, Options{Scope: proto.ScopeAll})
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(rows)})
+	out := strip(m.View())
+	require.Containsf(t, out, "zbox42", "all scope must show the host column:\n%s", out)
+}
+
 func TestNewModelInitialScope(t *testing.T) {
 	tests := []struct {
 		name string

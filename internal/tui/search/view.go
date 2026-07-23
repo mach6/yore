@@ -22,10 +22,24 @@ const (
 	relW  = 8
 	hostW = 10
 	exitW = 4
-	// one space separates each of the three prefix cells and precedes the
-	// command, so the command starts at a fixed column.
-	prefixW = relW + 1 + hostW + 1 + exitW + 1
+	// A space separates each prefix cell and precedes the command, so the
+	// command starts at a fixed column. The host cell is only present for
+	// --scope all (the only scope that spans hosts); see prefixWidth.
+	prefixNoHost = relW + 1 + exitW + 1
+	prefixW      = relW + 1 + hostW + 1 + exitW + 1
 )
+
+// showHost reports whether the host column is shown: only --scope all can
+// return rows from other hosts, so only there is a host column meaningful.
+func (m Model) showHost() bool { return m.scope == proto.ScopeAll }
+
+// prefixWidth is the row prefix width for the current scope.
+func (m Model) prefixWidth() int {
+	if m.showHost() {
+		return prefixW
+	}
+	return prefixNoHost
+}
 
 // command-cell run kinds. Normal runs carry an hl.Kind directly (values 0..N),
 // so kindMatch/kindMarker are offset well above the hl.Kind range.
@@ -108,11 +122,13 @@ func (m Model) renderRow(r rec.Record, q match.Query, selected bool, w int, nowM
 		styledSeg{text: " ", raw: true},
 	)
 
-	host := padRight(truncCols(r.Hostname, hostW), hostW)
-	segs = append(segs,
-		styledSeg{text: host, style: th.Host(r.Hostname)},
-		styledSeg{text: " ", raw: true},
-	)
+	if m.showHost() {
+		host := padRight(truncCols(r.Hostname, hostW), hostW)
+		segs = append(segs,
+			styledSeg{text: host, style: th.Host(r.Hostname)},
+			styledSeg{text: " ", raw: true},
+		)
+	}
 
 	mark, markStyle := m.exitMarker(r)
 	segs = append(segs,
@@ -120,7 +136,7 @@ func (m Model) renderRow(r rec.Record, q match.Query, selected bool, w int, nowM
 		styledSeg{text: " ", raw: true},
 	)
 
-	avail := w - prefixW - 2 // 2 cols reserved for the selection marker gutter
+	avail := w - m.prefixWidth() - 2 // 2 cols reserved for the selection marker gutter
 	if avail < 1 {
 		avail = 1
 	}
