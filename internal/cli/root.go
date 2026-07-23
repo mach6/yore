@@ -296,9 +296,12 @@ func newInitCmd() *cobra.Command {
 			"  yore init cursor                  # ~/.cursor/hooks.json + ~/.cursor/mcp.json\n\n" +
 			"opencode installs a capture plugin so the commands its agent runs are\n" +
 			"recorded (tagged opencode, with exit status + prompt tracing):\n" +
-			"  yore init opencode                # ~/.config/opencode/plugins/yore.js",
+			"  yore init opencode                # ~/.config/opencode/plugins/yore.js\n\n" +
+			"codex installs PostToolUse + UserPromptSubmit hooks so the commands\n" +
+			"Codex runs are recorded (tagged codex, traced to prompts):\n" +
+			"  yore init codex                   # ~/.codex/config.toml",
 		Args:      cobra.ExactArgs(1),
-		ValidArgs: []cobra.Completion{"zsh", "bash", "claude-code", "cursor", "opencode"},
+		ValidArgs: []cobra.Completion{"zsh", "bash", "claude-code", "cursor", "opencode", "codex"},
 		RunE: func(_ *cobra.Command, args []string) error {
 			switch args[0] {
 			case "claude-code":
@@ -307,6 +310,8 @@ func newInitCmd() *cobra.Command {
 				return code(runInitCursor(bin, project))
 			case "opencode":
 				return code(runInitOpenCode(bin, project))
+			case "codex":
+				return code(runInitCodex(bin, project))
 			}
 			return code(runInit(args[0], bin, mode, noAliases))
 		},
@@ -429,6 +434,18 @@ func newHookCmd() *cobra.Command {
 		Short: "Record a prompt from the OpenCode capture plugin (reads JSON on stdin)",
 		Args:  cobra.NoArgs,
 		RunE:  func(*cobra.Command, []string) error { runHookOpenCodePrompt(); return nil },
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "codex",
+		Short: "Record a Bash command from a Codex PostToolUse hook (reads JSON on stdin)",
+		Args:  cobra.NoArgs,
+		RunE:  func(*cobra.Command, []string) error { runHookCodex(); return nil },
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "codex-prompt",
+		Short: "Record a prompt from a Codex UserPromptSubmit hook (reads JSON on stdin)",
+		Args:  cobra.NoArgs,
+		RunE:  func(*cobra.Command, []string) error { runHookCodexPrompt(); return nil },
 	})
 	return cmd
 }

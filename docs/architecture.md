@@ -238,6 +238,14 @@ writes `~/.config/opencode/plugins/yore.js` (or `.opencode/plugins/` with
 (`output.metadata.exit`), and the triggering prompt, correlated by session
 (`opencode-<id>`).
 
+**Codex** (OpenAI's CLI) has Claude-Code-shaped hooks, so `yore init codex`
+appends `[[hooks.PostToolUse]]` (matcher `^Bash$`) and `[[hooks.UserPromptSubmit]]`
+blocks to `~/.codex/config.toml` (running `yore hook codex` / `codex-prompt`).
+The payload shares `claudeHookInput`'s shape (`session_id`, `cwd`,
+`tool_input.command`, `tool_response`, `prompt`); Codex has no separate failure
+event and doesn't document its `tool_response` exit field, so exit is
+best-effort (`tool_response.exit_code` when present, else unknown).
+
 ## MCP server (`internal/mcp`)
 
 `yore mcp-serve` is a local, read-only [Model Context Protocol](https://modelcontextprotocol.io)
