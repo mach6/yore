@@ -56,8 +56,8 @@ Concise map by role. Leaf-contract packages import nothing else in the tree.
 
 **Leaf contracts:**
 - **rec** — the `Record` type. Its JSON is the encoding for both the spool and
-  (as the sealed plaintext) the sync payload. ULID `id`; `type` `""`(command) or
-  `"delete"`(tombstone).
+  (as the sealed plaintext) the sync payload. ULID `id`; `type` `""`(command),
+  `"delete"`(tombstone), or `"tag"`(a user-tag add/remove).
 - **proto** — the newline-delimited-JSON protocol over the daemon's unix socket.
 - **wire** — the JSON types of the server's HTTP API.
 - **config** — resolves the single state dir (`$YORE_DIR`, else `~/.config/yore/`)
@@ -78,7 +78,11 @@ Concise map by role. Leaf-contract packages import nothing else in the tree.
 - **tui/theme**, **tui/hl** — adaptive lipgloss styles; a best-effort shell-command
   syntax classifier layered under match highlighting.
 - **tui/search** — the inline Ctrl-R panel. **tui/browse** — the full-screen
-  browser (hosts / table / detail / stats / devices panes).
+  browser (hosts / table / detail panes plus stats / agents / prompts / devices
+  screens).
+- **risk** — a deterministic, rule-based command classifier (`safe…critical`).
+- **mcp** — the local, read-only MCP server (`yore mcp-serve`) over the daemon
+  query layer; exposes history to coding agents. See "MCP server" below.
 
 **Security & sync:**
 - **cryptobox** — the E2E core (device X25519+Ed25519 keys, History Key, epoch
@@ -126,8 +130,9 @@ local bbolt store and the authority for all search.
 |---|---|
 | `ping` | liveness + reset idle timer + nudge spool ingest |
 | `record` | spool one record (fsync) + nudge ingest — same durability as the CLI |
-| `query` | search (scope, sort, fuzzy, tag, dedupe, paging) |
+| `query` | search (scope, sort, fuzzy, executor + freeform-tag filter, dedupe, paging) |
 | `hosts` | per-host live-record counts (browse sidebar); warms the remote cache |
+| `tags` | list known user tags with their counts |
 | `delete` | tombstone one record by id (syncs as a tombstone) |
 | `devices` | list enrolled devices (proxied to the syncer) |
 | `token` | mint a single-use enrollment token (proxied to the syncer) |

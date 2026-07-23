@@ -14,6 +14,11 @@ searchable on every machine you use — pointed at a sync server you host, and
 `Ctrl-R`, the `hb`/`hs` aliases, or `yore search`. It's one static, CGO-free Go
 binary: client, background daemon, TUIs, importer, **and** sync server.
 
+It also gives your **AI coding agents** a memory: it captures what Claude Code,
+Cursor, OpenCode, and Codex run (traced to the prompt that caused it) and serves
+your cross-machine history back to them over **MCP** — end-to-end encrypted,
+nothing leaving your devices.
+
 ## Why yore
 
 Built for a threat model most history tools don't serve:
@@ -59,6 +64,7 @@ this specific model.
 | Cross-shell (zsh + bash) | Yes | Yes | Yes | Yes | Yes |
 | Rich interactive TUI | Yes | Yes | Yes | Yes | No (basic `Ctrl-R`) |
 | Agent/executor tagging | Yes | No | No | No | No |
+| AI agents query your history (MCP, cross-machine) | Yes | No | No | No | No |
 | Single static binary | Yes | Yes | Yes | Yes | n/a |
 
 Blank cells (`—`) aren't guessed. Atuin and hiSHtory both do E2E sync, but with a
@@ -139,36 +145,24 @@ rm -rf ~/.config/yore         # all of yore's state
   frecency and fuzzy matching, syntax highlighting; Enter runs the pick by default
   (`enter_executes`).
 - **`hb` browser** — hosts / table / detail panes, plus full-screen **stats**
-  (`s`: KPIs, top programs/commands/dirs, by-executor, per-day + hourly
-  histograms, period tabs), an **agent monitor** (`a`: per-agent commands,
-  success rate, failures, avg duration), a **prompt explorer** (`p`: one row per
-  agent prompt with executor, session, command count, status and duration —
-  `Enter` drills into the exact commands that prompt triggered), and **devices**
-  (`D`). A tag column and `t` filter, `S` sync-now; Enter recalls the pick, `y`
-  copies. (yore leaves your own `h` alone.)
+  (`s`: KPIs, top programs/commands/dirs, per-host, a contribution heatmap +
+  hourly histogram, period tabs), an **agent monitor** (`a`), a **prompt
+  explorer** (`p`: drill from a prompt into the exact commands it triggered), and
+  **devices** (`D`). Tags column, `t` executor filter, `Ctrl+T` tag a row, `S`
+  sync-now; Enter recalls, `y` copies. (yore leaves your own `h` alone.)
 - **`hs` + scoped `hsa`/`hss`/`hsc`/`hsw`** search aliases; `yore search
   --headless` for scripts and pipes.
-- **Freeform tags** — label commands and sessions with any tags you like
-  (`yore tag add refactor`), filter with `yore search --tag refactor`. A record
-  can carry several. The agent/executor is just an **auto-applied** tag, so an
-  agent's refactor commands can read `claude-code` *and* `refactor` at once.
-  `auto_tags` config tags commands by directory. Tags sync end-to-end.
-- **Agent tracking** — commands an agent runs are auto-tagged so you can tell
-  them from what you typed (`yore search --executor claude-code`). In your
-  interactive shell, `CLAUDECODE` / Cursor / aider (or `$YORE_TAG`) auto-detect.
-  For agents whose commands run in a *non-interactive* shell the rc hooks never
-  see, `yore init claude-code` / `cursor` / `opencode` / `codex` install their
-  native hooks/plugin (with prompt tracing + exit status where the agent exposes
-  it) and register the MCP server so the agent can query your history back.
-- **MCP server for your agents** — `yore init claude-code` (or `yore init
-  cursor`) wires up a local, read-only MCP server so a coding agent can query
-  your history back: search, failures, prompts, stats, and `assess_risk` —
-  **across every machine you own** (end-to-end encrypted, nothing leaves your
-  devices). Ask *"have I run this migration anywhere?"* or *"what failed in this
-  project recently?"*. `yore doctor` verifies the hooks + MCP registration.
-- **Risk checks** — a deterministic classifier rates a command `safe…critical`
-  with a reason, exposed to agents via `assess_risk` (history-aware: *"run 3×
-  across your machines, 1 failed"*).
+- **Freeform tags** — label commands and sessions (`yore tag add refactor`,
+  filter `yore search --tag refactor`); a record can carry several, the executor
+  is just an auto-applied one, `auto_tags` tags by directory, and they sync E2E.
+- **AI-agent capture** — auto-tags what agents run (`--executor claude-code`);
+  `yore init claude-code | cursor | opencode | codex` installs each one's native
+  hooks/plugin so even their non-interactive shells are captured, prompt-traced,
+  with exit status where the agent exposes it.
+- **Agent memory over MCP** — the same `init` registers a local, read-only MCP
+  server so an agent can query your history back — search, failures, prompts,
+  stats, and a history-aware `assess_risk` (*"run 3× across your machines, 1
+  failed"*) — **across every machine you own**. `yore doctor` verifies it.
 - **Secrets redaction** from an editable, fail-safe `~/.config/yore/redact.yml`;
   runs on capture, on import, and on the history seed.
 - **Import** your existing history idempotently (`yore import auto`).

@@ -331,7 +331,9 @@ generation. `epoch` is unix millis of the epoch start.
 
 Each record's plaintext is the JSON of its meaningful fields — `{v:1, id,
 host_id, hostname, session, cmd, cwd, exit, dur_ms, start_ms, tag, type,
-target_id, prompt_id, prompt}` — so **everything, including the hostname, travels encrypted**. The
+target_id, prompt_id, prompt, tag_name, tag_desc, tag_op}` — so **everything,
+including the hostname, travels encrypted**. (`tag` is the executor auto-tag;
+`tag_name`/`tag_desc`/`tag_op` carry a user-tag record when `type == "tag"`.) The
 stream metadata (`seq`, `key_id`, and the outer `id`) rides in the wire record,
 not the ciphertext, and is bound as AAD.
 
@@ -432,8 +434,10 @@ never touches the network and is unrelated to the HTTP API above.
 | `record` | `record` | `ok` (spools + fsyncs, nudges ingest) |
 | `query` | `query` | `query` (`QueryResp`) |
 | `hosts` | — | `hosts` (`HostsInfo`) |
+| `tags` | — | `tags` (`TagsInfo`: known user tags + counts) |
 | `delete` | `delete_id` | `ok` |
 | `devices` | — | `devices` (`DevicesInfo`) |
+| `token` | — | `token` (`TokenInfo`: a single-use enrollment token) |
 | `approve` | `device_id` | `ok` |
 | `revoke` | `device_id` | `ok` (revoke + key rotation) |
 | `sync` | — | `ok` (runs a full synchronous push/pull cycle) |
