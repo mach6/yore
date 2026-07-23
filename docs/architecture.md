@@ -230,6 +230,14 @@ the command and a duration but no exit code, so Cursor commands record duration
 and prompt tracing with an unknown exit; its prompt hook always emits
 `{"continue": true}` so it never blocks a prompt.
 
+**OpenCode** uses a JS plugin rather than command hooks, so `yore init opencode`
+writes `~/.config/opencode/plugins/yore.js` (or `.opencode/plugins/` with
+--project). The plugin adapts OpenCode's `tool.execute.after` (bash) and
+`message.part.updated` events and pipes JSON to `yore hook opencode` /
+`opencode-prompt` — capturing command, cwd (`args.workdir`), **exit code**
+(`output.metadata.exit`), and the triggering prompt, correlated by session
+(`opencode-<id>`).
+
 ## MCP server (`internal/mcp`)
 
 `yore mcp-serve` is a local, read-only [Model Context Protocol](https://modelcontextprotocol.io)

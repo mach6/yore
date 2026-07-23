@@ -293,15 +293,20 @@ func newInitCmd() *cobra.Command {
 			"  yore init claude-code --print     # print the JSON, install by hand\n\n" +
 			"cursor installs Cursor capture hooks (records the commands its agent\n" +
 			"runs, tagged cursor, traced to prompts) and registers the MCP server:\n" +
-			"  yore init cursor                  # ~/.cursor/hooks.json + ~/.cursor/mcp.json",
+			"  yore init cursor                  # ~/.cursor/hooks.json + ~/.cursor/mcp.json\n\n" +
+			"opencode installs a capture plugin so the commands its agent runs are\n" +
+			"recorded (tagged opencode, with exit status + prompt tracing):\n" +
+			"  yore init opencode                # ~/.config/opencode/plugins/yore.js",
 		Args:      cobra.ExactArgs(1),
-		ValidArgs: []cobra.Completion{"zsh", "bash", "claude-code", "cursor"},
+		ValidArgs: []cobra.Completion{"zsh", "bash", "claude-code", "cursor", "opencode"},
 		RunE: func(_ *cobra.Command, args []string) error {
 			switch args[0] {
 			case "claude-code":
 				return code(runInitClaudeCode(bin, project, prnt))
 			case "cursor":
 				return code(runInitCursor(bin, project))
+			case "opencode":
+				return code(runInitOpenCode(bin, project))
 			}
 			return code(runInit(args[0], bin, mode, noAliases))
 		},
@@ -412,6 +417,18 @@ func newHookCmd() *cobra.Command {
 		Short: "Record a prompt from a Cursor beforeSubmitPrompt hook (reads JSON on stdin)",
 		Args:  cobra.NoArgs,
 		RunE:  func(*cobra.Command, []string) error { runHookCursorPrompt(); return nil },
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "opencode",
+		Short: "Record a command from the OpenCode capture plugin (reads JSON on stdin)",
+		Args:  cobra.NoArgs,
+		RunE:  func(*cobra.Command, []string) error { runHookOpenCode(); return nil },
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "opencode-prompt",
+		Short: "Record a prompt from the OpenCode capture plugin (reads JSON on stdin)",
+		Args:  cobra.NoArgs,
+		RunE:  func(*cobra.Command, []string) error { runHookOpenCodePrompt(); return nil },
 	})
 	return cmd
 }
