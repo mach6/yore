@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -799,144 +800,397 @@ func TestDevicesPane(t *testing.T) {
 	require.Equal(t, viewBrowse, m.view, "esc did not leave devices view")
 }
 
-func TestAgentsViewRenders(t *testing.T) {
-	// Two agent-tagged rows plus one human row; the agent view must summarize the
-	// agents and exclude the human command.
-	rows := mkRows("cargo test", "cargo build", "ls")
-	rows[0].Tag = "claude-code"
-	rows[1].Tag = "claude-code"
-	rows[1].Exit = rec.IntPtr(1) // one failure
-	// rows[2] stays untagged (a human command)
+// --- agent explorer -------------------------------------------------------
+
+// mouseAt builds a mouse event at a screen cell.
+func mouseAt(x, y int, action tea.MouseAction, btn tea.MouseButton) tea.MouseMsg {
+	return tea.MouseMsg{X: x, Y: y, Action: action, Button: btn}
+}
+
+func click(x, y int) tea.MouseMsg {
+	return mouseAt(x, y, tea.MouseActionPress, tea.MouseButtonLeft)
+}
+
+func dragTo(x, y int) tea.MouseMsg {
+	return mouseAt(x, y, tea.MouseActionMotion, tea.MouseButtonLeft)
+}
+
+func mouseUp(x int) tea.MouseMsg {
+	return mouseAt(x, 5, tea.MouseActionRelease, tea.MouseButtonLeft)
+}
+
+func wheelAt(x, y int, btn tea.MouseButton) tea.MouseMsg {
+	return mouseAt(x, y, tea.MouseActionPress, btn)
+}
+
+// agentRows builds a sample with two executors: claude-code ran two commands
+// under prompt p1, devin one (failing) under p2.
+func agentSample() []rec.Record {
+	rows := mkRows("cargo add tower", "cargo build", "cargo test")
+	rows[0].Tag, rows[0].PromptID, rows[0].Prompt, rows[0].Session = "claude-code", "p1", "add rate limiting", "sessionAAAA1111"
+	rows[1].Tag, rows[1].PromptID, rows[1].Prompt, rows[1].Session = "claude-code", "p1", "add rate limiting", "sessionAAAA1111"
+	rows[2].Tag, rows[2].PromptID, rows[2].Prompt, rows[2].Session = "devin", "p2", "fix the N+1 query", "sessionBBBB2222"
+	rows[2].Exit = rec.IntPtr(1)
+	return rows
+}
+
+// openAgents opens the agent explorer and delivers the shared stats sample so
+// every aggregation is populated.
+func openAgents(t *testing.T, m Model) Model {
+	t.Helper()
+	m, cmd := step(t, m, press("a"))
+	require.Equal(t, viewAgents, m.view, "`a` did not switch to the agent explorer")
+	require.NotNil(t, cmd, "opening the explorer issued no aggregation query")
+	sr, ok := cmd().(statsResultMsg)
+	require.True(t, ok, "the explorer's command must yield a statsResultMsg (shared sample)")
+	m, _ = step(t, m, sr)
+	return m
+}
+
+func agentModel(t *testing.T, w, h int) Model {
+	t.Helper()
 	f := &fakeBackend{
 		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 3}}},
-		resp:  mkResp(rows),
+		resp:  mkResp(agentSample()),
 	}
-	m := ready(t, f, 120, 40)
+	return openAgents(t, ready(t, f, w, h))
+}
 
-	m, cmd := step(t, m, press("a"))
-	require.Equal(t, viewAgents, m.view, "`a` did not switch to the agents view")
-	require.NotNil(t, cmd, "opening agents issued no aggregation query")
-	sr, ok := cmd().(statsResultMsg)
-	require.True(t, ok, "agents command must yield a statsResultMsg (shared sample)")
-	m, _ = step(t, m, sr)
-
-	require.NotNil(t, m.agents, "agents aggregate not computed")
-	require.Len(t, m.agents.agents, 1, "exactly one agent (claude-code); the human row is excluded")
-	a := m.agents.agents[0]
-	require.Equal(t, "claude-code", a.name)
-	require.Equal(t, 2, a.count, "two agent commands")
-	require.Equal(t, 1, a.failures, "one failing agent command")
-
+// TestAgentsFourPanes proves the explorer shows all four panes at once: the
+// executor sidebar, the prompt list, the highlighted prompt's commands, and the
+// details of whatever is selected.
+func TestAgentsFourPanes(t *testing.T) {
+	m := agentModel(t, 140, 40)
 	out := strip(m.View())
-	require.Containsf(t, out, "claude-code", "agents view missing the executor:\n%s", out)
-	require.Containsf(t, out, "EXECUTOR", "agents view missing the table header:\n%s", out)
+
+	for _, want := range []string{"AGENTS", "PROMPTS", "COMMANDS", "DETAILS"} {
+		require.Containsf(t, out, want, "pane title %q missing:\n%s", want, out)
+	}
+	// The sidebar lists both executors plus the "all agents" row.
+	require.Len(t, m.agents.agents, 2, "two executors in the sample")
+	require.Equal(t, 3, m.agentRows(), "sidebar = all-agents row + one per executor")
+	require.Containsf(t, out, "claude-code", "sidebar missing an executor:\n%s", out)
+	require.Containsf(t, out, "devin", "sidebar missing an executor:\n%s", out)
+
+	// The prompt pane holds focus on open, on the newest prompt; its commands
+	// (and only its commands) fill the command pane.
+	require.Equal(t, apPrompts, m.apane, "the prompt pane should hold focus on open")
+	require.Equal(t, 0, m.promptSel)
+	require.Containsf(t, out, "add rate limiting", "prompt text missing:\n%s", out)
+	require.Containsf(t, out, "cargo add tower", "command pane omitted a prompt command:\n%s", out)
+	require.NotContainsf(t, out, "cargo test", "command pane leaked another prompt's command:\n%s", out)
+
+	// The details pane describes the selected prompt.
+	require.Containsf(t, out, "Executor", "details pane missing its labels:\n%s", out)
+	require.Containsf(t, out, "Session", "details pane missing its labels:\n%s", out)
 
 	// `a` again returns to browse.
 	m, _ = step(t, m, press("a"))
 	require.Equal(t, viewBrowse, m.view, "second `a` did not return to browse")
 }
 
-func TestPromptsViewRenders(t *testing.T) {
-	// Two commands under one prompt, one under another (with a failure).
-	rows := mkRows("cargo add tower", "cargo build", "cargo test")
-	for i := range rows {
-		rows[i].Tag = "claude-code"
+// TestAgentsPaneFocusCycles walks tab (and shift+tab) around all four panes and
+// checks each pane's cursor keys act on the pane that holds focus.
+func TestAgentsPaneFocusCycles(t *testing.T) {
+	m := agentModel(t, 140, 40)
+	require.Equal(t, apPrompts, m.apane)
+
+	for _, want := range []agentPane{apCommands, apInfo, apAgents, apPrompts} {
+		m, _ = step(t, m, press("tab"))
+		require.Equal(t, want, m.apane, "tab landed on the wrong pane")
 	}
-	rows[0].PromptID, rows[0].Prompt = "p1", "add rate limiting"
-	rows[1].PromptID, rows[1].Prompt = "p1", "add rate limiting"
-	rows[2].PromptID, rows[2].Prompt = "p2", "fix the N+1 query"
-	rows[2].Exit = rec.IntPtr(1)
-	f := &fakeBackend{
-		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 3}}},
-		resp:  mkResp(rows),
-	}
-	m := ready(t, f, 120, 40)
+	m, _ = step(t, m, press("shift+tab"))
+	require.Equal(t, apAgents, m.apane, "shift+tab did not go back")
 
-	m, cmd := step(t, m, press("p"))
-	require.Equal(t, viewPrompts, m.view, "`p` did not switch to the prompts view")
-	require.NotNil(t, cmd, "opening prompts issued no aggregation query")
-	sr, ok := cmd().(statsResultMsg)
-	require.True(t, ok, "prompts command must yield a statsResultMsg (shared sample)")
-	m, _ = step(t, m, sr)
+	// On the sidebar, j moves the executor cursor (not the prompt cursor).
+	m, _ = step(t, m, press("j"))
+	require.Equal(t, 1, m.agentSel)
+	require.Equal(t, 0, m.promptSel, "sidebar navigation must not move the prompt cursor")
 
-	require.NotNil(t, m.prompts)
-	require.Len(t, m.prompts.prompts, 2, "two distinct prompts")
-	// p1 has two commands.
-	var p1 *promptStat
-	for i := range m.prompts.prompts {
-		if m.prompts.prompts[i].id == "p1" {
-			p1 = &m.prompts.prompts[i]
-		}
-	}
-	require.NotNil(t, p1)
-	require.Equal(t, 2, p1.count, "p1 grouped both of its commands")
-
-	out := strip(m.View())
-	require.Containsf(t, out, "add rate limiting", "prompt text missing:\n%s", out)
-	require.Containsf(t, out, "PROMPT", "prompts table header missing:\n%s", out)
-
-	m, _ = step(t, m, press("p"))
-	require.Equal(t, viewBrowse, m.view, "second `p` did not return to browse")
-}
-
-// openPrompts opens the prompt explorer and delivers the shared stats sample so
-// the aggregation is populated.
-func openPrompts(t *testing.T, m Model) Model {
-	t.Helper()
-	m, cmd := step(t, m, press("p"))
-	require.Equal(t, viewPrompts, m.view, "`p` did not switch to the prompts view")
-	require.NotNil(t, cmd, "opening prompts issued no aggregation query")
-	sr, ok := cmd().(statsResultMsg)
-	require.True(t, ok, "prompts command must yield a statsResultMsg")
-	m, _ = step(t, m, sr)
-	return m
-}
-
-func TestPromptsDrillDown(t *testing.T) {
-	// Two commands under p1, one under p2. p1 is newest, so it sorts first.
-	rows := mkRows("cargo add tower", "cargo build", "cargo test")
-	for i := range rows {
-		rows[i].Tag = "claude-code"
-		rows[i].DurMs = rec.Int64Ptr(1500)
-	}
-	rows[0].PromptID, rows[0].Prompt, rows[0].Session = "p1", "add rate limiting", "sessionAAAA1111"
-	rows[1].PromptID, rows[1].Prompt, rows[1].Session = "p1", "add rate limiting", "sessionAAAA1111"
-	rows[2].PromptID, rows[2].Prompt, rows[2].Session = "p2", "fix the N+1 query", "sessionBBBB2222"
-	f := &fakeBackend{
-		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 3}}},
-		resp:  mkResp(rows),
-	}
-	m := openPrompts(t, ready(t, f, 120, 40))
-
-	// The table carries the Session and Duration columns.
-	out := strip(m.View())
-	require.Containsf(t, out, "SESSION", "session column header missing:\n%s", out)
-	require.Containsf(t, out, "DUR", "duration column header missing:\n%s", out)
-	require.Containsf(t, out, "sessionA", "short session id missing from the row:\n%s", out)
-
-	// Cursor starts on the newest prompt (p1). Drilling shows its commands only.
-	require.Equal(t, 0, m.promptSel)
-	m, _ = step(t, m, press("enter"))
-	require.True(t, m.promptDrill, "enter did not drill into the prompt")
-	drill := strip(m.View())
-	require.Containsf(t, drill, "cargo add tower", "drill omitted a prompt command:\n%s", drill)
-	require.Containsf(t, drill, "cargo build", "drill omitted a prompt command:\n%s", drill)
-	require.NotContainsf(t, drill, "cargo test", "drill leaked another prompt's command:\n%s", drill)
-	require.Containsf(t, drill, "COMMAND", "drill command header missing:\n%s", drill)
-
-	// j moves the drill cursor; esc drills back out to the list, not to browse.
+	// On the command pane, j moves the command cursor.
+	m.agentSel, m.agentFilter = 0, ""
+	m.recomputeStats()
+	m, _ = step(t, m, press("tab")) // -> prompts
+	m, _ = step(t, m, press("tab")) // -> commands
+	require.Equal(t, apCommands, m.apane)
 	m, _ = step(t, m, press("j"))
 	require.Equal(t, 1, m.drillSel)
-	m, _ = step(t, m, press("esc"))
-	require.False(t, m.promptDrill, "esc did not drill out")
-	require.Equal(t, viewPrompts, m.view, "esc from the drill should return to the prompt list")
-
-	// esc from the list returns to browse.
-	m, _ = step(t, m, press("esc"))
-	require.Equal(t, viewBrowse, m.view, "esc from the prompt list did not return to browse")
 }
 
-func TestPromptsNavigationAndPeriod(t *testing.T) {
+// TestAgentsSidebarFilters proves picking an executor narrows the prompt,
+// command, and details panes to that agent's work — and that the "all agents"
+// row restores everything.
+func TestAgentsSidebarFilters(t *testing.T) {
+	m := agentModel(t, 140, 40)
+	require.Len(t, m.prompts.prompts, 2, "both prompts visible with no filter")
+
+	// Focus the sidebar and select the first executor (claude-code: 2 commands,
+	// so it sorts ahead of devin).
+	m, _ = step(t, m, press("shift+tab")) // prompts -> agents
+	require.Equal(t, apAgents, m.apane)
+	m, _ = step(t, m, press("j"))
+	require.Equal(t, "claude-code", m.agentFilter)
+	require.Len(t, m.prompts.prompts, 1, "only claude-code's prompt survives the filter")
+	require.Equal(t, "p1", m.prompts.prompts[0].id)
+
+	out := strip(m.View())
+	require.Containsf(t, out, "add rate limiting", "the filtered prompt should still show:\n%s", out)
+	require.NotContainsf(t, out, "fix the N+1 query", "the other agent's prompt leaked through:\n%s", out)
+
+	// The next row filters to devin.
+	m, _ = step(t, m, press("j"))
+	require.Equal(t, "devin", m.agentFilter)
+	require.Len(t, m.prompts.prompts, 1)
+	require.Equal(t, "p2", m.prompts.prompts[0].id)
+
+	// Back to the "all agents" row.
+	m, _ = step(t, m, press("g"))
+	require.Equal(t, 0, m.agentSel)
+	require.Empty(t, m.agentFilter, "the all-agents row clears the filter")
+	require.Len(t, m.prompts.prompts, 2)
+}
+
+// TestAgentsFilterSurvivesPeriodChange proves the filter is held by executor
+// name: an agent that ages out of the period releases the filter instead of
+// silently handing it to whichever agent inherits its row.
+func TestAgentsFilterSurvivesPeriodChange(t *testing.T) {
+	m := agentModel(t, 140, 40)
+	m, _ = step(t, m, press("shift+tab"))
+	m, _ = step(t, m, press("j"))
+	m, _ = step(t, m, press("j"))
+	require.Equal(t, "devin", m.agentFilter)
+
+	// A wider period keeps devin, and the selection stays on it.
+	m, _ = step(t, m, press("5"))
+	require.Equal(t, "devin", m.agentFilter, "devin is still present in the widest period")
+
+	// Age every devin row out; the filter falls back to all agents.
+	rows := agentSample()
+	rows[2].StartMs = now - 400*86_400_000
+	m.statsRows = rows
+	m, _ = step(t, m, press("1")) // Today
+	require.Empty(t, m.agentFilter, "a vanished executor must release the filter")
+	require.Equal(t, 0, m.agentSel)
+}
+
+// TestAgentsDetailsFollowFocus proves the details pane describes the prompt while
+// the prompt pane is focused and the command once the command pane is.
+func TestAgentsDetailsFollowFocus(t *testing.T) {
+	m := agentModel(t, 140, 40)
+	out := strip(m.View())
+	require.Containsf(t, out, "Prompt", "details should head with the prompt:\n%s", out)
+	require.Containsf(t, out, "Commands", "prompt details should carry the command count:\n%s", out)
+
+	m, _ = step(t, m, press("tab")) // -> commands
+	require.Equal(t, apCommands, m.apane)
+	out = strip(m.View())
+	require.Containsf(t, out, "Command", "details should head with the command:\n%s", out)
+	require.Containsf(t, out, "Exit", "command details should carry the exit status:\n%s", out)
+	// The command pane runs oldest-first (the agent's working order), so the
+	// cursor starts on `cargo build` — the details pane must track that, not the
+	// newest row.
+	require.Containsf(t, out, "cargo build", "command details should describe the selected command:\n%s", out)
+	require.Containsf(t, out, "/work/1", "command details should carry the selected command's cwd:\n%s", out)
+}
+
+// TestAgentsZoom expands the focused pane to the whole frame and restores it.
+func TestAgentsZoom(t *testing.T) {
+	m := agentModel(t, 140, 40)
+	require.Containsf(t, strip(m.View()), "AGENTS", "the sidebar should be visible while tiled")
+
+	m, _ = step(t, m, press("z"))
+	require.True(t, m.zoom)
+	out := strip(m.View())
+	require.Containsf(t, out, "PROMPTS", "the zoomed pane must still render:\n%s", out)
+	require.NotContainsf(t, out, "COMMANDS", "a zoomed pane must be the only one drawn:\n%s", out)
+	require.NotContainsf(t, out, "DETAILS", "a zoomed pane must be the only one drawn:\n%s", out)
+	require.Containsf(t, out, "zoomed", "the status bar should say the view is zoomed:\n%s", out)
+
+	// The zoomed pane fills the middle region.
+	require.Equal(t, 0, m.geo.p[apPrompts].x)
+	require.Equal(t, m.width, m.geo.p[apPrompts].w)
+	require.Equal(t, m.midHeight, m.geo.p[apPrompts].h)
+
+	// Tab moves the zoom with focus rather than dropping back to the tiles.
+	m, _ = step(t, m, press("tab"))
+	require.True(t, m.zoom, "tab should keep the zoom")
+	out = strip(m.View())
+	require.Containsf(t, out, "COMMANDS", "zoom did not follow focus:\n%s", out)
+	require.NotContainsf(t, out, "PROMPTS", "zoom did not follow focus:\n%s", out)
+
+	// Esc unzooms first; only a second esc leaves the view.
+	m, _ = step(t, m, press("esc"))
+	require.False(t, m.zoom, "esc should unzoom")
+	require.Equal(t, viewAgents, m.view, "the first esc must not also leave the view")
+	m, _ = step(t, m, press("esc"))
+	require.Equal(t, viewBrowse, m.view)
+}
+
+// TestBrowseZoom proves the same z key expands a browse pane.
+func TestBrowseZoom(t *testing.T) {
+	f := &fakeBackend{
+		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 1}}},
+		resp:  mkResp(mkRows("cargo build")),
+	}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: f.resp})
+	require.Containsf(t, strip(m.View()), "HOSTS", "the host sidebar should be visible while tiled")
+
+	m, _ = step(t, m, press("z"))
+	require.True(t, m.zoom)
+	out := strip(m.View())
+	require.NotContainsf(t, out, "HOSTS", "zooming the table must hide the sidebar:\n%s", out)
+	require.Containsf(t, out, "cargo build", "the zoomed table must still render its rows:\n%s", out)
+	require.Equal(t, m.width, m.geo.p[focusTable].w)
+
+	m, _ = step(t, m, press("esc"))
+	require.False(t, m.zoom, "esc should unzoom the browse view")
+	require.Containsf(t, strip(m.View()), "HOSTS", "unzooming should bring the sidebar back")
+}
+
+// TestDragResizesPanes drags the vertical seam and proves the sidebar follows
+// the pointer, that the ratio survives a terminal resize, and that the drag
+// clamps rather than collapsing a pane.
+func TestDragResizesPanes(t *testing.T) {
+	m := agentModel(t, 140, 40)
+	seam := m.geo.vDiv
+	require.Positive(t, seam, "the explorer should have a vertical seam")
+
+	// Grab the seam and drag it right.
+	m, _ = step(t, m, click(seam, 5))
+	require.Equal(t, dragVert, m.drag, "clicking the seam did not start a drag")
+	m, _ = step(t, m, dragTo(60, 5))
+	require.Equal(t, 60, m.geo.vDiv, "the seam did not follow the pointer")
+	m, _ = step(t, m, mouseUp(60))
+	require.Equal(t, dragNone, m.drag, "releasing did not end the drag")
+
+	// The split is held as a ratio, so a resize keeps the proportion.
+	require.Equal(t, ratioOf(60, 140), m.splits.AgentLeft)
+	m, _ = step(t, m, tea.WindowSizeMsg{Width: 280, Height: 40})
+	require.Equal(t, 120, m.geo.vDiv, "the split ratio did not survive a resize")
+
+	// Dragging past the edge clamps instead of collapsing the right-hand panes.
+	m, _ = step(t, m, click(m.geo.vDiv, 5))
+	m, _ = step(t, m, dragTo(279, 5))
+	require.LessOrEqual(t, m.splits.AgentLeft, maxColRatio, "the seam must clamp")
+	require.Less(t, m.geo.vDiv, m.width-minPaneCols, "the right-hand panes must stay usable")
+
+	// The horizontal seam is draggable too.
+	m, _ = step(t, m, mouseUp(279))
+	hs := m.geo.hDiv
+	m, _ = step(t, m, click(m.geo.vDiv+20, hs))
+	require.Equal(t, dragHoriz, m.drag, "clicking the horizontal seam did not start a drag")
+	m, _ = step(t, m, dragTo(m.geo.vDiv+20, 30))
+	require.Equal(t, 30, m.geo.hDiv, "the horizontal seam did not follow the pointer")
+}
+
+// TestDragResizesBrowsePanes proves the browse view's sidebar is draggable and
+// that, until it is dragged, the layout is exactly the one it has always had.
+func TestDragResizesBrowsePanes(t *testing.T) {
+	f := &fakeBackend{
+		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 1}}},
+		resp:  mkResp(mkRows("cargo build")),
+	}
+	m := ready(t, f, 120, 30)
+	require.Equal(t, leftWidth, m.leftW, "an undragged sidebar keeps the default width")
+	require.Zero(t, m.splits.BrowseLeft, "no drag means no stored ratio")
+
+	m, _ = step(t, m, click(m.geo.vDiv, 5))
+	m, _ = step(t, m, dragTo(40, 5))
+	require.Equal(t, 40, m.leftW, "the browse sidebar did not follow the pointer")
+	require.Equal(t, 40, m.geo.vDiv)
+	require.Equal(t, m.width-40-2, m.tableWidth, "the table content width must track the sidebar")
+}
+
+// TestMouseClickAndWheel proves a click focuses the pane under the pointer and
+// the wheel scrolls a pane without stealing focus from another.
+func TestMouseClickAndWheel(t *testing.T) {
+	m := agentModel(t, 140, 40)
+	require.Equal(t, apPrompts, m.apane)
+
+	// Click well inside the sidebar (away from the seam).
+	m, _ = step(t, m, click(2, 3))
+	require.Equal(t, apAgents, m.apane, "clicking the sidebar did not focus it")
+
+	// Click inside the command pane.
+	cmds := m.geo.p[apCommands]
+	m, _ = step(t, m, click(cmds.x+10, cmds.y+3))
+	require.Equal(t, apCommands, m.apane, "clicking the command pane did not focus it")
+
+	// The wheel scrolls the pane under the pointer, leaving focus alone.
+	prompts := m.geo.p[apPrompts]
+	m, _ = step(t, m, wheelAt(prompts.x+10, prompts.y+3, tea.MouseButtonWheelDown))
+	require.Equal(t, 1, m.promptSel, "the wheel did not scroll the prompt pane")
+	require.Equal(t, apCommands, m.apane, "the wheel must not move focus")
+	m, _ = step(t, m, wheelAt(prompts.x+10, prompts.y+3, tea.MouseButtonWheelUp))
+	require.Equal(t, 0, m.promptSel, "the wheel did not scroll back up")
+}
+
+// TestAgentsDurColumnAdapts keeps the adaptive DUR column honest across the
+// prompt and command panes.
+func TestAgentsDurColumnAdapts(t *testing.T) {
+	// No command carries a duration (the shape Claude Code's hook payload has, on
+	// its own), so the DUR column is dropped from both panes.
+	rows := mkRows("go build", "go test")
+	for i := range rows {
+		rows[i].Tag, rows[i].PromptID, rows[i].Prompt = "claude-code", "p1", "ship it"
+	}
+	f := &fakeBackend{
+		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 2}}},
+		resp:  mkResp(rows),
+	}
+	m := openAgents(t, ready(t, f, 140, 40))
+	require.False(t, m.prompts.hasDur, "no command has a duration")
+	require.NotContainsf(t, strip(m.View()), "DUR", "DUR should be hidden when nothing is timed")
+
+	// A duration on any one command brings the column back (e.g. a Cursor
+	// command mixed into the same view).
+	rows[1].DurMs = rec.Int64Ptr(1200)
+	m.statsRows = rows
+	// Round-trip the period to force a re-aggregation of the held sample; the
+	// widest window is already selected, so asking for it again is a no-op.
+	m, _ = step(t, m, press("1"))
+	m, _ = step(t, m, press("5"))
+	require.True(t, m.prompts.hasDur, "a timed command should light the DUR column")
+	require.Containsf(t, strip(m.View()), "DUR", "DUR should return once a command is timed")
+}
+
+// TestAgentsHorizontalScroll proves ←/→ reveal a prompt truncated with an
+// ellipsis, and that the offset resets on any other move.
+func TestAgentsHorizontalScroll(t *testing.T) {
+	long := "add rate limiting to the authentication middleware so that every request " +
+		"path is throttled per client without dropping legitimate bursts ZZZEND"
+	rows := mkRows("go build", "go test")
+	for i := range rows {
+		rows[i].Tag, rows[i].PromptID, rows[i].Prompt = "claude-code", "p1", long
+	}
+	f := &fakeBackend{
+		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 2}}},
+		resp:  mkResp(rows),
+	}
+	// A narrow window guarantees the prompt text is clipped in its pane.
+	m := openAgents(t, ready(t, f, 70, 30))
+	require.Equal(t, 0, m.hscroll)
+	require.NotContainsf(t, strip(m.View()), "ZZZEND", "the far end should start off-screen")
+
+	for i := 0; i < 30 && m.hscroll < m.maxHScroll(); i++ {
+		m, _ = step(t, m, press("right"))
+	}
+	require.Positive(t, m.hscroll, "→ should advance the horizontal offset")
+	require.Containsf(t, strip(m.View()), "ZZZEND", "→ did not reveal the truncated tail:\n%s", strip(m.View()))
+
+	// Any vertical move resets the offset back to the line start.
+	m, _ = step(t, m, press("k"))
+	require.Equal(t, 0, m.hscroll, "moving the cursor should reset horizontal scroll")
+
+	// ← never drives the offset negative.
+	m, _ = step(t, m, press("left"))
+	require.Equal(t, 0, m.hscroll)
+}
+
+// TestAgentsNavigationAndPeriod covers prompt-cursor clamping and the period
+// tabs re-aggregating the held sample.
+func TestAgentsNavigationAndPeriod(t *testing.T) {
 	rows := mkRows("a", "b")
 	for i := range rows {
 		rows[i].Tag = "claude-code"
@@ -947,27 +1201,491 @@ func TestPromptsNavigationAndPeriod(t *testing.T) {
 		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 2}}},
 		resp:  mkResp(rows),
 	}
-	m := openPrompts(t, ready(t, f, 120, 40))
+	m := openAgents(t, ready(t, f, 140, 40))
 	require.Len(t, m.prompts.prompts, 2)
 
-	// j/k move the prompt selection and clamp at the ends.
-	require.Equal(t, 0, m.promptSel)
 	m, _ = step(t, m, press("j"))
 	require.Equal(t, 1, m.promptSel)
 	m, _ = step(t, m, press("j"))
 	require.Equal(t, 1, m.promptSel, "selection must clamp at the last prompt")
 	m, _ = step(t, m, press("k"))
 	require.Equal(t, 0, m.promptSel)
+	m, _ = step(t, m, press("G"))
+	require.Equal(t, 1, m.promptSel, "G jumps to the last prompt")
 
-	// Selecting a narrow period that excludes everything empties the list without
-	// leaving a dangling selection, and a stale drill is dropped.
-	m.promptSel = 1
-	m.promptDrill = true
-	rows[0].StartMs = now - 10*86_400_000 // both prompts age out of "Today"
+	// A narrow period that excludes everything empties the list without leaving a
+	// dangling selection.
+	rows[0].StartMs = now - 10*86_400_000
 	rows[1].StartMs = now - 10*86_400_000
 	m.statsRows = rows
 	m, _ = step(t, m, press("1")) // Today
-	require.False(t, m.promptDrill, "changing period must drop the drill")
-	require.Empty(t, m.prompts.prompts, "period should exclude the aged prompts")
+	require.Empty(t, m.prompts.prompts, "the period should exclude the aged prompts")
 	require.Equal(t, 0, m.promptSel, "selection must clamp when the list empties")
+	require.Containsf(t, strip(m.View()), "No agent prompts", "the empty pane should say so")
+}
+
+// TestAgentsNarrowTerminalStaysWithinWidth proves the four-pane grid still tiles
+// on a small terminal: every rendered line fits the frame, no pane collapses
+// below its minimum, and the panes still sum to the full width and height.
+func TestAgentsNarrowTerminalStaysWithinWidth(t *testing.T) {
+	m := agentModel(t, 60, 18)
+	for _, line := range strings.Split(m.View(), "\n") {
+		require.LessOrEqualf(t, lipgloss.Width(line), 60, "line overflows the terminal: %q", strip(line))
+	}
+	g := m.geo
+	require.GreaterOrEqual(t, g.p[apAgents].w, minPaneCols, "the sidebar must stay usable")
+	require.GreaterOrEqual(t, g.p[apPrompts].w, minPaneCols, "the prompt pane must stay usable")
+	require.GreaterOrEqual(t, g.p[apCommands].h, minPaneRows, "the command pane must stay usable")
+	require.Equal(t, 60, g.p[apAgents].w+g.p[apPrompts].w, "the columns must sum to the width")
+	require.Equal(t, m.midHeight, g.p[apPrompts].h+g.p[apCommands].h, "the rows must sum to the height")
+}
+
+// --- pane headers, persistence, and the width-adaptive stats graphs ---------
+
+// TestBrowsePaneHeaders proves each browse pane carries the same kind of title
+// the agent explorer's do, with its count/position.
+func TestBrowsePaneHeaders(t *testing.T) {
+	f := &fakeBackend{
+		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 2}}},
+		resp:  mkResp(mkRows("cargo build", "cargo test")),
+	}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: f.resp})
+
+	out := strip(m.View())
+	require.Containsf(t, out, "HOSTS  1", "host pane title should carry the real host count:\n%s", out)
+	require.Containsf(t, out, "COMMANDS  1/2", "table pane title should carry the cursor position:\n%s", out)
+	require.Containsf(t, out, "DETAILS", "detail pane title missing:\n%s", out)
+
+	// The position tracks the cursor.
+	m, _ = step(t, m, press("j"))
+	require.Containsf(t, strip(m.View()), "COMMANDS  2/2", "the title should follow the cursor")
+}
+
+// TestAgentsKeyIsOnlyA proves `p` no longer opens the explorer — `a` owns it.
+func TestAgentsKeyIsOnlyA(t *testing.T) {
+	f := &fakeBackend{
+		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 3}}},
+		resp:  mkResp(agentSample()),
+	}
+	m := ready(t, f, 120, 30)
+	m, cmd := step(t, m, press("p"))
+	require.Equal(t, viewBrowse, m.view, "`p` must no longer switch views")
+	require.Nil(t, cmd, "`p` must not issue a query")
+}
+
+// TestSplitsPersistAndRestore proves a dragged layout is handed to SaveSplits
+// once the drag settles, and that Options.Splits restores it on the next run.
+func TestSplitsPersistAndRestore(t *testing.T) {
+	f := &fakeBackend{
+		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 1}}},
+		resp:  mkResp(mkRows("cargo build")),
+	}
+	var saved []Splits
+	m := NewModel(f, Options{
+		Version:    "v1",
+		Now:        now,
+		SaveSplits: func(s Splits) error { saved = append(saved, s); return nil },
+	})
+	m, _ = step(t, m, tea.WindowSizeMsg{Width: 120, Height: 30})
+
+	// Mid-drag nothing is written; the file should only ever hold a layout the
+	// user stopped on.
+	m, _ = step(t, m, click(m.geo.vDiv, 5))
+	m, cmd := step(t, m, dragTo(40, 5))
+	require.Nil(t, cmd, "a motion event must not persist")
+	require.Empty(t, saved)
+
+	m, cmd = step(t, m, mouseUp(40))
+	require.NotNil(t, cmd, "releasing a drag should persist the layout")
+	cmd()
+	require.Len(t, saved, 1)
+	require.Equal(t, ratioOf(40, 120), saved[0].BrowseLeft)
+
+	// A release that ends no drag writes nothing.
+	_, cmd = step(t, m, mouseUp(40))
+	require.Nil(t, cmd, "a stray release must not persist")
+
+	// A fresh model restores that layout.
+	m2 := NewModel(f, Options{Version: "v1", Now: now, Splits: saved[0]})
+	m2, _ = step(t, m2, tea.WindowSizeMsg{Width: 120, Height: 30})
+	require.Equal(t, 40, m2.leftW, "the remembered sidebar width was not restored")
+
+	// The zero value leaves the browse view on its long-standing default and
+	// still gives the agent explorer sensible proportions.
+	m3 := NewModel(f, Options{Version: "v1", Now: now})
+	m3, _ = step(t, m3, tea.WindowSizeMsg{Width: 120, Height: 30})
+	require.Equal(t, leftWidth, m3.leftW, "an unremembered browse layout keeps its default")
+	require.Equal(t, defaultAgentLeftRatio, m3.splits.AgentLeft)
+}
+
+// statsModel renders the stats screen over a year-plus of daily activity.
+func statsModel(t *testing.T, w int) Model {
+	t.Helper()
+	var rows []rec.Record
+	for i := 0; i < 800; i++ {
+		rows = append(rows, rec.Record{
+			ID: strconv.Itoa(i), Cmd: "go build", Cwd: "/work", Hostname: "boxA",
+			StartMs: now - int64(i)*6*3_600_000, Exit: rec.IntPtr(0),
+		})
+	}
+	f := &fakeBackend{
+		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: len(rows)}}},
+		resp:  mkResp(rows),
+	}
+	m := ready(t, f, w, 40)
+	m, cmd := step(t, m, press("s"))
+	require.NotNil(t, cmd)
+	sr, ok := cmd().(statsResultMsg)
+	require.True(t, ok)
+	m, _ = step(t, m, sr)
+	return m
+}
+
+// statLineWidth returns the display width of the first rendered line whose
+// stripped text starts with prefix.
+func statLineWidth(t *testing.T, m Model, prefix string) int {
+	t.Helper()
+	for _, line := range strings.Split(m.View(), "\n") {
+		if strings.HasPrefix(strip(line), prefix) {
+			return lipgloss.Width(strings.TrimRight(strip(line), " "))
+		}
+	}
+	require.FailNowf(t, "line not found", "no rendered line starts with %q:\n%s", prefix, strip(m.View()))
+	return 0
+}
+
+// TestStatsGraphsFillWidth proves the three graphs span the terminal and grow
+// with it, rather than sitting at a fixed narrow size.
+func TestStatsGraphsFillWidth(t *testing.T) {
+	narrow := statsModel(t, 100)
+	wide := statsModel(t, 180)
+
+	for _, tc := range []struct{ name, prefix string }{
+		{"heatmap", "Sun "},
+		{"daily trend", "    █"},
+	} {
+		nw := statLineWidth(t, narrow, tc.prefix)
+		ww := statLineWidth(t, wide, tc.prefix)
+		require.Greaterf(t, nw, 90, "%s should fill a 100-col terminal, got %d", tc.name, nw)
+		require.Greaterf(t, ww, nw, "%s should grow with the terminal (%d -> %d)", tc.name, nw, ww)
+		require.LessOrEqualf(t, ww, 180, "%s overflowed the terminal at %d", tc.name, ww)
+	}
+
+	// The heatmap shows more weeks of history on the wider terminal.
+	require.Equal(t, (100-heatLabelW)/heatCellW, heatWeeks(100))
+	require.Greater(t, heatWeeks(180), heatWeeks(100))
+	require.Containsf(t, strip(wide.View()), "By hour of day", "the hourly chart should still render")
+
+	// The hourly histogram widens its 24 fixed buckets instead of staying 24
+	// cells wide.
+	hourW := statLineWidth(t, wide, "    "+string(sparkBlocks[7]))
+	if hourW == 0 {
+		hourW = statLineWidth(t, wide, "    ·")
+	}
+	require.Greaterf(t, hourW, 24, "the hourly buckets should be widened, got %d", hourW)
+}
+
+// TestStatsGraphsIgnorePeriod proves the long-arc graphs keep their shape when
+// the period narrows — they exist to show activity AROUND the window.
+func TestStatsGraphsIgnorePeriod(t *testing.T) {
+	m := statsModel(t, 140)
+	wide := strip(m.View())
+	require.Contains(t, wide, "Activity (last")
+
+	m, _ = step(t, m, press("1")) // Today
+	today := strip(m.View())
+	require.Contains(t, today, "Activity (last", "the heatmap must survive a narrow period")
+	require.Containsf(t, today, string(heatShades[4]), "the heatmap must still show history:\n%s", today)
+	// The KPI line, by contrast, does narrow to the period.
+	require.NotEqual(t, wide, today, "the period must still change something")
+}
+
+// TestHourAxisAlignsToBuckets pins the hour ruler to its buckets and proves it
+// never overflows.
+func TestHourAxisAlignsToBuckets(t *testing.T) {
+	for _, w := range []int{24, 48, 96, 144, 200} {
+		axis := hourAxis(w)
+		require.Equalf(t, w, lipgloss.Width(axis), "the axis must be exactly w columns at w=%d", w)
+		require.Truef(t, strings.HasPrefix(axis, "00"), "the axis should start at hour 00 (w=%d): %q", w, axis)
+		// Hour 12's label starts exactly at hour 12's bucket.
+		at := bucketStart(w, 24, 12)
+		if strings.Contains(axis, "12") {
+			require.Equalf(t, "12", axis[at:at+2],
+				"hour 12's label is off its bucket at w=%d: %q", w, axis)
+		}
+	}
+	// A cramped axis still labels what it can, at the same bucket positions the
+	// bars use…
+	require.Equal(t, "00 03 06 09 ", hourAxis(12))
+	// …and blanks out entirely rather than emitting a truncated label when even
+	// one will not fit.
+	require.Equal(t, "  ", hourAxis(2))
+	require.Empty(t, hourAxis(0))
+}
+
+// TestHeatmapDropsWhenTooNarrow proves the heatmap yields its rows rather than
+// rendering a stub on a very narrow terminal.
+func TestHeatmapDropsWhenTooNarrow(t *testing.T) {
+	require.Less(t, heatWeeks(minHeatWks*heatCellW+heatLabelW-1), minHeatWks)
+	m := statsModel(t, 100)
+	require.Nil(t, m.renderHeatmap(m.stats, 16), "a 16-column heatmap is not worth its rows")
+	require.NotEmpty(t, m.renderHeatmap(m.stats, 100))
+}
+
+// --- the shared period filter ---------------------------------------------
+
+// TestPeriodFiltersBrowseTable proves the browse view now HAS a time filter and
+// that it narrows the table, which it never used to.
+func TestPeriodFiltersBrowseTable(t *testing.T) {
+	rows := mkRows("today-cmd", "week-old", "year-old")
+	rows[1].StartMs = now - 3*86_400_000   // 3 days ago
+	rows[2].StartMs = now - 300*86_400_000 // ~10 months ago
+	f := &fakeBackend{
+		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 3}}},
+		resp:  mkResp(rows),
+	}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: f.resp})
+
+	// The default window hides nothing.
+	require.Equal(t, allPeriod, m.period, "the browser opens on All")
+	require.Len(t, m.rows, 3)
+	require.Containsf(t, strip(m.View()), "year-old", "All must show everything")
+
+	// 7d drops the year-old row but keeps the 3-day-old one.
+	m, _ = step(t, m, press("2"))
+	require.Len(t, m.rows, 2, "7d should keep today's and the 3-day-old command")
+	out := strip(m.View())
+	require.Contains(t, out, "week-old")
+	require.NotContainsf(t, out, "year-old", "7d must hide the year-old command:\n%s", out)
+	require.Containsf(t, out, "1 older hidden", "the status bar should say what the window hides:\n%s", out)
+
+	// Today keeps only today's.
+	m, _ = step(t, m, press("1"))
+	require.Len(t, m.rows, 1)
+	require.Equal(t, 1, m.total, "the row count must reflect the filter, not the server total")
+
+	// Back to All restores everything, including the daemon's own total.
+	m, _ = step(t, m, press("5"))
+	require.Len(t, m.rows, 3)
+	require.Equal(t, m.srvTotal, m.total, "All hands the daemon's total back")
+}
+
+// TestPeriodIsSharedAcrossViews proves one window drives every view, so the
+// 1..5 keys mean the same thing wherever they are pressed.
+func TestPeriodIsSharedAcrossViews(t *testing.T) {
+	m := agentModel(t, 140, 40)
+	require.Equal(t, allPeriod, m.period)
+
+	// Set it in the agent explorer…
+	m, _ = step(t, m, press("2"))
+	require.Equal(t, 1, m.period)
+
+	// …it holds in the stats screen…
+	m, _ = step(t, m, press("s"))
+	require.Equal(t, viewStats, m.view)
+	require.Equal(t, 1, m.period)
+	require.Containsf(t, strip(m.View()), "2 7d", "the stats header carries the same tabs")
+
+	// …and setting it there is visible back in browse.
+	m, _ = step(t, m, press("3"))
+	m, _ = step(t, m, press("esc"))
+	require.Equal(t, viewBrowse, m.view)
+	require.Equal(t, 2, m.period)
+	require.Containsf(t, strip(m.View()), "3 30d", "the browse view advertises the same tabs")
+}
+
+// TestTodayIsCalendarDay pins "Today" to the local calendar day rather than a
+// rolling 24 hours — otherwise the same clock hour appears twice in the
+// hour-of-day histogram, from two different days.
+func TestTodayIsCalendarDay(t *testing.T) {
+	midnight := periodCutoff(now, 1)
+	require.Equal(t, 0, time.UnixMilli(midnight).Hour(), "Today starts at local midnight")
+	require.LessOrEqual(t, midnight, now)
+	require.Greater(t, midnight, now-86_400_000, "…which is later than a rolling 24h window")
+
+	// The wider windows stay rolling, and All is unbounded.
+	require.Equal(t, now-7*86_400_000, periodCutoff(now, 7))
+	require.Zero(t, periodCutoff(now, 0))
+}
+
+// TestHourOfDayOnPartialDay is the heart of it: on Today the chart must show the
+// hours that HAVE happened, and leave the rest blank rather than drawing them as
+// zero — "it isn't 11pm yet" is not "nothing ran at 11pm".
+func TestHourOfDayOnPartialDay(t *testing.T) {
+	// Commands every 20 minutes through the morning, up to `now` (14:13 local).
+	var rows []rec.Record
+	midnight := periodCutoff(now, 1)
+	for ms := midnight; ms <= now; ms += 20 * 60_000 {
+		rows = append(rows, rec.Record{
+			ID: strconv.FormatInt(ms, 10), Cmd: "go build", Cwd: "/w", Hostname: "boxA",
+			StartMs: ms, Exit: rec.IntPtr(0),
+		})
+	}
+	f := &fakeBackend{
+		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: len(rows)}}},
+		resp:  mkResp(rows),
+	}
+	m := ready(t, f, 120, 40)
+	m, cmd := step(t, m, press("s"))
+	m, _ = step(t, m, cmd().(statsResultMsg))
+	m, _ = step(t, m, press("1")) // Today
+
+	require.Positive(t, m.stats.total, "today's commands must survive the Today window")
+	require.Positive(t, m.stats.hourMax, "the hour buckets must be populated")
+
+	elapsed := m.hoursElapsed()
+	require.Equal(t, hourOfDay(now)+1, elapsed, "every hour up to the current one is live")
+	for h := 0; h < elapsed; h++ {
+		require.Positivef(t, m.stats.hourly[h], "hour %02d ran commands but is empty", h)
+	}
+
+	// The bar row draws the elapsed hours and leaves the rest blank.
+	// Every glyph here is one column wide, so a rune index is a column index.
+	bars := []rune(strip(hourBars(m.th, m.stats.hourly, m.stats.hourMax, 96, elapsed)))
+	require.Len(t, bars, 96, "the row must be exactly as wide as it was given")
+	cut := bucketStart(96, 24, elapsed)
+	require.NotContainsf(t, string(bars[:cut]), " ",
+		"elapsed hours must be drawn, not blank: %q", string(bars[:cut]))
+	require.Equal(t, strings.Repeat(" ", 96-cut), string(bars[cut:]),
+		"hours that have not happened yet must be blank, not zero-dots")
+
+	// A wider window covers whole days, so all 24 hours are live.
+	m, _ = step(t, m, press("5"))
+	require.Equal(t, 24, m.hoursElapsed())
+
+	// The title says how many commands it is drawing, so an empty chart explains
+	// itself instead of just looking broken.
+	require.Containsf(t, strip(m.View()), "By hour of day · ", "the hourly title should carry its count")
+}
+
+// TestSampleNoteExplainsFlatTabs proves the capped aggregation says so. Without
+// this, every window wider than the sample's reach shows identical numbers and
+// the period tabs read as broken.
+func TestSampleNoteExplainsFlatTabs(t *testing.T) {
+	// A sample that hits the ceiling, reaching back only a couple of days.
+	rows := make([]rec.Record, statsLimit)
+	for i := range rows {
+		rows[i] = rec.Record{
+			ID: strconv.Itoa(i), Cmd: "ls", Cwd: "/w", Hostname: "boxA",
+			StartMs: now - int64(i)*30_000, Exit: rec.IntPtr(0),
+		}
+	}
+	f := &fakeBackend{
+		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: len(rows)}}},
+		resp:  mkResp(rows),
+	}
+	m := ready(t, f, 160, 40)
+	m, cmd := step(t, m, press("s"))
+	m, _ = step(t, m, cmd().(statsResultMsg))
+
+	require.True(t, m.stats.capped, "a full sample must know it is capped")
+	require.Positive(t, m.stats.sampleFrom)
+	out := strip(m.View())
+	require.Containsf(t, out, "newest 5000 commands", "the header must own up to the cap:\n%s", out)
+	require.Containsf(t, out, "reaches back", "…and say how far back it actually goes:\n%s", out)
+
+	// A sample under the ceiling makes no such claim.
+	small := statsModel(t, 160)
+	require.False(t, small.stats.capped)
+	require.Contains(t, strip(small.View()), "all history")
+}
+
+// TestStartViewOpensDirectly proves Options.Start lands on a full-screen view
+// and fetches the aggregation sample the `s`/`a` keys would have fetched — this
+// is what `yore stats` and `yore agents` ride on.
+func TestStartViewOpensDirectly(t *testing.T) {
+	for _, tc := range []struct {
+		start StartView
+		view  viewMode
+		want  string
+	}{
+		{StartStats, viewStats, "STATS"},
+		{StartAgents, viewAgents, "AGENTS"},
+	} {
+		f := &fakeBackend{
+			hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 3}}},
+			resp:  mkResp(agentSample()),
+		}
+		m := NewModel(f, Options{Version: "v1", Now: now, Start: tc.start})
+		require.Equalf(t, tc.view, m.view, "Start=%q did not open its view", tc.start)
+
+		m, _ = step(t, m, tea.WindowSizeMsg{Width: 140, Height: 40})
+		// Init must carry the stats query, or the view opens permanently blank.
+		var gotSample bool
+		mm, cmd := step(t, m, initMsg{})
+		require.NotNil(t, cmd)
+		for _, msg := range collect(cmd) {
+			if sr, ok := msg.(statsResultMsg); ok {
+				gotSample = true
+				mm, _ = step(t, mm, sr)
+			}
+		}
+		require.Truef(t, gotSample, "Start=%q issued no aggregation query", tc.start)
+		require.Containsf(t, strip(mm.View()), tc.want, "Start=%q rendered the wrong view", tc.start)
+
+		// Esc still drops through to the browse table.
+		mm, _ = step(t, mm, press("esc"))
+		require.Equal(t, viewBrowse, mm.view, "esc should reach the browse table")
+	}
+
+	// An unrecognised value costs nothing: the browse table, as always.
+	f := &fakeBackend{resp: mkResp(mkRows("ls"))}
+	require.Equal(t, viewBrowse, NewModel(f, Options{Start: "nope"}).view)
+}
+
+// collect flattens a tea.Cmd into the messages it produces, following one level
+// of tea.Batch (which is how Init returns its several commands).
+func collect(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		var out []tea.Msg
+		for _, c := range batch {
+			if c != nil {
+				out = append(out, c())
+			}
+		}
+		return out
+	}
+	return []tea.Msg{msg}
+}
+
+// TestPeriodTabsPinnedRight proves every period-aware view puts the tab strip in
+// the same place — hard against the right edge — so the filter never moves.
+func TestPeriodTabsPinnedRight(t *testing.T) {
+	const w = 150
+	m := agentModel(t, w, 40)
+
+	headerOf := func(m Model) string {
+		return strings.TrimRight(strip(strings.SplitN(m.View(), "\n", 2)[0]), " ")
+	}
+	for _, tc := range []struct {
+		name string
+		key  string
+		view viewMode
+	}{
+		{"agents", "", viewAgents},
+		{"stats", "s", viewStats},
+		{"browse", "esc", viewBrowse},
+	} {
+		if tc.key != "" {
+			m, _ = step(t, m, press(tc.key))
+		}
+		require.Equal(t, tc.view, m.view, tc.name)
+		head := headerOf(m)
+		require.Equalf(t, w, lipgloss.Width(head),
+			"%s header should reach the right edge: %q", tc.name, head)
+		require.Truef(t, strings.HasSuffix(head, "5 All"),
+			"%s header should end with the period tabs: %q", tc.name, head)
+	}
+
+	// Too narrow for both: the header keeps its own content and the tabs go.
+	narrow := agentModel(t, 40, 30)
+	require.False(t, narrow.showPeriodTabs())
+	require.NotContains(t, strip(narrow.View()), "5 All",
+		"a cramped header should drop the tabs rather than overflow")
 }

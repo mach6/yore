@@ -4,11 +4,14 @@
 //
 // It is a full alt-screen Bubble Tea program with three browse panes — a
 // host sidebar, a virtualized results list, and a detail pane — plus a
-// single-screen stats, agent-monitor, and devices views. Like the search TUI it never touches the daemon
-// directly: it talks through the Backend interface so tests can drive it with
-// a fake, and every keystroke fires an asynchronous, sequence-tagged query so
-// stale, out-of-order responses are discarded. All styling comes from a
-// theme.Theme built once in NewModel.
+// four-pane agent explorer (executor sidebar, prompts, that prompt's commands,
+// details) and single-screen stats and devices views. Any pane can be zoomed to
+// the whole frame, and the seams between panes are mouse-draggable; panes.go
+// owns that geometry and mouse.go hit-tests against it. Like the search TUI it
+// never touches the daemon directly: it talks through the Backend interface so
+// tests can drive it with a fake, and every keystroke fires an asynchronous,
+// sequence-tagged query so stale, out-of-order responses are discarded. All
+// styling comes from a theme.Theme built once in NewModel.
 //
 // The results list is rendered by hand rather than with bubbles/table: the
 // table widget truncates every cell with runewidth.Truncate before styling,

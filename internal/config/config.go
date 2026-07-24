@@ -418,3 +418,51 @@ func assignField(f reflect.Value, value string) error {
 	}
 	return nil
 }
+
+// --- UI state ---------------------------------------------------------------
+
+// UIStatePath is the browser's remembered-layout file. It sits beside
+// config.toml but is deliberately SEPARATE: config.toml is the user's
+// hand-edited settings file, and a TUI that rewrote (and so reformatted) it
+// every time a pane was dragged would be a poor neighbour.
+func UIStatePath(dir string) string { return filepath.Join(dir, "ui.toml") }
+
+// UIState is layout the browser remembers between runs. Every field is a
+// divider position in per-mille of the axis it cuts; zero means "never dragged",
+// so the view falls back to its own default proportions.
+type UIState struct {
+	BrowseLeftSplit int `toml:"browse_left_split,omitempty"`
+	BrowseTopSplit  int `toml:"browse_top_split,omitempty"`
+	AgentLeftSplit  int `toml:"agent_left_split,omitempty"`
+	AgentTopSplit   int `toml:"agent_top_split,omitempty"`
+}
+
+// LoadUI reads ui.toml. A missing or unreadable file yields the zero state:
+// remembered layout is a convenience, never a reason to fail to open the
+// browser, so callers can ignore the error and still get something usable.
+func LoadUI(dir string) (UIState, error) {
+	var s UIState
+	b, err := os.ReadFile(UIStatePath(dir))
+	if errors.Is(err, fs.ErrNotExist) {
+		return s, nil
+	}
+	if err != nil {
+		return UIState{}, err
+	}
+	if err := toml.Unmarshal(b, &s); err != nil {
+		return UIState{}, err
+	}
+	return s, nil
+}
+
+// SaveUI writes ui.toml (0600).
+func SaveUI(dir string, s UIState) error {
+	if err := EnsureDir(dir); err != nil {
+		return err
+	}
+	b, err := toml.Marshal(s)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(UIStatePath(dir), append(b, '\n'), 0o600)
+}

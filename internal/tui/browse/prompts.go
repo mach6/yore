@@ -1,7 +1,6 @@
 package browse
 
 import (
-	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -34,21 +33,23 @@ type promptStat struct {
 // promptsData is the aggregation behind the prompt-explorer view.
 type promptsData struct {
 	prompts     []promptStat
-	total       int // total prompts in the period
+	total       int  // total prompts in the period
+	hasDur      bool // any prompt carries a known duration (gates the DUR column)
 	periodLabel string
 }
 
 // computePrompts groups agent commands by their triggering prompt over the last
 // periodDays days (0 = all). Commands with no prompt id (human commands, or
-// agent commands captured before prompt tracing) are excluded.
-func computePrompts(rows []rec.Record, now int64, periodDays int) *promptsData {
-	cutoff := int64(0)
-	if periodDays > 0 {
-		cutoff = now - int64(periodDays)*86_400_000
-	}
+// agent commands captured before prompt tracing) are excluded, as are commands
+// from another executor when `executor` names one (the sidebar's filter).
+func computePrompts(rows []rec.Record, now int64, periodDays int, executor string) *promptsData {
+	cutoff := periodCutoff(now, periodDays)
 	byID := map[string]*promptStat{}
 	for _, r := range rows {
 		if r.Deleted() || r.PromptID == "" || r.StartMs < cutoff {
+			continue
+		}
+		if executor != "" && r.Tag != executor {
 			continue
 		}
 		p := byID[r.PromptID]
@@ -90,6 +91,9 @@ func computePrompts(rows []rec.Record, now int64, periodDays int) *promptsData {
 	for _, p := range byID {
 		// Chronological within a prompt: this is the agent's actual working order.
 		sort.SliceStable(p.cmds, func(i, j int) bool { return p.cmds[i].StartMs < p.cmds[j].StartMs })
+		if p.durN > 0 {
+			out.hasDur = true // at least one agent reports timing (e.g. Cursor)
+		}
 		out.prompts = append(out.prompts, *p)
 	}
 	out.total = len(out.prompts)
@@ -120,8 +124,8 @@ func shortSession(s string) string {
 	return s
 }
 
-// drilledPrompt is the prompt the explorer is currently drilled into (the one
-// under the cursor when Enter was pressed), and whether one exists.
+// drilledPrompt is the prompt currently under the prompt-pane cursor — the one
+// whose commands the command pane shows — and whether one exists.
 func (m Model) drilledPrompt() (promptStat, bool) {
 	if m.prompts == nil || m.promptSel < 0 || m.promptSel >= len(m.prompts.prompts) {
 		return promptStat{}, false
@@ -129,103 +133,113 @@ func (m Model) drilledPrompt() (promptStat, bool) {
 	return m.prompts.prompts[m.promptSel], true
 }
 
-// promptsTitle is the header shown in place of the search bar in prompt-explorer
-// mode: the period tabs at the top level, or the drilled prompt's text.
-func (m Model) promptsTitle(w int) string {
-	th := m.th
-	if m.promptDrill {
-		if p, ok := m.drilledPrompt(); ok {
-			head := th.Title.Render("PROMPT") + "  " +
-				th.Norm.Render(oneLine(p.text)) +
-				th.Dim.Render("   · esc back")
-			return clipW(head, w)
-		}
+// drilledCmd is the command under the command-pane cursor, and whether one
+// exists.
+func (m Model) drilledCmd() (rec.Record, bool) {
+	p, ok := m.drilledPrompt()
+	if !ok || m.drillSel < 0 || m.drillSel >= len(p.cmds) {
+		return rec.Record{}, false
 	}
-	var b strings.Builder
-	b.WriteString(th.Title.Render("PROMPTS"))
-	b.WriteString("  ")
-	for i, p := range statPeriods {
-		key := strconv.Itoa(i + 1)
-		style := th.Dim
-		if i == m.statsPeriod {
-			style = th.Accent.Bold(true)
-		}
-		b.WriteString(style.Render(key+" "+p.label) + " ")
-	}
-	if m.prompts != nil {
-		b.WriteString(th.Dim.Render(fmt.Sprintf(" · %d prompts", m.prompts.total)))
-	}
-	return clipW(b.String(), w)
+	return p.cmds[m.drillSel], true
 }
 
-// renderPrompts draws the prompt-explorer: the drilled command list when a
-// prompt is open, otherwise the selectable one-row-per-prompt table.
-func (m Model) renderPrompts(w, h int) string {
+// promptListInner renders the prompt pane: the one-row-per-prompt table,
+// windowed so the selected prompt stays on screen.
+func (m Model) promptListInner(w, h int) string {
 	th := m.th
 	if m.prompts == nil {
 		return padLines([]string{"", "  " + th.Dim.Render("computing…")}, w, h)
 	}
-	if m.promptDrill {
-		return m.renderPromptDrill(w, h)
-	}
 	if len(m.prompts.prompts) == 0 {
-		body := []string{
+		// Keep the pane's frame and header; only the body reports the emptiness.
+		return padLines([]string{
 			"",
 			"  " + th.Norm.Render("No agent prompts"+periodSuffix(m.prompts.periodLabel)+"."),
 			"",
-			"  " + th.Dim.Render("Prompt tracing needs the Claude Code hooks:  yore init claude-code"),
-		}
-		return padLines(body, w, h)
+			"  " + th.Dim.Render("Prompt tracing needs an agent's hooks:  yore init claude-code"),
+		}, w, h)
 	}
 
-	c := promptLayout(w)
+	c := promptLayout(w, m.prompts.hasDur)
 	lines := []string{promptRow(th.Dim, th.Dim, false, w, th,
 		"WHEN", "SESSION", "EXECUTOR", "CMDS", "STATUS", "DUR", "PROMPT", c)}
 
-	// A preview of the selected prompt fills the bottom (its full text + rich
-	// metadata the compact row can't show), when the pane is tall enough.
-	var preview []string
-	sel := clampIndex(m.promptSel, len(m.prompts.prompts))
-	if h >= 12 {
-		preview = m.promptPreview(m.prompts.prompts[sel], w)
-	}
-
-	visible := h - 1 - len(preview)
+	visible := h - 1
 	if visible < 1 {
 		visible = 1
 	}
+	sel := clampIndex(m.promptSel, len(m.prompts.prompts))
 	top := windowStart(sel, visible, len(m.prompts.prompts))
 	now := m.now()
 	for i := top; i < len(m.prompts.prompts) && i < top+visible; i++ {
 		p := m.prompts.prompts[i]
 		status, statusStyle := promptStatus(th, p)
+		text := oneLine(p.text)
+		// The selected row scrolls horizontally to reveal a long prompt, but only
+		// when this pane holds focus — else the command pane owns ←/→.
+		if i == sel && m.apane == apPrompts && m.hscroll > 0 {
+			text = hOffset(text, m.hscroll, c.textW)
+		}
 		lines = append(lines, promptRow(th.Norm, statusStyle, i == sel, w, th,
 			theme.RelTime(now, p.lastMs), shortSession(p.session), p.executor,
-			strconv.Itoa(p.count), status, promptDur(p), oneLine(p.text), c))
-	}
-	if len(preview) > 0 {
-		if gap := h - len(lines) - len(preview); gap > 0 {
-			lines = append(lines, make([]string, gap)...)
-		}
-		lines = append(lines, preview...)
+			strconv.Itoa(p.count), status, promptDur(p), text, c))
 	}
 	return padLines(lines, w, h)
 }
 
-// promptPreview renders the selected prompt's full text plus a metadata line
-// (executor, command count, ✓/✗ split, duration, time span, and modal cwd).
-func (m Model) promptPreview(p promptStat, w int) []string {
+// promptCmdInner renders the command pane: the highlighted prompt's command
+// sequence, oldest first (the agent's actual working order), windowed on the
+// command cursor. It always tracks the prompt under the prompt-pane cursor; the
+// prompt's own text and metadata live in the details pane.
+func (m Model) promptCmdInner(w, h int) string {
 	th := m.th
-	now := m.now()
-	meta := fmt.Sprintf("%s · %d cmds · ✓%d ✗%d · %s · %s→%s · %s",
-		p.executor, p.count, p.success, p.failures, promptDur(p),
-		theme.RelTime(now, p.firstMs), theme.RelTime(now, p.lastMs), modalCwd(p.cmds))
-	return []string{
-		"",
-		th.Title.Render(fitPlain("▸ prompt", w)),
-		"  " + th.Norm.Render(clipW(oneLine(p.text), w-2)),
-		"  " + th.Dim.Render(fitPlain(meta, w-2)),
+	p, ok := m.drilledPrompt()
+	if !ok {
+		return padLines([]string{"", "  " + th.Dim.Render("no prompt selected")}, w, h)
 	}
+	dc := promptCmdCols(w, m.prompts.hasDur)
+	lines := []string{drillHeader(th, dc, w)}
+	if len(p.cmds) == 0 {
+		lines = append(lines, "  "+th.Dim.Render("no commands recorded for this prompt"))
+		return padLines(lines, w, h)
+	}
+
+	visible := h - len(lines)
+	if visible < 1 {
+		visible = 1
+	}
+	// Only the focused pane scrolls; the prompt pane owns the offset otherwise.
+	hs := 0
+	if m.apane == apCommands {
+		hs = m.hscroll
+	}
+	now := m.now()
+	sel := clampIndex(m.drillSel, len(p.cmds))
+	top := windowStart(sel, visible, len(p.cmds))
+	q := match.Query{}
+	for i := top; i < len(p.cmds) && i < top+visible; i++ {
+		lines = append(lines, drillRow(th, p.cmds[i], i == sel, now, q, dc, w, hs))
+	}
+	return padLines(lines, w, h)
+}
+
+// promptCmdCols resolves the command pane's column layout for content width w.
+// The DUR column is dropped when no agent in view reports timing (hasDur), and
+// the command column claims whatever is left.
+func promptCmdCols(w int, hasDur bool) drillCols {
+	dc := drillCols{whenW: 7, statW: 6, durW: 7}
+	if !hasDur {
+		dc.durW = 0
+	}
+	seps := 4 // two two-space gaps: WHEN|ST and ST|COMMAND
+	if dc.durW > 0 {
+		seps = 6 // plus the ST|DUR gap
+	}
+	dc.cmdW = w - (dc.whenW + dc.statW + dc.durW + seps)
+	if dc.cmdW < 12 {
+		dc.cmdW = 12
+	}
+	return dc
 }
 
 // modalCwd returns the most common non-empty cwd across a prompt's commands.
@@ -248,58 +262,29 @@ func modalCwd(cmds []rec.Record) string {
 	return best
 }
 
-// renderPromptDrill draws the command list for the drilled prompt: the exact
-// sequence of commands the agent ran, oldest first, each selectable.
-func (m Model) renderPromptDrill(w, h int) string {
-	th := m.th
-	p, ok := m.drilledPrompt()
-	if !ok {
-		return padLines([]string{"", "  " + th.Dim.Render("no prompt selected")}, w, h)
-	}
-
-	dc := drillCols{whenW: 7, statW: 6, durW: 7}
-	dc.cmdW = w - (dc.whenW + dc.statW + dc.durW + 6) // three two-space gaps
-	if dc.cmdW < 12 {
-		dc.cmdW = 12
-	}
-
-	lines := []string{drillHeader(th, dc, w)}
-	if len(p.cmds) == 0 {
-		lines = append(lines, "  "+th.Dim.Render("no commands recorded for this prompt"))
-		return padLines(lines, w, h)
-	}
-
-	visible := h - 1
-	if visible < 1 {
-		visible = 1
-	}
-	top := windowStart(m.drillSel, visible, len(p.cmds))
-	now := m.now()
-	q := match.Query{}
-	for i := top; i < len(p.cmds) && i < top+visible; i++ {
-		lines = append(lines, drillRow(th, p.cmds[i], i == m.drillSel, now, q, dc, w))
-	}
-	return padLines(lines, w, h)
-}
-
-// drillCols is the column layout for the drilled command list.
+// drillCols is the column layout for the command pane's list.
 type drillCols struct{ whenW, statW, durW, cmdW int }
 
-// drillHeader draws the dim column header for the drilled command list.
+// drillHeader draws the dim column header for the command pane's list. The DUR
+// column is present only when dc.durW > 0 (some agent reported timing).
 func drillHeader(th *theme.Theme, dc drillCols, w int) string {
 	segs := []styledSeg{
 		{text: padLeft("WHEN", dc.whenW), style: th.Dim}, {text: "  ", raw: true},
 		{text: padRight("ST", dc.statW), style: th.Dim}, {text: "  ", raw: true},
-		{text: padLeft("DUR", dc.durW), style: th.Dim}, {text: "  ", raw: true},
-		{text: padRight("COMMAND", dc.cmdW), style: th.Dim},
 	}
+	if dc.durW > 0 {
+		segs = append(segs,
+			styledSeg{text: padLeft("DUR", dc.durW), style: th.Dim},
+			styledSeg{text: "  ", raw: true})
+	}
+	segs = append(segs, styledSeg{text: padRight("COMMAND", dc.cmdW), style: th.Dim})
 	return composeSegs(segs, false, w, th)
 }
 
-// drillRow formats one command row in the drilled prompt view, syntax-
-// highlighting the command and coloring the exit marker (or a full selection bar
-// when selected).
-func drillRow(th *theme.Theme, r rec.Record, sel bool, now int64, q match.Query, dc drillCols, w int) string {
+// drillRow formats one command row in the command pane, syntax-highlighting the
+// command and coloring the exit marker (or a full selection bar when selected).
+// A selected row with hscroll>0 scrolls horizontally to reveal a long command.
+func drillRow(th *theme.Theme, r rec.Record, sel bool, now int64, q match.Query, dc drillCols, w, hscroll int) string {
 	var segs []styledSeg
 	sep := func() { segs = append(segs, styledSeg{text: "  ", raw: true}) }
 
@@ -308,28 +293,36 @@ func drillRow(th *theme.Theme, r rec.Record, sel bool, now int64, q match.Query,
 	mark, mStyle := exitMarker(th, r)
 	segs = append(segs, styledSeg{text: padRight(truncCols(mark, dc.statW), dc.statW), style: mStyle})
 	sep()
-	dur := "—"
-	if r.DurMs != nil {
-		dur = theme.Duration(*r.DurMs)
+	if dc.durW > 0 {
+		dur := "—" // this agent didn't report timing, though a sibling did
+		if r.DurMs != nil {
+			dur = theme.Duration(*r.DurMs)
+		}
+		segs = append(segs, styledSeg{text: padLeft(dur, dc.durW), style: th.Dim})
+		sep()
 	}
-	segs = append(segs, styledSeg{text: padLeft(dur, dc.durW), style: th.Dim})
-	sep()
-	cmdSegs, used := commandSegments(th, r.Cmd, q, dc.cmdW)
-	segs = append(segs, cmdSegs...)
-	if pad := dc.cmdW - used; pad > 0 {
-		segs = append(segs, styledSeg{text: strings.Repeat(" ", pad), raw: true})
+	if sel && hscroll > 0 {
+		segs = append(segs, styledSeg{text: hOffset(oneLine(r.Cmd), hscroll, dc.cmdW), raw: true})
+	} else {
+		cmdSegs, used := commandSegments(th, r.Cmd, q, dc.cmdW)
+		segs = append(segs, cmdSegs...)
+		if pad := dc.cmdW - used; pad > 0 {
+			segs = append(segs, styledSeg{text: strings.Repeat(" ", pad), raw: true})
+		}
 	}
 	return composeSegs(segs, sel, w, th)
 }
 
 // promptStatus summarizes a prompt's command outcomes as a compact glyph/label
-// and the style for its status cell.
+// and the style for its status cell. The CMDS column already carries the total,
+// so a clean run is just a green ✓ (not "✓N", which read as an exit code and
+// duplicated CMDS); any failures surface as a red ✗N — the count that matters.
 func promptStatus(th *theme.Theme, p promptStat) (string, lipgloss.Style) {
 	switch {
 	case p.failures > 0:
-		return fmt.Sprintf("✗%d", p.failures), th.ExitErr
+		return "✗" + strconv.Itoa(p.failures), th.ExitErr
 	case p.success > 0:
-		return fmt.Sprintf("✓%d", p.success), th.ExitOK
+		return "✓", th.ExitOK
 	default:
 		return "·", th.Dim
 	}
@@ -343,10 +336,10 @@ type promptCols struct {
 	showSess, showExec, showDur                    bool
 }
 
-func promptLayout(w int) promptCols {
+func promptLayout(w int, hasDur bool) promptCols {
 	c := promptCols{
 		whenW: 7, sessW: 8, execW: 12, cmdsW: 4, statW: 6, durW: 7,
-		showSess: true, showExec: true, showDur: true,
+		showSess: true, showExec: true, showDur: hasDur,
 	}
 	prefix := func() int {
 		p := c.whenW + 2 + c.cmdsW + 2 + c.statW + 2

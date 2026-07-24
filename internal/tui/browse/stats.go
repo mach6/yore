@@ -14,12 +14,19 @@ import (
 	"yore/internal/tui/theme"
 )
 
-const sparkDays = 30
+// The two long-arc graphs — the contribution heatmap and the daily trend — are
+// aggregated over the widest window they could ever draw and then sliced to fit
+// the terminal, so a wide window shows more history rather than more whitespace.
+// Both deliberately ignore the selected period: they exist to show the shape of
+// activity AROUND the window the other panels summarize, not inside it.
+const (
+	maxHeatWeeks = 105 // two years of columns — enough to fill a wide terminal
+	maxSparkDays = 732 // and of daily bars
 
-// heatmapWeeks is the width (in weeks) of the contribution heatmap. Independent
-// of the selected period, it always shows this much history (like a GitHub
-// activity calendar), so the longer arc of activity is visible.
-const heatmapWeeks = 26
+	heatLabelW = 4 // the "Sun " gutter; the daily trend indents to match
+	heatCellW  = 2 // columns per day cell — one is too thin to read as a square
+	minHeatWks = 8 // below this the heatmap is not worth the rows it costs
+)
 
 // sparkBlocks are the eight ascending block glyphs used by the histograms
 // (level 1..8).
@@ -29,8 +36,9 @@ var sparkBlocks = []rune("▁▂▃▄▅▆▇█")
 // "no activity", 1..4 are increasing shading.
 var heatShades = []rune("·░▒▓█")
 
-// statPeriods are the selectable stats windows (keys 1..5). days == 0 means all
-// history.
+// statPeriods are the selectable time windows (keys 1..5), shared by every view
+// — the browse table, the agent explorer, and the stats screen all filter on the
+// same one. days == 0 means all history.
 var statPeriods = []struct {
 	label string
 	days  int
@@ -40,6 +48,81 @@ var statPeriods = []struct {
 	{"30d", 30},
 	{"90d", 90},
 	{"All", 0},
+}
+
+// allPeriod is the index of the "All" tab — the default, so nothing is hidden
+// until the user asks for a window.
+var allPeriod = len(statPeriods) - 1
+
+// periodCutoff is the instant a period starts, in unix ms (0 = all history).
+//
+// "Today" is the CALENDAR day in local time, not a rolling 24 hours: the tab
+// says today, and a rolling window would fold yesterday evening into this
+// morning's hour-of-day buckets — the same clock hour appearing twice, from two
+// different days.
+func periodCutoff(nowMs int64, days int) int64 {
+	switch {
+	case days <= 0:
+		return 0
+	case days == 1:
+		n := time.UnixMilli(nowMs)
+		return time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, n.Location()).UnixMilli()
+	default:
+		return nowMs - int64(days)*86_400_000
+	}
+}
+
+// periodDays returns the selected window's length in days (0 = all).
+func (m Model) periodDays() int { return statPeriods[m.period].days }
+
+// periodTabs renders the shared "1 Today 2 7d …" strip, the active tab
+// highlighted. Every view draws the identical widget, so the keys mean the same
+// thing wherever you are.
+func (m Model) periodTabs() string {
+	th := m.th
+	var b strings.Builder
+	for i, p := range statPeriods {
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		key := strconv.Itoa(i + 1)
+		if i == m.period {
+			b.WriteString(th.Accent.Bold(true).Render(key + " " + p.label))
+		} else {
+			b.WriteString(th.Dim.Render(key + " " + p.label))
+		}
+	}
+	return b.String()
+}
+
+// periodTabsWidth is the strip's fixed display width, so callers can reserve
+// room for it without rendering it first.
+func periodTabsWidth() int {
+	w := 0
+	for i, p := range statPeriods {
+		if i > 0 {
+			w++
+		}
+		w += len(strconv.Itoa(i+1)) + 1 + runewidth.StringWidth(p.label)
+	}
+	return w
+}
+
+// titleWithTabs lays out a view's header: its own text on the left, the shared
+// period tabs pinned to the right. Every period-aware view uses this, so the
+// filter is always in the same place on screen. On a terminal too narrow for
+// both, the title wins — the keys still work and the status bar names the
+// active window.
+func (m Model) titleWithTabs(left string, w int) string {
+	if !m.showPeriodTabs() {
+		return clipW(left, w)
+	}
+	tabs := m.periodTabs()
+	pad := w - lipgloss.Width(left) - lipgloss.Width(tabs)
+	if pad < 1 {
+		return clipW(left, w)
+	}
+	return left + strings.Repeat(" ", pad) + tabs
 }
 
 // cmdCount is a name paired with a tally, used for every ranked list.
@@ -65,24 +148,31 @@ type statsData struct {
 	byExecutor  []cmdCount // by tag ("" -> "(you)")
 	byHost      []cmdCount // by hostname (cross-machine corpus)
 
-	spark    []int // per-day counts, oldest (left) .. newest (right)
-	sparkMax int
-	hourly   [24]int // counts by hour-of-day (local)
-	hourMax  int
+	// Daily trend: per-day counts, oldest (left) .. newest (right), spanning
+	// maxSparkDays. Period-independent (see the constants above); the renderer
+	// takes the newest slice that fits and scales it to its own peak.
+	spark   []int
+	hourly  [24]int // counts by hour-of-day (local), within the period
+	hourMax int
 
 	// Contribution heatmap: [weekday 0=Sun][week column] counts, newest week on
-	// the right. Always spans heatmapWeeks regardless of the period.
-	heat    [7][heatmapWeeks]int
-	heatMax int
+	// the right. Period-independent, spanning maxHeatWeeks.
+	heat [7][maxHeatWeeks]int
+
+	// The aggregation runs over the newest statsLimit rows, not the whole
+	// archive. capped records that the sample hit that ceiling and sampleFrom is
+	// the oldest row in it — without both, a window wider than the sample's reach
+	// looks identical to every other wide window and the tabs read as broken.
+	capped     bool
+	sampleFrom int64
 
 	periodLabel string
-	days        int // sparkline window
 }
 
 // foldHeat places a command's local date into the contribution grid: row =
-// weekday (0=Sun), column = weeks ago (0 = oldest shown .. heatmapWeeks-1 =
+// weekday (0=Sun), column = weeks ago (0 = oldest held .. maxHeatWeeks-1 =
 // current week). Out-of-window dates are ignored. Pure, for unit testing.
-func foldHeat(heat *[7][heatmapWeeks]int, nowMs, startMs int64) {
+func foldHeat(heat *[7][maxHeatWeeks]int, nowMs, startMs int64) {
 	now := time.UnixMilli(nowMs)
 	d := time.UnixMilli(startMs)
 	// Sunday that starts each date's week (local).
@@ -91,8 +181,8 @@ func foldHeat(heat *[7][heatmapWeeks]int, nowMs, startMs int64) {
 		return t.AddDate(0, 0, -int(t.Weekday()))
 	}
 	weeksAgo := int(weekStart(now).Sub(weekStart(d)).Hours()/24) / 7
-	col := (heatmapWeeks - 1) - weeksAgo
-	if col < 0 || col >= heatmapWeeks {
+	col := (maxHeatWeeks - 1) - weeksAgo
+	if col < 0 || col >= maxHeatWeeks {
 		return
 	}
 	heat[int(d.Weekday())][col]++
@@ -102,13 +192,9 @@ func foldHeat(heat *[7][heatmapWeeks]int, nowMs, startMs int64) {
 // restricted to the last periodDays days (0 = all history). It reads only
 // fields every record already carries — no schema dependency.
 func computeStats(rows []rec.Record, now int64, periodDays int) *statsData {
-	s := &statsData{days: sparkDays, spark: make([]int, sparkDays)}
+	s := &statsData{spark: make([]int, maxSparkDays), capped: len(rows) >= statsLimit}
 	s.periodLabel = periodLabel(periodDays)
-
-	cutoff := int64(0)
-	if periodDays > 0 {
-		cutoff = now - int64(periodDays)*86_400_000
-	}
+	cutoff := periodCutoff(now, periodDays)
 
 	programs := map[string]int{}
 	commands := map[string]int{}
@@ -120,7 +206,20 @@ func computeStats(rows []rec.Record, now int64, periodDays int) *statsData {
 	var success int
 
 	for _, r := range rows {
-		if r.Deleted() || r.StartMs < cutoff {
+		if r.Deleted() {
+			continue
+		}
+		if s.sampleFrom == 0 || r.StartMs < s.sampleFrom {
+			s.sampleFrom = r.StartMs
+		}
+		// The long-arc graphs are folded BEFORE the period cutoff: their job is
+		// to show the shape of activity around the selected window, so narrowing
+		// the period must not blank them out.
+		foldHeat(&s.heat, now, r.StartMs)
+		if day := int((now - r.StartMs) / 86_400_000); day >= 0 && day < maxSparkDays {
+			s.spark[maxSparkDays-1-day]++
+		}
+		if r.StartMs < cutoff {
 			continue
 		}
 		s.total++
@@ -150,11 +249,7 @@ func computeStats(rows []rec.Record, now int64, periodDays int) *statsData {
 			durSum += float64(*r.DurMs)
 			durN++
 		}
-		if day := int((now - r.StartMs) / 86_400_000); day >= 0 && day < sparkDays {
-			s.spark[sparkDays-1-day]++
-		}
 		s.hourly[hourOfDay(r.StartMs)]++
-		foldHeat(&s.heat, now, r.StartMs)
 	}
 
 	s.unique = len(programs)
@@ -178,24 +273,25 @@ func computeStats(rows []rec.Record, now int64, periodDays int) *statsData {
 	s.byExecutor = topN(execs)
 	s.byHost = topN(hosts)
 
-	for _, c := range s.spark {
-		if c > s.sparkMax {
-			s.sparkMax = c
-		}
-	}
 	for _, c := range s.hourly {
 		if c > s.hourMax {
 			s.hourMax = c
 		}
 	}
-	for row := range s.heat {
-		for _, c := range s.heat[row] {
-			if c > s.heatMax {
-				s.heatMax = c
-			}
+	return s
+}
+
+// maxOf returns the largest value in a slice (0 when empty). The width-adaptive
+// graphs scale to the peak of what they actually DRAW, not of everything held,
+// so a spike outside the visible window can't flatten the bars on screen.
+func maxOf(vals []int) int {
+	m := 0
+	for _, v := range vals {
+		if v > m {
+			m = v
 		}
 	}
-	return s
+	return m
 }
 
 // topN returns the highest-count entries from a tally map, most first, ties
@@ -247,22 +343,28 @@ func periodLabel(days int) string {
 }
 
 // statsTitle is the top line shown in place of the search bar in stats mode: a
-// title plus the period tabs (keys 1..5).
+// title and how far the sample reaches, with the period tabs at the right.
 func (m Model) statsTitle(w int) string {
 	th := m.th
-	var b strings.Builder
-	b.WriteString(th.Title.Render("STATS"))
-	b.WriteString("  ")
-	for i, p := range statPeriods {
-		key := strconv.Itoa(i + 1)
-		if i == m.statsPeriod {
-			b.WriteString(th.Accent.Bold(true).Render(key+" "+p.label) + " ")
-		} else {
-			b.WriteString(th.Dim.Render(key+" "+p.label) + " ")
-		}
+	left := th.Title.Render("STATS")
+	if m.stats != nil {
+		left += th.Dim.Render("  " + m.sampleNote(m.stats))
 	}
-	b.WriteString(th.Dim.Render(" · s to return"))
-	return clipW(b.String(), w)
+	return m.titleWithTabs(left, w)
+}
+
+// sampleNote says what the aggregation actually covers. When the newest
+// statsLimit rows do not reach back as far as the selected window, every wider
+// tab shows the same numbers — so say so rather than let the tabs look inert.
+func (m Model) sampleNote(s *statsData) string {
+	if !s.capped || s.sampleFrom == 0 {
+		return "all history"
+	}
+	reach := theme.RelTime(m.now(), s.sampleFrom)
+	if d := m.periodDays(); d == 0 || int64(d)*86_400_000 > m.now()-s.sampleFrom {
+		return fmt.Sprintf("newest %d commands only — reaches back %s", statsLimit, reach)
+	}
+	return fmt.Sprintf("newest %d commands · reaches back %s", statsLimit, reach)
 }
 
 // renderStats draws the full stats screen in exactly h lines, no wider than w:
@@ -433,22 +535,105 @@ func statLine(th *theme.Theme, it cmdCount, maxN, colW int) string {
 	return b.String()
 }
 
-// histograms renders the per-day sparkline and the hourly distribution.
+// histograms renders the daily trend and the hourly distribution. Both span the
+// full width: the daily trend by showing as many days as there are columns, the
+// hourly by widening each of its fixed 24 buckets to fill them.
 func (m Model) histograms(s *statsData, w int) []string {
 	th := m.th
-	title := th.Title.Render(fitPlain("Commands per day (last 30d)", w))
-	summary := th.Dim.Render(fitPlain(
-		fmt.Sprintf("%s · %d commands · peak %d/day", s.periodLabel, s.total, s.sparkMax), w))
-	hourTitle := th.Title.Render(fitPlain("By hour of day (0–23)", w))
+	pad := strings.Repeat(" ", heatLabelW) // align both charts under the heatmap
+	inner := w - heatLabelW
+	if inner < 8 {
+		pad, inner = "", w
+	}
+
+	// Daily trend: one column per day, newest at the right, as far back as the
+	// terminal is wide.
+	days := inner
+	if days > maxSparkDays {
+		days = maxSparkDays
+	}
+	if days < 1 {
+		days = 1
+	}
+	spark := s.spark[len(s.spark)-days:]
+	sparkMax := maxOf(spark)
+	total := 0
+	for _, c := range spark {
+		total += c
+	}
+
 	return []string{
 		"",
-		title,
-		renderBars(th, s.spark, s.sparkMax, w),
-		summary,
+		th.Title.Render(fitPlain(fmt.Sprintf("Commands per day (last %d days)", days), w)),
+		pad + renderBars(th, spark, sparkMax, inner),
+		th.Dim.Render(fitPlain(
+			fmt.Sprintf("%s%d commands over the window · peak %d/day", pad, total, sparkMax), w)),
 		"",
-		hourTitle,
-		renderBars(th, s.hourly[:], s.hourMax, w),
+		th.Title.Render(fitPlain(
+			"By hour of day · "+plural(s.total, "command")+" in "+s.periodLabel, w)),
+		pad + hourBars(th, s.hourly, s.hourMax, inner, m.hoursElapsed()),
+		pad + th.Dim.Render(hourAxis(inner)),
 	}
+}
+
+// hoursElapsed is how many of the day's 24 hours the selected period can have
+// commands in. Only "Today" is partial — the day is still running, so the hours
+// that have not happened yet are drawn blank rather than as zero. Every wider
+// window covers whole days, so all 24 are live.
+func (m Model) hoursElapsed() int {
+	if m.periodDays() != 1 {
+		return 24
+	}
+	return hourOfDay(m.now()) + 1
+}
+
+// hourBars draws the hour-of-day histogram. Hours past `live` render blank: on a
+// partial day that is the difference between "nothing ran at 11pm" and "it isn't
+// 11pm yet", which a row of zero-dots cannot say.
+func hourBars(th *theme.Theme, hourly [24]int, maxN, w, live int) string {
+	var b strings.Builder
+	for h := 0; h < 24; h++ {
+		cw := bucketStart(w, 24, h+1) - bucketStart(w, 24, h)
+		if cw < 1 {
+			break
+		}
+		switch {
+		case h >= live:
+			b.WriteString(strings.Repeat(" ", cw))
+		case maxN <= 0 || hourly[h] <= 0:
+			b.WriteString(th.Dim.Render(strings.Repeat("·", cw)))
+		default:
+			b.WriteString(th.Accent.Render(strings.Repeat(string(sparkBlocks[sparkLevel(hourly[h], maxN)]), cw)))
+		}
+	}
+	return b.String()
+}
+
+// hourAxis labels the hourly histogram, each label sitting at the left edge of
+// its own bucket. The labelling step widens until a label fits, and drops out
+// entirely on a terminal too narrow for even one.
+func hourAxis(w int) string {
+	if w < 2 {
+		return strings.Repeat(" ", maxInt(0, w))
+	}
+	// A label is two columns and needs a blank after it, so a step is only usable
+	// when that many buckets span at least three columns.
+	step := 3
+	for step < 24 && bucketStart(w, 24, step) < 3 {
+		step *= 2
+	}
+	if bucketStart(w, 24, step) < 3 {
+		return strings.Repeat(" ", w)
+	}
+	var b strings.Builder
+	for h := 0; h < 24; h += step {
+		want := bucketStart(w, 24, h)
+		if pad := want - b.Len(); pad > 0 {
+			b.WriteString(strings.Repeat(" ", pad))
+		}
+		fmt.Fprintf(&b, "%02d", h)
+	}
+	return fitPlain(b.String(), w)
 }
 
 // heatLevel buckets a count into 0..4 by its fraction of the period's peak day.
@@ -468,56 +653,136 @@ func heatLevel(cnt, peak int) int {
 	}
 }
 
-// renderHeatmap draws the contribution calendar: 7 weekday rows × heatmapWeeks
-// columns, each cell shaded by activity intensity (a GitHub-style graph).
+// heatWeeks is how many week-columns the heatmap can draw at width w: as much
+// history as fits, capped at the year the aggregation holds.
+func heatWeeks(w int) int {
+	n := (w - heatLabelW) / heatCellW
+	if n > maxHeatWeeks {
+		n = maxHeatWeeks
+	}
+	return n
+}
+
+// renderHeatmap draws the contribution calendar: 7 weekday rows × as many week
+// columns as the terminal affords, each cell shaded by activity intensity (a
+// GitHub-style graph) and heatCellW columns wide so it reads as a square. A
+// month ruler runs underneath — without it a year of unlabelled columns says
+// nothing about when.
 func (m Model) renderHeatmap(s *statsData, w int) []string {
 	th := m.th
+	weeks := heatWeeks(w)
+	if weeks < minHeatWks {
+		return nil
+	}
+	first := maxHeatWeeks - weeks // leftmost column drawn, into s.heat
+
+	peak := 0
+	for row := range s.heat {
+		if v := maxOf(s.heat[row][first:]); v > peak {
+			peak = v
+		}
+	}
+
 	labels := [7]string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
 	lines := []string{
 		"",
-		th.Title.Render(fitPlain(fmt.Sprintf("Activity (last %d weeks) · peak %d/day", heatmapWeeks, s.heatMax), w)),
+		th.Title.Render(fitPlain(
+			fmt.Sprintf("Activity (last %d weeks) · peak %d/day", weeks, peak), w)),
 	}
 	for row := 0; row < 7; row++ {
 		var b strings.Builder
-		b.WriteString(th.Dim.Render(labels[row] + " "))
-		for col := 0; col < heatmapWeeks; col++ {
-			lvl := heatLevel(s.heat[row][col], s.heatMax)
+		b.WriteString(th.Dim.Render(padRight(labels[row], heatLabelW)))
+		for col := first; col < maxHeatWeeks; col++ {
+			lvl := heatLevel(s.heat[row][col], peak)
+			cell := strings.Repeat(string(heatShades[lvl]), heatCellW)
 			if lvl == 0 {
-				b.WriteString(th.Dim.Render(string(heatShades[0])))
+				b.WriteString(th.Dim.Render(cell))
 			} else {
-				b.WriteString(th.Accent.Render(string(heatShades[lvl])))
+				b.WriteString(th.Accent.Render(cell))
 			}
 		}
 		lines = append(lines, clipW(b.String(), w))
 	}
-	return lines
+	return append(lines, th.Dim.Render(monthRuler(m.now(), weeks, w)))
 }
 
-// renderBars draws a block-glyph histogram of vals, one glyph per value, capped
-// at w glyphs. A zero value is a dim dot; others scale into the 8 block levels.
+// monthRuler labels the heatmap's columns with a month abbreviation wherever the
+// month changes, leaving the rest blank — the same trick a calendar heatmap uses
+// to stay legible without a label per column.
+func monthRuler(nowMs int64, weeks, w int) string {
+	// The Sunday that starts the current week; column c sits (weeks-1-c) weeks
+	// before it.
+	n := time.UnixMilli(nowMs)
+	cur := time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, n.Location()).
+		AddDate(0, 0, -int(n.Weekday()))
+
+	b := strings.Builder{}
+	b.WriteString(strings.Repeat(" ", heatLabelW))
+	last := time.Month(0)
+	for c := 0; c < weeks; c++ {
+		want := heatLabelW + c*heatCellW
+		mon := cur.AddDate(0, 0, -7*(weeks-1-c)).Month()
+		if mon == last || b.Len() > want {
+			continue // same month, or a prior label still running past this column
+		}
+		last = mon
+		if pad := want - b.Len(); pad > 0 {
+			b.WriteString(strings.Repeat(" ", pad))
+		}
+		b.WriteString(mon.String()[:3])
+	}
+	return fitPlain(b.String(), w)
+}
+
+// bucketStart is the first column of bucket i when w columns are spread across
+// n buckets — the leftmost w%n buckets take one extra column each, so the row
+// ends flush with the right edge instead of leaving a ragged remainder. The
+// histogram and its axis both position from here, so labels cannot drift off
+// their bars.
+func bucketStart(w, n, i int) int {
+	if n < 1 {
+		return 0
+	}
+	return i*(w/n) + minInt(i, w%n)
+}
+
+// renderBars draws a block-glyph histogram of vals across exactly w columns. A
+// zero value is a dim dot; others scale into the 8 block levels relative to
+// maxN. With more buckets than columns the tail is dropped rather than squeezed.
 func renderBars(th *theme.Theme, vals []int, maxN, w int) string {
-	if maxN <= 0 {
-		return th.Dim.Render(strings.Repeat("·", minInt(len(vals), w)))
+	n := len(vals)
+	if n < 1 || w < 1 {
+		return ""
 	}
 	var b strings.Builder
 	for i, cnt := range vals {
-		if i >= w {
+		cw := bucketStart(w, n, i+1) - bucketStart(w, n, i)
+		if cw < 1 {
 			break
 		}
-		if cnt <= 0 {
-			b.WriteString(th.Dim.Render("·"))
+		if maxN <= 0 || cnt <= 0 {
+			b.WriteString(th.Dim.Render(strings.Repeat("·", cw)))
 			continue
 		}
-		lvl := (cnt*8 + maxN - 1) / maxN // ceil into 1..8
-		if lvl < 1 {
-			lvl = 1
-		}
-		if lvl > 8 {
-			lvl = 8
-		}
-		b.WriteString(th.Accent.Render(string(sparkBlocks[lvl-1])))
+		b.WriteString(th.Accent.Render(strings.Repeat(string(sparkBlocks[sparkLevel(cnt, maxN)]), cw)))
 	}
 	return b.String()
+}
+
+// sparkLevel buckets a count into an index into sparkBlocks (0..7), relative to
+// the peak of what is being drawn.
+func sparkLevel(cnt, maxN int) int {
+	if maxN <= 0 {
+		return 0
+	}
+	lvl := (cnt*8 + maxN - 1) / maxN // ceil into 1..8
+	if lvl < 1 {
+		lvl = 1
+	}
+	if lvl > 8 {
+		lvl = 8
+	}
+	return lvl - 1
 }
 
 func minInt(a, b int) int {

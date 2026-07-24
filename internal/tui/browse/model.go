@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 
 	"yore/internal/proto"
 	"yore/internal/rec"
@@ -39,7 +40,29 @@ type Options struct {
 	Cwd     string // current directory
 	Now     int64  // injectable clock in unix ms; 0 => time.Now
 	Keymap  string // "vim" enables vi-style navigation; "" / "emacs" = default
+
+	// Splits restores the pane layout the user last dragged to; the zero value
+	// starts each view at its default proportions. SaveSplits, when set, is
+	// called once a drag finishes so the choice sticks across runs — it runs in
+	// a tea.Cmd, off the render path, and its error is ignored (a layout that
+	// fails to persist must never interrupt browsing).
+	Splits     Splits
+	SaveSplits func(Splits) error
+
+	// Start is the screen to open on — how `yore stats` and `yore agents` land
+	// straight where they mean to. An unknown value opens the browse table, so a
+	// bad string costs nothing. Esc still drops through to browse from either.
+	Start StartView
 }
+
+// StartView names the screen Options.Start opens on.
+type StartView string
+
+const (
+	StartBrowse StartView = ""       // the command table (the default)
+	StartStats  StartView = "stats"  // the full-screen stats screen
+	StartAgents StartView = "agents" // the agent explorer
+)
 
 // Tunables.
 const (
@@ -58,7 +81,7 @@ const (
 	focusDetail
 )
 
-// viewMode switches between the browse panes and the stats screen.
+// viewMode switches between the browse panes and the full-screen views.
 type viewMode int
 
 const (
@@ -66,7 +89,6 @@ const (
 	viewStats
 	viewDevices
 	viewAgents
-	viewPrompts
 )
 
 // hostItem is one row of the host sidebar. The first real host reported by the
@@ -126,11 +148,14 @@ type Model struct {
 	borderFocus lipgloss.Style
 	borderBlur  lipgloss.Style
 
-	// data
+	// data. allRows is what the daemon returned; rows is that narrowed to the
+	// selected period (see applyPeriodFilter) and is what the table renders.
 	hosts     []hostItem
 	hostSel   int
+	allRows   []rec.Record
 	rows      []rec.Record
-	total     int
+	srvTotal  int // matches the daemon reported before its own limit
+	total     int // what the table is actually showing, after the period filter
 	remote    proto.RemoteInfo
 	lastErr   error
 	gotResult bool
@@ -142,14 +167,16 @@ type Model struct {
 
 	// stats
 	stats        *statsData
-	agents       *agentsData  // agent-monitor aggregation, from the same sample
-	prompts      *promptsData // prompt-explorer aggregation, from the same sample
-	promptSel    int          // selected row in the prompt-explorer table
-	promptDrill  bool         // drilled into the selected prompt's command list
-	drillSel     int          // selected row within the drilled command list
-	agentSel     int          // selected row in the agent-monitor table
+	agents       *agentsData  // per-executor aggregation, from the same sample
+	prompts      *promptsData // prompt aggregation, from the same sample
+	promptSel    int          // selected prompt in the explorer's prompt pane
+	drillSel     int          // selected row within that prompt's command pane
+	hscroll      int          // horizontal column offset for the focused list's selected row
+	agentSel     int          // selected row in the executor sidebar (0 = all agents)
+	agentFilter  string       // executor the sidebar is filtering to; "" = all
+	apane        agentPane    // which of the explorer's four panes holds focus
 	statsRows    []rec.Record // the full sample; re-aggregated when the period changes
-	statsPeriod  int          // index into statPeriods
+	period       int          // index into statPeriods
 	statsErr     error
 	gotStats     bool
 	statsSeq     uint64
@@ -199,6 +226,15 @@ type Model struct {
 	tableOuterH   int
 	detailOuterH  int
 
+	// pane geometry: where the active view's panes and their draggable seams
+	// landed (geo), where the user has dragged those seams to (splits), which
+	// seam a mouse drag is currently moving (drag), and whether the focused pane
+	// is expanded to fill the frame (zoom).
+	geo    layout
+	splits Splits
+	drag   dragKind
+	zoom   bool
+
 	// out is where OSC 52 copy sequences are written (the tty). Run sets it;
 	// it stays nil under test so copying is a silent no-op.
 	out io.Writer
@@ -245,11 +281,12 @@ func NewModel(b Backend, opts Options) Model {
 		detail:   vp,
 		help:     h,
 		hosts:    []hostItem{{label: "All hosts", scope: proto.ScopeAll}},
-		// Stats open on the widest window; keys 1..4 narrow it.
-		statsPeriod: len(statPeriods) - 1,
-		focus:       focusTable,
-		width:       80,
-		height:      24,
+		period:   allPeriod, // open on the widest window; 1..5 narrow it
+		focus:    focusTable,
+		apane:    apPrompts,
+		splits:   opts.Splits.withDefaults(),
+		width:    80,
+		height:   24,
 		borderFocus: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(th.Accent.GetForeground()),
@@ -257,8 +294,20 @@ func NewModel(b Backend, opts Options) Model {
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(th.Border.GetBorderTopForeground()),
 	}
+	switch opts.Start {
+	case StartStats:
+		m.view = viewStats
+	case StartAgents:
+		m.view = viewAgents
+	}
 	m.applyLayout()
 	return m
+}
+
+// needsStatsSample reports whether the active view is one of the two that render
+// from the shared aggregation sample.
+func (m Model) needsStatsSample() bool {
+	return m.view == viewStats || m.view == viewAgents
 }
 
 // Init kicks off the first host and query fetches without blocking the first
@@ -273,7 +322,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case initMsg:
 		mm, qcmd := m.issueQuery()
 		mm.ticking = true // start the single bounded warm-loop chain
-		return mm, tea.Batch(qcmd, mm.hostsCmd(), hostsTick())
+		cmds := []tea.Cmd{qcmd, mm.hostsCmd(), hostsTick()}
+		// Opening straight onto stats or the agent explorer (yore stats /
+		// yore agents) needs the aggregation sample the `s` and `a` keys would
+		// otherwise have fetched on the way in.
+		if mm.needsStatsSample() {
+			mm.statsSeq++
+			cmds = append(cmds, mm.statsCmd(mm.statsSeq))
+		}
+		return mm, tea.Batch(cmds...)
 
 	case hostsTickMsg:
 		return m.onHostsTick()
@@ -314,6 +371,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
 	}
 	return m, nil
 }
@@ -341,16 +401,10 @@ func (m Model) applyResult(msg queryResultMsg) (tea.Model, tea.Cmd) {
 	}
 	rows := append([]rec.Record(nil), msg.resp.Rows...)
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].StartMs > rows[j].StartMs })
-	m.rows = rows
-	m.total = msg.resp.Total
+	m.allRows = rows
+	m.srvTotal = msg.resp.Total
 	m.remote = msg.resp.Remote
-	m.hasTags = false
-	for _, r := range m.rows {
-		if len(r.Tags) > 0 {
-			m.hasTags = true
-			break
-		}
-	}
+	m.applyPeriodFilter()
 	m.sel = 0
 	if selID != "" {
 		for i, r := range m.rows {
@@ -557,6 +611,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleDevicesKey(s)
 	}
 
+	// Horizontal scroll is anchored to the current selection; any key other than
+	// the scroll keys themselves collapses the row back to its start.
+	if s != "left" && s != "right" {
+		m.hscroll = 0
+	}
+
 	// Global keys (both views).
 	switch s {
 	case "q", "ctrl+c":
@@ -572,8 +632,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.toggleStats()
 	case "a":
 		return m.toggleAgents()
-	case "p":
-		return m.togglePrompts()
+	case "z":
+		return m.toggleZoom()
+	case "1", "2", "3", "4", "5":
+		// The period is global, so the tabs work in every view — including the
+		// browse table, which had no time filter at all before.
+		return m.setPeriod(int(s[0] - '1'))
 	case "S":
 		return m.syncNow()
 	case "D":
@@ -582,36 +646,26 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.devicesCmd()
 	}
 
-	// The prompt explorer is interactive (selection + drill-down), so it owns its
-	// keys rather than sharing the simple stats/agents handler.
-	if m.view == viewPrompts {
-		return m.handlePromptsKey(s)
+	// The agent explorer is interactive (four focusable panes), so it owns its
+	// keys rather than sharing the simple stats handler.
+	if m.view == viewAgents {
+		return m.handleAgentsKey(s)
 	}
 
-	if m.view == viewStats || m.view == viewAgents {
-		switch s {
-		case "esc":
+	if m.view == viewStats {
+		if s == "esc" {
 			m.view = viewBrowse
-		case "up", "k":
-			if m.view == viewAgents {
-				m.agentSel = clampIndex(m.agentSel-1, m.agentLen())
-			}
-		case "down", "j":
-			if m.view == viewAgents {
-				m.agentSel = clampIndex(m.agentSel+1, m.agentLen())
-			}
-		case "1", "2", "3", "4", "5":
-			// Period tabs: re-aggregate the held sample without a new query.
-			if p := int(s[0] - '1'); p < len(statPeriods) {
-				m.statsPeriod = p
-				m.recomputeStats()
-			}
 		}
 		return m, nil
 	}
 
 	// Browse-view keys.
 	switch s {
+	case "esc":
+		if m.zoom {
+			return m.toggleZoom()
+		}
+		return m, nil
 	case "/":
 		m.searching = true
 		m.ti.Focus()
@@ -633,13 +687,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Vim: h/l (and left/right) move focus between panes.
+	// Vim: h/l move focus between panes. (left/right are reserved for horizontal
+	// scroll of the table's selected command, handled under focusTable below.)
 	if m.vim {
 		switch s {
-		case "h", "left":
+		case "h":
 			m.cycleFocus(-1)
 			return m, nil
-		case "l", "right":
+		case "l":
 			m.cycleFocus(1)
 			return m, nil
 		}
@@ -690,6 +745,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.clampWindow()
 			m.syncDetail()
+		case "right":
+			m.scrollRight()
+		case "left":
+			m.scrollLeft()
 		case "enter":
 			// Hand the picked command back to the shell (recall-to-prompt);
 			// Run returns it and the `h` function drops it on the next prompt.
@@ -708,6 +767,53 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.detail, cmd = m.detail.Update(msg)
 		return m, cmd
 	}
+	return m, nil
+}
+
+// applyPeriodFilter narrows the queried rows to the selected period. The daemon's
+// query protocol carries no time window, so the browse table filters the rows it
+// got back — which is exactly the right semantics for this view: it shows the
+// newest queryLimit commands, and the period narrows that view of them. The
+// "All" tab is a straight pass-through, so the default behaviour is unchanged.
+func (m *Model) applyPeriodFilter() {
+	cutoff := periodCutoff(m.now(), m.periodDays())
+	if cutoff == 0 {
+		m.rows, m.total = m.allRows, m.srvTotal
+	} else {
+		kept := make([]rec.Record, 0, len(m.allRows))
+		for _, r := range m.allRows {
+			if r.StartMs >= cutoff {
+				kept = append(kept, r)
+			}
+		}
+		m.rows, m.total = kept, len(kept)
+	}
+	m.hasTags = false
+	for _, r := range m.rows {
+		if len(r.Tags) > 0 {
+			m.hasTags = true
+			break
+		}
+	}
+	m.clampWindow()
+}
+
+// setPeriod switches the shared time window. It applies everywhere at once — the
+// browse table, the agent explorer, and the stats screen all read the same
+// period, so the 1..5 keys mean one thing wherever they are pressed.
+func (m Model) setPeriod(p int) (tea.Model, tea.Cmd) {
+	if p < 0 || p >= len(statPeriods) || p == m.period {
+		return m, nil
+	}
+	m.period = p
+	m.drillSel = 0
+	m.applyPeriodFilter()
+	if m.sel >= len(m.rows) {
+		m.sel = maxInt(0, len(m.rows)-1)
+	}
+	m.clampWindow()
+	m.recomputeStats()
+	m.syncDetail()
 	return m, nil
 }
 
@@ -734,50 +840,49 @@ func (m Model) toggleExecutorFilter() (tea.Model, tea.Cmd) {
 	return mm, tea.Batch(qcmd, flashTick(mm.flashID))
 }
 
-// recomputeStats re-derives the stats and agent aggregates from the held sample
-// for the current period. Cheap; called on load and on a period-tab change.
+// recomputeStats re-derives the stats, agent, and prompt aggregates from the
+// held sample for the current period and executor filter. Cheap; called on load,
+// on a period-tab change, and when the sidebar's filter moves.
+//
+// The executor filter is held by NAME, not by row index: an executor that drops
+// out of the period would otherwise silently hand its row (and the filter) to a
+// different agent.
 func (m *Model) recomputeStats() {
 	if m.statsRows == nil {
 		return
 	}
-	days := statPeriods[m.statsPeriod].days
+	days := m.periodDays()
 	m.stats = computeStats(m.statsRows, m.now(), days)
 	m.agents = computeAgents(m.statsRows, m.now(), days)
-	m.prompts = computePrompts(m.statsRows, m.now(), days)
-	m.clampPrompts()
-	if m.agents != nil {
-		m.agentSel = clampIndex(m.agentSel, len(m.agents.agents))
+	m.agentSel = 0
+	for i, a := range m.agents.agents {
+		if a.name == m.agentFilter {
+			m.agentSel = i + 1
+		}
 	}
+	if m.agentSel == 0 {
+		m.agentFilter = "" // the filtered executor has no commands in this period
+	}
+	m.prompts = computePrompts(m.statsRows, m.now(), days, m.agentFilter)
+	m.clampPrompts()
 }
 
-// toggleAgents opens the agent-monitor view (or returns to browse), reusing the
-// stats sample query so the aggregation has data.
+// toggleAgents opens the agent explorer (or returns to browse), reusing the
+// stats sample query so the aggregation has data. Opening always starts on the
+// newest prompt with the prompt pane focused.
 func (m Model) toggleAgents() (tea.Model, tea.Cmd) {
 	if m.view == viewAgents {
 		m.view = viewBrowse
+		m.zoom = false
+		m.applyLayout()
 		return m, nil
 	}
 	m.view = viewAgents
-	if m.statsRows != nil {
-		m.recomputeStats()
-		return m, nil
-	}
-	m.statsSeq++
-	return m, m.statsCmd(m.statsSeq)
-}
-
-// togglePrompts opens the prompt-explorer view (or returns to browse), reusing
-// the stats sample query. Opening always starts at the top of the prompt list,
-// not drilled into a stale prompt.
-func (m Model) togglePrompts() (tea.Model, tea.Cmd) {
-	if m.view == viewPrompts {
-		m.view = viewBrowse
-		return m, nil
-	}
-	m.view = viewPrompts
-	m.promptDrill = false
+	m.apane = apPrompts
+	m.zoom = false
 	m.promptSel = 0
 	m.drillSel = 0
+	m.applyLayout()
 	if m.statsRows != nil {
 		m.recomputeStats()
 		return m, nil
@@ -786,61 +891,229 @@ func (m Model) togglePrompts() (tea.Model, tea.Cmd) {
 	return m, m.statsCmd(m.statsSeq)
 }
 
-// handlePromptsKey services the prompt-explorer view: selection, drill-in
-// (Enter) and drill-out (Esc), plus the shared period tabs. The global keys
-// (p/s/a/q/S/D/?) are handled before this in handleKey, so they still work here.
-func (m Model) handlePromptsKey(s string) (tea.Model, tea.Cmd) {
+// toggleZoom expands the focused pane to fill the frame (or restores the tiled
+// layout). Only the multi-pane views have anything to zoom.
+func (m Model) toggleZoom() (tea.Model, tea.Cmd) {
+	if m.view != viewBrowse && m.view != viewAgents {
+		return m, nil
+	}
+	m.zoom = !m.zoom
+	m.applyLayout()
+	m.syncDetail()
+	return m, nil
+}
+
+// handleAgentsKey services the agent explorer: navigation in whichever pane holds
+// focus, Tab to cycle panes, Esc to unzoom then leave, plus the shared period
+// tabs. The global keys (a/p/s/z/q/S/D/?) are handled before this in handleKey,
+// so they still work here.
+func (m Model) handleAgentsKey(s string) (tea.Model, tea.Cmd) {
 	switch s {
 	case "esc":
-		if m.promptDrill {
-			m.promptDrill = false // drill-out: back to the prompt list
-			return m, nil
+		if m.zoom {
+			return m.toggleZoom() // unzoom first; a second esc leaves the view
 		}
 		m.view = viewBrowse
+		m.applyLayout()
 		return m, nil
-	case "1", "2", "3", "4", "5":
-		if p := int(s[0] - '1'); p < len(statPeriods) {
-			m.statsPeriod = p
-			m.promptDrill = false // the prompt set changes; leave the drill
-			m.recomputeStats()
-		}
+	case "tab":
+		m.focusAgentPane(1)
+		return m, nil
+	case "shift+tab":
+		m.focusAgentPane(-1)
 		return m, nil
 	case "up", "k":
-		if m.promptDrill {
-			m.drillSel = clampIndex(m.drillSel-1, m.drillLen())
-		} else {
-			m.promptSel = clampIndex(m.promptSel-1, m.promptLen())
-		}
+		m.moveAgentPane(-1)
 		return m, nil
 	case "down", "j":
-		if m.promptDrill {
-			m.drillSel = clampIndex(m.drillSel+1, m.drillLen())
-		} else {
-			m.promptSel = clampIndex(m.promptSel+1, m.promptLen())
-		}
+		m.moveAgentPane(1)
+		return m, nil
+	case "pgup":
+		m.moveAgentPane(-m.agentPaneRows())
+		return m, nil
+	case "pgdown":
+		m.moveAgentPane(m.agentPaneRows())
 		return m, nil
 	case "g", "home":
-		if m.promptDrill {
-			m.drillSel = 0
-		} else {
-			m.promptSel = 0
-		}
+		m.jumpAgentPane(true)
 		return m, nil
 	case "G", "end":
-		if m.promptDrill {
-			m.drillSel = clampIndex(m.drillLen()-1, m.drillLen())
-		} else {
-			m.promptSel = clampIndex(m.promptLen()-1, m.promptLen())
-		}
+		m.jumpAgentPane(false)
 		return m, nil
-	case "enter":
-		if !m.promptDrill && m.promptLen() > 0 {
-			m.promptDrill = true
-			m.drillSel = 0
-		}
+	case "right":
+		m.scrollRight()
+		return m, nil
+	case "left":
+		m.scrollLeft()
 		return m, nil
 	}
 	return m, nil
+}
+
+// focusAgentPane moves focus around the explorer's four panes. Zoom follows
+// focus, so tabbing while zoomed swaps which pane fills the frame rather than
+// dropping back to the tiled layout.
+func (m *Model) focusAgentPane(d int) {
+	m.apane = agentPane((int(m.apane) + d + agentPaneCount) % agentPaneCount)
+	m.hscroll = 0
+	m.applyLayout()
+}
+
+// setAgentPane focuses a specific pane (the mouse path).
+func (m *Model) setAgentPane(p agentPane) {
+	if m.apane == p {
+		return
+	}
+	m.apane = p
+	m.hscroll = 0
+	m.applyLayout()
+}
+
+// moveAgentPane moves the focused pane's cursor by d rows. The details pane has
+// no cursor of its own — it mirrors whatever the command pane is on — so it
+// drives that instead of going dead.
+func (m *Model) moveAgentPane(d int) {
+	switch m.apane {
+	case apAgents:
+		m.selectAgent(m.agentSel + d)
+	case apPrompts:
+		m.selectPrompt(m.promptSel + d)
+	default:
+		m.drillSel = clampIndex(m.drillSel+d, m.drillLen())
+	}
+}
+
+// jumpAgentPane sends the focused pane's cursor to the first or last row.
+func (m *Model) jumpAgentPane(first bool) {
+	switch m.apane {
+	case apAgents:
+		if first {
+			m.selectAgent(0)
+		} else {
+			m.selectAgent(m.agentRows() - 1)
+		}
+	case apPrompts:
+		if first {
+			m.selectPrompt(0)
+		} else {
+			m.selectPrompt(m.promptLen() - 1)
+		}
+	default:
+		if first {
+			m.drillSel = 0
+		} else {
+			m.drillSel = clampIndex(m.drillLen()-1, m.drillLen())
+		}
+	}
+}
+
+// agentPaneRows is the focused pane's visible row count, for page scrolling.
+func (m Model) agentPaneRows() int {
+	h := m.geo.p[m.apane].h - 3 // two border rows plus the pane title
+	if h < 1 {
+		h = 1
+	}
+	return h
+}
+
+// selectAgent moves the sidebar cursor and re-aggregates: picking an executor
+// filters the prompt (and therefore command and details) panes to its work.
+func (m *Model) selectAgent(i int) {
+	next := clampIndex(i, m.agentRows())
+	if next == m.agentSel {
+		return
+	}
+	m.agentSel = next
+	m.agentFilter = ""
+	if a, ok := m.agentAt(next); ok {
+		m.agentFilter = a.name
+	}
+	m.promptSel, m.drillSel = 0, 0
+	m.recomputeStats()
+}
+
+// hscrollStep is how many display columns one ←/→ press moves the selected row.
+const hscrollStep = 8
+
+// scrollRight / scrollLeft nudge the horizontal offset of the focused list's
+// selected row, clamped so scrolling stops at the end of the line (and never
+// goes negative), keeping ←/→ responsive in both directions.
+func (m *Model) scrollRight() {
+	m.hscroll += hscrollStep
+	if mx := m.maxHScroll(); m.hscroll > mx {
+		m.hscroll = mx
+	}
+}
+
+func (m *Model) scrollLeft() {
+	m.hscroll -= hscrollStep
+	if m.hscroll < 0 {
+		m.hscroll = 0
+	}
+}
+
+// maxHScroll is the furthest useful horizontal offset for the focused list's
+// selected row: enough to bring the end of the text into view, and 0 when it
+// already fits or nothing is selected.
+func (m Model) maxHScroll() int {
+	text, colW, ok := m.hScrollTarget()
+	if !ok || colW <= 1 {
+		return 0
+	}
+	total := runewidth.StringWidth(text)
+	if total <= colW {
+		return 0
+	}
+	return total - (colW - 1) // mirror hOffset: the leading "…" costs one column
+}
+
+// hScrollTarget returns the selected item's single-line primary text and the
+// width of the column it renders in, for the currently focused list. ok=false
+// when no scrollable list row is focused.
+func (m Model) hScrollTarget() (text string, colW int, ok bool) {
+	switch m.view {
+	case viewAgents:
+		if m.prompts == nil {
+			return "", 0, false
+		}
+		iw := m.geo.p[m.apane].w - 2 // the pane renders inside a bordered box
+		switch m.apane {
+		case apPrompts:
+			p, has := m.drilledPrompt()
+			if !has {
+				return "", 0, false
+			}
+			return oneLine(p.text), promptLayout(iw, m.prompts.hasDur).textW, true
+		case apCommands:
+			r, has := m.drilledCmd()
+			if !has {
+				return "", 0, false
+			}
+			return oneLine(r.Cmd), promptCmdCols(iw, m.prompts.hasDur).cmdW, true
+		}
+		return "", 0, false
+	case viewBrowse:
+		if m.focus != focusTable {
+			return "", 0, false
+		}
+		r, sel := m.selected()
+		if !sel {
+			return "", 0, false
+		}
+		return oneLine(r.Cmd), m.colLayout().cmdW, true
+	}
+	return "", 0, false
+}
+
+// selectPrompt moves the top-pane cursor and, whenever it lands on a different
+// prompt, resets the command pane to the top — the bottom pane now reflects a
+// different prompt's commands.
+func (m *Model) selectPrompt(i int) {
+	next := clampIndex(i, m.promptLen())
+	if next != m.promptSel {
+		m.drillSel = 0
+	}
+	m.promptSel = next
 }
 
 // promptLen / drillLen are the row counts of the two prompt-explorer lists.
@@ -863,9 +1136,7 @@ func (m Model) drillLen() int {
 // (and thus the prompt set) is recomputed.
 func (m *Model) clampPrompts() {
 	m.promptSel = clampIndex(m.promptSel, m.promptLen())
-	if m.promptDrill {
-		m.drillSel = clampIndex(m.drillSel, m.drillLen())
-	}
+	m.drillSel = clampIndex(m.drillSel, m.drillLen())
 }
 
 // clampIndex bounds i to [0, n-1], returning 0 when the list is empty.
@@ -889,8 +1160,12 @@ func (m Model) toggleStats() (tea.Model, tea.Cmd) {
 	return m, m.statsCmd(m.statsSeq)
 }
 
+// cycleFocus moves focus around the three browse panes. Zoom follows focus, so
+// tabbing while zoomed swaps which pane fills the frame.
 func (m *Model) cycleFocus(d int) {
 	m.focus = focus((int(m.focus) + d + 3) % 3)
+	m.hscroll = 0
+	m.applyLayout()
 }
 
 func (m Model) moveHost(d int) (tea.Model, tea.Cmd) {
@@ -1139,7 +1414,9 @@ func (m *Model) applyLayout() {
 	}
 	m.midHeight = mid
 
-	// Split the right column between the table and the detail pane.
+	// Split the right column between the table and the detail pane. The default
+	// keeps the detail pane a compact, bounded slice; once the user drags the
+	// seam, splits.BrowseTop takes over and holds that ratio through a resize.
 	detail := mid / 3
 	if detail < 5 {
 		detail = 5
@@ -1153,8 +1430,8 @@ func (m *Model) applyLayout() {
 	if detail < 3 {
 		detail = 3
 	}
-	m.detailOuterH = detail
-	m.tableOuterH = mid - detail
+	m.tableOuterH = splitAt(m.splits.BrowseTop, mid, minPaneRows, mid-detail)
+	m.detailOuterH = mid - m.tableOuterH
 
 	// Responsive sidebar width: shrink it on narrow terminals so left + right
 	// always sum to exactly w (no horizontal overflow).
@@ -1168,7 +1445,8 @@ func (m *Model) applyLayout() {
 	if lw > w-1 {
 		lw = w - 1
 	}
-	m.leftW = lw
+	m.leftW = splitAt(m.splits.BrowseLeft, w, minPaneCols, lw)
+	lw = m.leftW
 
 	// Right column content width (minus left sidebar and the pane border).
 	rightOuter := w - lw
@@ -1178,26 +1456,63 @@ func (m *Model) applyLayout() {
 	}
 	m.tableWidth = tableContent
 
-	// Visible data rows: table content height minus the header line.
-	m.tableRows = m.tableOuterH - 2 - 1
+	// Visible data rows: table content height minus the pane title and the
+	// column-header line.
+	m.tableRows = m.tableOuterH - 2 - 2
 	if m.tableRows < 1 {
 		m.tableRows = 1
 	}
 
-	// Detail viewport fills the detail box interior.
-	m.detail.Width = tableContent
-	m.detail.Height = m.detailOuterH - 2
-	if m.detail.Height < 1 {
-		m.detail.Height = 1
-	}
+	m.applyGeometry(w, mid)
 
-	// Text input spans the search line after the "❯ " prompt (reserve the
-	// trailing cursor cell textinput always draws).
+	// The detail viewport fills its box interior — which, zoomed, is the whole
+	// frame, so a long record rewraps to the full width instead of staying
+	// wrapped for the tile it came from.
+	dr := m.geo.p[focusDetail]
+	if m.zoom && m.focus != focusDetail {
+		dr = rect{w: tableContent + 2, h: m.detailOuterH}
+	}
+	m.detail.Width = maxInt(1, dr.w-2)
+	m.detail.Height = maxInt(1, dr.h-2-1) // less the pane title
+
+	// The text input spans the search line after the "❯ " prompt (reserving the
+	// trailing cursor cell textinput always draws), less the period tab strip
+	// that shares the line.
 	iw := w - 3
+	if m.showPeriodTabs() {
+		iw -= periodTabsWidth() + 2
+	}
 	if iw < 4 {
 		iw = 4
 	}
 	m.ti.Width = iw
 
 	m.clampWindow()
+}
+
+// applyGeometry records where the active view's panes and seams landed, so the
+// renderers and the mouse agree on one set of rectangles. A zoomed pane owns the
+// whole frame and has no seams to grab.
+func (m *Model) applyGeometry(w, mid int) {
+	if m.zoom {
+		g := noDividers()
+		g.n = 1
+		full := rect{x: 0, y: 1, w: w, h: mid}
+		switch m.view {
+		case viewAgents:
+			g.p[m.apane] = full
+		default:
+			g.p[m.focus] = full
+		}
+		m.geo = g
+		return
+	}
+	switch m.view {
+	case viewAgents:
+		lw := splitAt(m.splits.AgentLeft, w, minPaneCols, w*defaultAgentLeftRatio/ratioFull)
+		topH := splitAt(m.splits.AgentTop, mid, minPaneRows, mid*defaultAgentTopRatio/ratioFull)
+		m.geo = agentGeom(w, mid, lw, topH)
+	default:
+		m.geo = browseGeom(w, mid, m.leftW, m.tableOuterH)
+	}
 }

@@ -37,10 +37,7 @@ func (m Model) View() string {
 		mid = m.renderDevices(w, m.midHeight)
 	case viewAgents:
 		top = m.agentsTitle(w)
-		mid = m.renderAgents(w, m.midHeight)
-	case viewPrompts:
-		top = m.promptsTitle(w)
-		mid = m.renderPrompts(w, m.midHeight)
+		mid = m.renderAgentsView(w, m.midHeight)
 	default:
 		top = m.searchLine(w)
 		mid = m.renderPanes(w)
@@ -52,8 +49,11 @@ func (m Model) View() string {
 	return strings.Join([]string{top, mid, m.statusBar(w), helpv}, "\n")
 }
 
-// searchLine draws the "❯ query" input row. It is never wider than w: the
-// input viewport is clamped in applyLayout and the prompt is two columns.
+// searchLine draws the "❯ query" input row, with the shared period tabs pushed
+// to the right so the browse view advertises the same 1..5 filter the stats and
+// agent screens carry in their headers. It is never wider than w: the input
+// viewport is clamped in applyLayout (which reserves the tab strip) and the
+// prompt is two columns.
 func (m Model) searchLine(w int) string {
 	if m.tagging {
 		// tagInput already carries a "tag: " prompt.
@@ -63,8 +63,13 @@ func (m Model) searchLine(w int) string {
 	if m.searching {
 		prompt = m.th.Prompt.Render("❯ ")
 	}
-	return clipW(prompt+m.ti.View(), w)
+	return m.titleWithTabs(prompt+m.ti.View(), w)
 }
+
+// showPeriodTabs reports whether there is room for the tab strip beside a view's
+// own header content. On a narrow terminal the header wins and the keys still
+// work — the status bar names the active window.
+func (m Model) showPeriodTabs() bool { return m.width >= periodTabsWidth()+24 }
 
 // clipW truncates a (possibly styled) line to at most w columns, ANSI-aware.
 func clipW(s string, w int) string {
@@ -96,26 +101,81 @@ func (m Model) box(focused bool, contentW, contentH int, inner string) string {
 }
 
 // renderPanes lays out the three browse panes: host sidebar on the left, the
-// results table over the detail pane on the right.
+// results table over the detail pane on the right. Zoomed, the focused pane
+// alone fills the frame.
 func (m Model) renderPanes(w int) string {
+	if m.zoom {
+		r := m.geo.p[m.focus]
+		return m.browsePaneBox(m.focus, true, r.w-2, r.h-2)
+	}
 	lw := m.leftW
 	rightOuter := w - lw
 
-	left := m.box(m.focus == focusHosts, lw-2, m.midHeight-2, m.leftInner(lw-2, m.midHeight-2))
-	tbl := m.box(m.focus == focusTable, rightOuter-2, m.tableOuterH-2, m.tableInner(rightOuter-2, m.tableOuterH-2))
-	det := m.box(m.focus == focusDetail, rightOuter-2, m.detailOuterH-2, m.detail.View())
+	left := m.browsePaneBox(focusHosts, m.focus == focusHosts, lw-2, m.midHeight-2)
+	tbl := m.browsePaneBox(focusTable, m.focus == focusTable, rightOuter-2, m.tableOuterH-2)
+	det := m.browsePaneBox(focusDetail, m.focus == focusDetail, rightOuter-2, m.detailOuterH-2)
 
 	right := lipgloss.JoinVertical(lipgloss.Left, tbl, det)
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 }
 
+// browsePaneBox renders one browse pane's title line and content inside its
+// border. Sizes come from the caller so the tiled and zoomed paths share one
+// renderer; the titles match the agent explorer's, so both views read the same.
+func (m Model) browsePaneBox(f focus, focused bool, w, h int) string {
+	if w < 1 {
+		w = 1
+	}
+	if h < 1 {
+		h = 1
+	}
+	body := h - 1
+	if body < 1 {
+		body = 1
+	}
+	name, suffix := m.browsePaneHeading(f)
+	var inner string
+	switch f {
+	case focusHosts:
+		inner = m.leftInner(w, body)
+	case focusTable:
+		inner = m.tableInner(w, body)
+	default:
+		inner = m.detail.View()
+	}
+	return m.box(focused, w, h, m.paneTitle(name, suffix, focused, w)+"\n"+inner)
+}
+
+// browsePaneHeading names a browse pane and the count/position that goes beside
+// it — the host count, the cursor's place in the result set, the selected
+// command's host.
+func (m Model) browsePaneHeading(f focus) (name, suffix string) {
+	switch f {
+	case focusHosts:
+		// The aggregate row is not a host, so it does not count as one.
+		return "HOSTS", strconv.Itoa(maxInt(0, len(m.hosts)-1))
+	case focusTable:
+		if m.total == 0 {
+			return "COMMANDS", "0"
+		}
+		return "COMMANDS", fmt.Sprintf("%d/%d", m.sel+1, m.total)
+	default:
+		r, ok := m.selected()
+		if !ok {
+			return "DETAILS", ""
+		}
+		return "DETAILS", r.Hostname
+	}
+}
+
 // --- host sidebar -------------------------------------------------------
 
+// leftInner renders the host list. The pane's own "HOSTS" title is drawn by
+// browsePaneBox, so this is purely the rows.
 func (m Model) leftInner(w, h int) string {
 	lines := make([]string, 0, h)
-	lines = append(lines, m.th.Title.Render(fitPlain("HOSTS", w)))
 
-	avail := h - 1
+	avail := h
 	if avail < 1 {
 		avail = 1
 	}
@@ -317,10 +377,16 @@ func (m Model) renderRow(r rec.Record, l colLayout, q match.Query, selected bool
 		sep()
 	}
 	if l.cmdW > 0 {
-		cmdSegs, used := commandSegments(th, r.Cmd, q, l.cmdW)
-		segs = append(segs, cmdSegs...)
-		if pad := l.cmdW - used; pad > 0 {
-			segs = append(segs, styledSeg{text: strings.Repeat(" ", pad), raw: true})
+		if selected && m.focus == focusTable && m.hscroll > 0 {
+			// The selected row scrolls horizontally to reveal a truncated command
+			// (it renders as a flat selection bar anyway, so syntax color is moot).
+			segs = append(segs, styledSeg{text: hOffset(oneLine(r.Cmd), m.hscroll, l.cmdW), raw: true})
+		} else {
+			cmdSegs, used := commandSegments(th, r.Cmd, q, l.cmdW)
+			segs = append(segs, cmdSegs...)
+			if pad := l.cmdW - used; pad > 0 {
+				segs = append(segs, styledSeg{text: strings.Repeat(" ", pad), raw: true})
+			}
 		}
 	}
 	return composeSegs(segs, selected, w, th)
@@ -422,9 +488,13 @@ func (m Model) statusBar(w int) string {
 	// Row position and scope are browse-table concepts; in the aggregate Stats
 	// view and the Devices view there is no table row, so surface a summary that
 	// actually fits the view instead of a meaningless "row N/M".
+	if m.zoom {
+		pieces = append(pieces, th.Accent.Render("zoomed")+th.Dim.Render(" — z restores the panes"))
+	}
+
 	switch m.view {
-	case viewStats, viewAgents, viewPrompts:
-		// These aggregate views are self-describing (the panels/table show their
+	case viewStats, viewAgents:
+		// These aggregate views are self-describing (the panels/panes show their
 		// own totals), so the status bar stays minimal — just any flash/error.
 	case viewDevices:
 		unit := "devices"
@@ -439,6 +509,15 @@ func (m Model) statusBar(w int) string {
 		}
 		pieces = append(pieces, th.Dim.Render(fmt.Sprintf("row %d/%d", pos, m.total)))
 		pieces = append(pieces, th.Dim.Render(scopeWord(m.hosts[m.hostSel])))
+		// Name the window whenever it hides anything — and always when the tab
+		// strip did not fit, so the active period is never invisible.
+		if m.period != allPeriod {
+			label := statPeriods[m.period].label
+			if hidden := len(m.allRows) - len(m.rows); hidden > 0 {
+				label += fmt.Sprintf(" (%d older hidden)", hidden)
+			}
+			pieces = append(pieces, th.Accent.Render(label))
+		}
 		if m.executorFilter != "" {
 			pieces = append(pieces, th.Accent.Render("executor: "+m.executorFilter))
 		}
@@ -836,4 +915,66 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// hOffset returns the display-column window [offset, offset+w) of a single-line
+// string, marking a leading "…" when content is hidden to the left and a
+// trailing "…" when it continues past the right. Result width is at most w. It
+// is how a selected row scrolls horizontally to reveal truncated text.
+func hOffset(s string, offset, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	widths := make([]int, len(runes))
+	total := 0
+	for i, r := range runes {
+		widths[i] = runewidth.RuneWidth(r)
+		total += widths[i]
+	}
+	if total <= w {
+		return s // fits whole; nothing to scroll
+	}
+	// A leading marker costs one column, so the furthest useful offset leaves
+	// exactly w-1 content columns visible on the right edge.
+	if maxOff := total - (w - 1); offset > maxOff {
+		offset = maxOff
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	// Advance to the first rune at or beyond `offset` display columns.
+	start, col := 0, 0
+	for start < len(runes) && col < offset {
+		col += widths[start]
+		start++
+	}
+	leading := offset > 0
+	budget := w
+	if leading {
+		budget-- // reserve the leading "…"
+	}
+	end, used := start, 0
+	for end < len(runes) && used+widths[end] <= budget {
+		used += widths[end]
+		end++
+	}
+	trailing := end < len(runes)
+	if trailing {
+		for end > start && used+1 > budget { // make room for the trailing "…"
+			end--
+			used -= widths[end]
+		}
+	}
+	var b strings.Builder
+	if leading {
+		b.WriteRune('…')
+	}
+	for i := start; i < end; i++ {
+		b.WriteRune(runes[i])
+	}
+	if trailing {
+		b.WriteRune('…')
+	}
+	return b.String()
 }

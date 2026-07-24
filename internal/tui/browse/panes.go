@@ -1,0 +1,179 @@
+package browse
+
+// Pane geometry: where each pane sits in the rendered frame, where the draggable
+// seams between them are, and how a dragged seam is remembered. The renderers in
+// view.go / agents.go size themselves from this, and mouse.go hit-tests against
+// it, so there is exactly one place that decides how the screen is carved up.
+
+// rect is a pane's position in the rendered frame, in absolute screen cells with
+// (0,0) at the top-left of the whole view (the title line).
+type rect struct{ x, y, w, h int }
+
+func (r rect) contains(x, y int) bool {
+	return r.w > 0 && r.h > 0 && x >= r.x && x < r.x+r.w && y >= r.y && y < r.y+r.h
+}
+
+// maxPanes is the largest pane count any view lays out (the agent explorer's
+// 2×2 grid).
+const maxPanes = 4
+
+// layout is the active view's pane geometry, recomputed by applyLayout. Panes are
+// stored in the view's own focus order so a focus value indexes straight into p.
+// vDiv/hDiv are the draggable seams; -1 means this view has no such seam (or the
+// layout is zoomed to a single pane). hDivFrom is where the horizontal seam
+// starts — the browse view splits only its right-hand column.
+type layout struct {
+	p        [maxPanes]rect
+	n        int
+	vDiv     int
+	hDiv     int
+	hDivFrom int
+}
+
+// noDividers is the geometry of a single full-screen pane.
+func noDividers() layout { return layout{vDiv: -1, hDiv: -1} }
+
+// Splits holds the divider positions the user has dragged to, as a fraction of
+// the axis each one cuts, so the chosen proportions survive a terminal resize.
+// Zero means "auto": the view's own default sizing applies. The browse view
+// therefore keeps the layout it has always had until a divider is actually moved.
+//
+// The unit is per-mille, not percent: on a 140-column terminal one percent is
+// 1.4 cells, coarse enough that a dragged seam would visibly snap away from the
+// pointer instead of tracking it.
+//
+// It is exported because it is what gets persisted: Options.Splits restores a
+// remembered layout and Options.SaveSplits is called when a drag finishes.
+type Splits struct {
+	BrowseLeft int // host sidebar width, ‰ of the terminal width
+	BrowseTop  int // results-table height, ‰ of the middle region
+	AgentLeft  int // agent sidebar width, ‰ of the terminal width
+	AgentTop   int // prompt-list height, ‰ of the middle region
+}
+
+// Divider bounds. The ratios keep both sides of a seam meaningful; the absolute
+// minimums are what a pane needs for a title plus a row of content.
+const (
+	ratioFull = 1000 // a whole axis, in the per-mille unit paneSplits uses
+
+	minColRatio = 120
+	maxColRatio = 600
+	minRowRatio = 200
+	maxRowRatio = 800
+	minPaneCols = 12
+	minPaneRows = 4
+
+	// Default agent-explorer proportions: a sidebar narrow enough to leave the
+	// prompt table room, and a prompt list that keeps more rows than the command
+	// pane below it.
+	defaultAgentLeftRatio = 260
+	defaultAgentTopRatio  = 550
+)
+
+// withDefaults fills in the agent explorer's starting proportions. That view is
+// new, so it has no legacy layout to preserve and simply opens at a sensible
+// ratio; the browse view's zeros are left alone, keeping the exact layout it has
+// always had until the user drags a seam.
+func (s Splits) withDefaults() Splits {
+	if s.AgentLeft == 0 {
+		s.AgentLeft = defaultAgentLeftRatio
+	}
+	if s.AgentTop == 0 {
+		s.AgentTop = defaultAgentTopRatio
+	}
+	return s
+}
+
+// dragKind identifies which seam an in-flight mouse drag is moving.
+type dragKind int
+
+const (
+	dragNone dragKind = iota
+	dragVert
+	dragHoriz
+)
+
+// clampRatio bounds a divider ratio to a usable range.
+func clampRatio(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+// ratioOf converts a cell offset along an axis into the stored ratio. It rounds
+// to nearest so ratioOf and splitAt round-trip: a seam dropped on a column comes
+// back on that same column.
+func ratioOf(cells, total int) int {
+	if total < 1 {
+		return 0
+	}
+	return (ratioFull*cells + total/2) / total
+}
+
+// splitAt turns a divider ratio into a cell count along an axis of `total`
+// cells, leaving at least `floor` cells on both sides. ratio == 0 means the
+// caller's own default (fallback) applies.
+func splitAt(ratio, total, floor, fallback int) int {
+	v := fallback
+	if ratio > 0 {
+		v = (total*ratio + ratioFull/2) / ratioFull
+	}
+	if v < floor {
+		v = floor
+	}
+	if v > total-floor {
+		v = total - floor
+	}
+	if v < 1 {
+		v = 1
+	}
+	return v
+}
+
+// nearSeam reports whether a mouse coordinate lands on a divider. A seam between
+// two bordered boxes is two cells wide (one border from each), and `seam` is the
+// second of them, so both count as a hit.
+func nearSeam(v, seam int) bool { return seam >= 0 && (v == seam || v == seam-1) }
+
+// --- per-view geometry ---------------------------------------------------
+
+// browseGeom lays out the three browse panes: the host sidebar down the left,
+// the results table over the detail pane on the right. leftW/tableH are the
+// already-resolved outer sizes so the renderers and the geometry cannot drift.
+func browseGeom(w, mid, leftW, tableH int) layout {
+	right := w - leftW
+	return layout{
+		p: [maxPanes]rect{
+			{x: 0, y: 1, w: leftW, h: mid},
+			{x: leftW, y: 1, w: right, h: tableH},
+			{x: leftW, y: 1 + tableH, w: right, h: mid - tableH},
+		},
+		n:        3,
+		vDiv:     leftW,
+		hDiv:     1 + tableH,
+		hDivFrom: leftW,
+	}
+}
+
+// agentGeom lays out the agent explorer's 2×2 grid: the executor sidebar and the
+// details pane down the left, the prompt list over its command pane on the right.
+// Both seams span the full frame, so either can be grabbed anywhere along it.
+func agentGeom(w, mid, leftW, topH int) layout {
+	right := w - leftW
+	return layout{
+		p: [maxPanes]rect{
+			{x: 0, y: 1, w: leftW, h: topH},
+			{x: leftW, y: 1, w: right, h: topH},
+			{x: leftW, y: 1 + topH, w: right, h: mid - topH},
+			{x: 0, y: 1 + topH, w: leftW, h: mid - topH},
+		},
+		n:        4,
+		vDiv:     leftW,
+		hDiv:     1 + topH,
+		hDivFrom: 0,
+	}
+}

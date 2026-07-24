@@ -5,13 +5,32 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mattn/go-runewidth"
 
 	"yore/internal/rec"
 	"yore/internal/tui/theme"
 )
+
+// The agent explorer (the `a` key) is a four-pane view over everything the
+// agents on this machine have done: which executors ran (the sidebar), the
+// prompts they were given, the commands each prompt triggered, and the details
+// of whatever is under the cursor. Selecting an executor filters the other three.
+
+// agentPane identifies one of the explorer's panes. The values are also the
+// index into layout.p, so a focused pane maps straight to its rectangle.
+type agentPane int
+
+const (
+	apAgents agentPane = iota
+	apPrompts
+	apCommands
+	apInfo
+)
+
+// agentPaneCount is the explorer's pane count (used to cycle focus).
+const agentPaneCount = 4
 
 // agentStat is one executor's aggregate activity over the selected period.
 type agentStat struct {
@@ -39,8 +58,7 @@ func (a agentStat) avgDurMs() float64 {
 	return a.durSum / float64(a.durN)
 }
 
-// agentsData is the aggregation behind the agent-monitor view: one row per
-// executor tag (agent), plus totals.
+// agentsData is the sidebar's aggregation: one row per executor tag, plus totals.
 type agentsData struct {
 	agents      []agentStat
 	total       int // total agent commands in the period
@@ -51,10 +69,7 @@ type agentsData struct {
 // periodDays days (0 = all). Untagged commands the user typed are excluded —
 // this view is specifically "what agents ran".
 func computeAgents(rows []rec.Record, now int64, periodDays int) *agentsData {
-	cutoff := int64(0)
-	if periodDays > 0 {
-		cutoff = now - int64(periodDays)*86_400_000
-	}
+	cutoff := periodCutoff(now, periodDays)
 	byTag := map[string]*agentStat{}
 	total := 0
 	for _, r := range rows {
@@ -98,163 +113,402 @@ func computeAgents(rows []rec.Record, now int64, periodDays int) *agentsData {
 	return out
 }
 
-// agentsTitle is the header shown in place of the search bar in agent-monitor
-// mode: a title, the period tabs, and a total.
+// --- selection helpers ---------------------------------------------------
+
+// agentRows is the sidebar's row count: every executor plus the leading
+// "All agents" row.
+func (m Model) agentRows() int {
+	if m.agents == nil {
+		return 1
+	}
+	return len(m.agents.agents) + 1
+}
+
+// agentAt returns the executor on sidebar row i, or false for the "All agents"
+// row (and for any row past the end).
+func (m Model) agentAt(i int) (agentStat, bool) {
+	if m.agents == nil || i <= 0 || i > len(m.agents.agents) {
+		return agentStat{}, false
+	}
+	return m.agents.agents[i-1], true
+}
+
+// --- title ---------------------------------------------------------------
+
+// agentsTitle is the header shown in place of the search bar: the period tabs
+// and what the current filter is showing.
 func (m Model) agentsTitle(w int) string {
 	th := m.th
 	var b strings.Builder
 	b.WriteString(th.Title.Render("AGENTS"))
-	b.WriteString("  ")
-	for i, p := range statPeriods {
-		key := strconv.Itoa(i + 1)
-		style := th.Dim
-		if i == m.statsPeriod {
-			style = th.Accent.Bold(true)
-		}
-		b.WriteString(style.Render(key+" "+p.label) + " ")
+	scope := "all agents"
+	if m.agentFilter != "" {
+		scope = m.agentFilter
 	}
-	if m.agents != nil {
-		b.WriteString(th.Dim.Render(fmt.Sprintf(" · %d agent commands", m.agents.total)))
+	b.WriteString(th.Accent.Render("  " + scope))
+	if m.prompts != nil && m.agents != nil {
+		b.WriteString(th.Dim.Render(" · " +
+			plural(m.prompts.total, "prompt") + " · " + plural(m.agents.total, "command")))
 	}
-	return clipW(b.String(), w)
+	if m.stats != nil {
+		// The explorer reads the same capped sample as the stats screen, so it
+		// owes the same caveat: without it, two windows wider than the sample's
+		// reach show identical numbers and the tabs look broken.
+		b.WriteString(th.Dim.Render(" · " + m.sampleNote(m.stats)))
+	}
+	return m.titleWithTabs(b.String(), w)
 }
 
-// renderAgents draws the agent-monitor table: one row per executor with counts,
-// success rate, failures, average duration, and last-seen.
-func (m Model) renderAgents(w, h int) string {
+// --- the four-pane grid --------------------------------------------------
+
+// renderAgentsView draws the explorer. Zoomed, the focused pane alone fills the
+// frame; otherwise the four panes tile the geometry applyLayout resolved, with
+// the focused one carrying the accent border.
+func (m Model) renderAgentsView(w, h int) string {
+	if m.zoom {
+		return m.agentPaneBox(m.apane, true, w-2, h-2)
+	}
+	g := m.geo
+	left := lipgloss.JoinVertical(lipgloss.Left,
+		m.agentPaneBox(apAgents, m.apane == apAgents, g.p[apAgents].w-2, g.p[apAgents].h-2),
+		m.agentPaneBox(apInfo, m.apane == apInfo, g.p[apInfo].w-2, g.p[apInfo].h-2),
+	)
+	right := lipgloss.JoinVertical(lipgloss.Left,
+		m.agentPaneBox(apPrompts, m.apane == apPrompts, g.p[apPrompts].w-2, g.p[apPrompts].h-2),
+		m.agentPaneBox(apCommands, m.apane == apCommands, g.p[apCommands].w-2, g.p[apCommands].h-2),
+	)
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, right)
+}
+
+// agentPaneBox renders one pane's title line plus its body inside a border.
+func (m Model) agentPaneBox(p agentPane, focused bool, w, h int) string {
+	if w < 1 {
+		w = 1
+	}
+	if h < 1 {
+		h = 1
+	}
+	name, suffix := m.agentPaneHeading(p)
+	body := h - 1
+	if body < 1 {
+		body = 1
+	}
+	var inner string
+	switch p {
+	case apAgents:
+		inner = m.agentListInner(w, body)
+	case apPrompts:
+		inner = m.promptListInner(w, body)
+	case apCommands:
+		inner = m.promptCmdInner(w, body)
+	case apInfo:
+		inner = m.agentInfoInner(w, body)
+	}
+	title := m.paneTitle(name, suffix, focused, w)
+	return m.box(focused, w, h, title+"\n"+inner)
+}
+
+// agentPaneHeading is a pane's name and the count/position suffix that goes
+// beside it, so each title doubles as a scrollbar-free position readout.
+func (m Model) agentPaneHeading(p agentPane) (name, suffix string) {
+	switch p {
+	case apAgents:
+		if m.agents == nil {
+			return "AGENTS", ""
+		}
+		return "AGENTS", strconv.Itoa(len(m.agents.agents))
+	case apPrompts:
+		n := m.promptLen()
+		if n == 0 {
+			return "PROMPTS", "0"
+		}
+		return "PROMPTS", fmt.Sprintf("%d/%d", clampIndex(m.promptSel, n)+1, n)
+	case apCommands:
+		n := m.drillLen()
+		if n == 0 {
+			return "COMMANDS", "0"
+		}
+		return "COMMANDS", fmt.Sprintf("%d/%d", clampIndex(m.drillSel, n)+1, n)
+	default:
+		return "DETAILS", ""
+	}
+}
+
+// paneTitle renders a pane header: the name, a dim count/position suffix, and a
+// ⛶ marker when the pane is zoomed to the full frame.
+func (m Model) paneTitle(name, suffix string, focused bool, w int) string {
+	th := m.th
+	style := th.Title
+	if !focused {
+		style = th.Dim
+	}
+	s := style.Render(name)
+	if suffix != "" {
+		s += th.Dim.Render("  " + suffix)
+	}
+	if focused && m.zoom {
+		s += th.Accent.Render("  ⛶")
+	}
+	pad := w - lipgloss.Width(s)
+	if pad > 0 {
+		s += strings.Repeat(" ", pad)
+	}
+	return clipW(s, w)
+}
+
+// --- agent sidebar -------------------------------------------------------
+
+// agentListInner draws the executor sidebar: an "All agents" row followed by one
+// row per executor with its command count. The active filter carries a ● bullet
+// (inactive rows keep the column, so the names stay aligned), and the selected
+// executor's summary fills the space below the list.
+func (m Model) agentListInner(w, h int) string {
 	th := m.th
 	if m.agents == nil {
 		return padLines([]string{"", "  " + th.Dim.Render("computing…")}, w, h)
 	}
-	if len(m.agents.agents) == 0 {
-		body := []string{
-			"",
-			"  " + th.Norm.Render("No agent commands"+periodSuffix(m.agents.periodLabel)+"."),
-			"",
-			"  " + th.Dim.Render("Agents are auto-detected in your interactive shell, or install"),
-			"  " + th.Dim.Render("the Claude Code hook with:  yore init claude-code"),
-		}
-		return padLines(body, w, h)
+
+	rows := m.agentRows()
+	sel := clampIndex(m.agentSel, rows)
+	// Reserve the summary block only when there is room for the list as well.
+	summary := m.agentSummary(sel, w)
+	listH := h
+	if len(summary) > 0 && h-len(summary) >= 2 {
+		listH = h - len(summary)
+	} else {
+		summary = nil
 	}
 
-	// Column layout: Executor | Commands | Success | Fails | Avg | Last seen.
-	nameW := 20
-	numW := 9
-	lastW := 12
-	if w < nameW+numW*4+lastW+6 {
-		nameW = maxInt(10, w-numW*4-lastW-6)
+	lines := make([]string, 0, h)
+	top := windowStart(sel, listH, rows)
+	for i := top; i < rows && i < top+listH; i++ {
+		lines = append(lines, m.agentLine(i, i == sel, w))
 	}
-
-	header := agentRow(th.Dim, "EXECUTOR", "COMMANDS", "SUCCESS", "FAILS", "AVG", "LAST", nameW, numW, lastW)
-	lines := []string{header}
-	now := m.now()
-	sel := clampIndex(m.agentSel, len(m.agents.agents))
-	for i, a := range m.agents.agents {
-		success := "n/a"
-		if a.successPS() >= 0 {
-			success = fmt.Sprintf("%.0f%%", a.successPS())
-		}
-		avg := "n/a"
-		if a.avgDurMs() >= 0 {
-			avg = theme.Duration(int64(a.avgDurMs()))
-		}
-		fails := strconv.Itoa(a.failures)
-		if a.failures == 0 {
-			fails = "·"
-		}
-		style := th.Norm
-		if i == sel {
-			style = th.Sel // selection bar
-		}
-		lines = append(lines, agentRow(style,
-			a.name, strconv.Itoa(a.count), success, fails, avg,
-			theme.RelTime(now, a.lastMs), nameW, numW, lastW))
+	for len(lines) < listH {
+		lines = append(lines, strings.Repeat(" ", w))
 	}
-
-	// A detail block for the selected agent fills the bottom: its most recent
-	// commands with outcome, so the table doubles as a drill-in.
-	detail := m.agentDetail(m.agents.agents[sel], w)
-	body := lines
-	if gap := h - len(lines) - len(detail); gap > 0 {
-		body = append(body, make([]string, gap)...)
-	}
-	body = append(body, detail...)
-	return padLines(body, w, h)
+	lines = append(lines, summary...)
+	return padLines(lines, w, h)
 }
 
-// agentLen is the number of rows in the agent-monitor table.
-func (m Model) agentLen() int {
-	if m.agents == nil {
-		return 0
-	}
-	return len(m.agents.agents)
-}
-
-// agentDetail renders the recent-commands block for one executor, drawn from the
-// held sample (newest first).
-func (m Model) agentDetail(a agentStat, w int) []string {
+// agentLine formats one sidebar row: "● name    count".
+func (m Model) agentLine(i int, sel bool, w int) string {
 	th := m.th
-	recents := m.recentByExecutor(a.name, 6)
-	lines := []string{
-		"",
-		th.Title.Render(fitPlain(fmt.Sprintf("▸ %s — recent commands", a.name), w)),
+	name, count, active := "all agents", 0, m.agentFilter == ""
+	if m.agents != nil {
+		count = m.agents.total
 	}
-	if len(recents) == 0 {
-		return append(lines, "  "+th.Dim.Render("(none)"))
+	if a, ok := m.agentAt(i); ok {
+		name, count, active = a.name, a.count, a.name == m.agentFilter
 	}
+	bullet := " "
+	if active {
+		bullet = "●"
+	}
+	num := strconv.Itoa(count)
+	nameW := w - lipgloss.Width(num) - 3 // bullet + space + gap
+	if nameW < 1 {
+		nameW = 1
+	}
+	label := bullet + " " + padRight(truncCols(name, nameW), nameW)
+	segs := []styledSeg{
+		{text: label, style: th.Accent},
+		{text: " ", raw: true},
+		{text: num, style: th.Dim},
+	}
+	if !active {
+		segs[0].style = th.Norm
+	}
+	return composeSegs(segs, sel, w, th)
+}
+
+// agentSummary is the compact stat block under the sidebar list for the executor
+// on row i — success rate, failures, average duration, last seen. The "All
+// agents" row summarizes every executor together.
+func (m Model) agentSummary(i, w int) []string {
+	th := m.th
+	if m.agents == nil || w < 12 {
+		return nil
+	}
+	a, ok := m.agentAt(i)
+	if !ok {
+		a = agentStat{name: "all agents"}
+		for _, x := range m.agents.agents {
+			a.count += x.count
+			a.success += x.success
+			a.failures += x.failures
+			a.knownExit += x.knownExit
+			a.durSum += x.durSum
+			a.durN += x.durN
+			if x.lastMs > a.lastMs {
+				a.lastMs = x.lastMs
+			}
+		}
+	}
+	if a.count == 0 {
+		return nil
+	}
+	ok2 := "n/a"
+	if a.successPS() >= 0 {
+		ok2 = fmt.Sprintf("%.0f%% ok", a.successPS())
+	}
+	avg := "no timing"
+	if a.avgDurMs() >= 0 {
+		avg = "avg " + theme.Duration(int64(a.avgDurMs()))
+	}
+	fails := "no failures"
+	if a.failures > 0 {
+		fails = fmt.Sprintf("%d failed", a.failures)
+	}
+	return []string{
+		strings.Repeat(" ", w),
+		th.Title.Render(fitPlain(truncCols(a.name, w), w)),
+		th.Dim.Render(fitPlain(fmt.Sprintf("%d cmds · %s", a.count, ok2), w)),
+		th.Dim.Render(fitPlain(fails+" · "+avg, w)),
+		th.Dim.Render(fitPlain("last "+theme.RelTime(m.now(), a.lastMs), w)),
+	}
+}
+
+// --- details pane --------------------------------------------------------
+
+// infoLabelW is the details pane's label column, wide enough for the longest
+// label so every value starts in the same column.
+const infoLabelW = 9
+
+// agentInfoInner draws the details pane. It follows focus: with the command pane
+// active it describes the selected command, otherwise the selected prompt — so
+// the pane always explains whatever the cursor is on.
+func (m Model) agentInfoInner(w, h int) string {
+	th := m.th
+	p, ok := m.drilledPrompt()
+	if !ok {
+		return padLines([]string{"", "  " + th.Dim.Render("no prompt selected")}, w, h)
+	}
+	if m.apane == apCommands {
+		if r, has := m.drilledCmd(); has {
+			return padLines(m.cmdInfoLines(r, w), w, h)
+		}
+	}
+	return padLines(m.promptInfoLines(p, w), w, h)
+}
+
+// promptInfoLines is the details body for a prompt: its full text wrapped, then
+// the aggregate of the commands it triggered.
+func (m Model) promptInfoLines(p promptStat, w int) []string {
+	th := m.th
+	lines := make([]string, 0, 16)
+	lines = append(lines, th.Title.Render(fitPlain("Prompt", w)))
+	for _, l := range wrapPlain(p.text, w-1) {
+		lines = append(lines, " "+th.Norm.Render(l))
+	}
+	lines = append(lines, strings.Repeat(" ", w))
+
 	now := m.now()
-	for _, r := range recents {
-		when := theme.RelTime(now, r.StartMs)
-		mark, mStyle := exitMarker(th, r)
-		row := "  " + th.Dim.Render(padRight(when, 6)) + " " + mStyle.Render(mark) + " " +
-			th.Norm.Render(clipW(oneLineCmd(r.Cmd), w-12))
-		lines = append(lines, row)
+	status := fmt.Sprintf("%d   ✓%d ✗%d", p.count, p.success, p.failures)
+	// Ordered by what a short pane should keep: on a squeezed layout the tail
+	// (the timestamps) is what gets clipped, not the identity of the prompt.
+	for _, kv := range [][2]string{
+		{"Executor", dashIfEmpty(p.executor)},
+		{"Session", shortSession(p.session)},
+		{"Commands", status},
+		{"Duration", promptDur(p)},
+		{"Path", modalCwd(p.cmds)},
+		{"First", theme.RelTime(now, p.firstMs)},
+		{"Last", theme.RelTime(now, p.lastMs)},
+	} {
+		lines = append(lines, m.infoRow(kv[0], kv[1], w))
 	}
 	return lines
 }
 
-// recentByExecutor returns the newest n commands run by the given executor from
-// the held sample.
-func (m Model) recentByExecutor(tag string, n int) []rec.Record {
-	var out []rec.Record
-	for i := range m.statsRows {
-		r := m.statsRows[i]
-		if r.Deleted() || r.Tag != tag {
-			continue
-		}
-		out = append(out, r)
+// cmdInfoLines is the details body for one captured command.
+func (m Model) cmdInfoLines(r rec.Record, w int) []string {
+	th := m.th
+	lines := make([]string, 0, 16)
+	lines = append(lines, th.Title.Render(fitPlain("Command", w)))
+	for _, l := range wrapPlain(oneLine(r.Cmd), w-1) {
+		lines = append(lines, " "+th.Norm.Render(l))
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].StartMs > out[j].StartMs })
-	if len(out) > n {
-		out = out[:n]
+	lines = append(lines, strings.Repeat(" ", w))
+
+	dur := "—"
+	if r.DurMs != nil {
+		dur = theme.Duration(*r.DurMs)
+	}
+	exit := "○ unknown"
+	if r.Exit != nil {
+		if *r.Exit == 0 {
+			exit = "✓ 0"
+		} else {
+			exit = "✗ " + strconv.Itoa(*r.Exit)
+		}
+	}
+	for _, kv := range [][2]string{
+		{"Path", dashIfEmpty(r.Cwd)},
+		{"Host", dashIfEmpty(r.Hostname)},
+		{"Time", time.UnixMilli(r.StartMs).Local().Format("2006-01-02 15:04:05")},
+		{"Duration", dur},
+		{"Exit", exit},
+		{"Executor", dashIfEmpty(r.Tag)},
+	} {
+		lines = append(lines, m.infoRow(kv[0], kv[1], w))
+	}
+	return lines
+}
+
+// infoRow formats one "Label   value" line of the details pane.
+func (m Model) infoRow(label, value string, w int) string {
+	vw := w - infoLabelW
+	if vw < 1 {
+		vw = 1
+	}
+	return m.th.Dim.Render(padRight(label, infoLabelW)) +
+		m.th.Norm.Render(padRight(truncCols(value, vw), vw))
+}
+
+// plural renders "1 prompt" / "3 prompts" for the title's counters.
+func plural(n int, unit string) string {
+	if n == 1 {
+		return "1 " + unit
+	}
+	return strconv.Itoa(n) + " " + unit + "s"
+}
+
+func dashIfEmpty(s string) string {
+	if s == "" {
+		return "—"
+	}
+	return s
+}
+
+// wrapPlain word-wraps an unstyled single-line string to width w, capping the
+// result so a huge prompt cannot push the metadata off the details pane.
+func wrapPlain(s string, w int) []string {
+	if w < 1 {
+		w = 1
+	}
+	s = oneLine(s)
+	if s == "" {
+		return []string{"—"}
+	}
+	var out []string
+	for s != "" && len(out) < 8 {
+		if lipgloss.Width(s) <= w {
+			out = append(out, s)
+			break
+		}
+		cut := truncCols(s, w)
+		// Prefer breaking at the last space so words stay intact.
+		if i := strings.LastIndexByte(cut, ' '); i > w/2 {
+			cut = cut[:i]
+		}
+		out = append(out, cut)
+		s = strings.TrimLeft(s[len(cut):], " ")
+	}
+	if s != "" && lipgloss.Width(s) > w {
+		out[len(out)-1] = truncCols(out[len(out)-1], w-1) + "…"
 	}
 	return out
-}
-
-// oneLineCmd flattens a command to a single spaced line for compact display.
-func oneLineCmd(cmd string) string {
-	return strings.Join(strings.Fields(strings.ReplaceAll(cmd, "\n", " ")), " ")
-}
-
-// agentRow formats one fixed-width agent table row.
-func agentRow(style lipgloss.Style, name, cmds, success, fails, avg, last string, nameW, numW, lastW int) string {
-	cell := func(sty lipgloss.Style, s string, wdt int, right bool) string {
-		s = truncCols(s, wdt)
-		pad := wdt - runewidth.StringWidth(s)
-		if pad < 0 {
-			pad = 0
-		}
-		if right {
-			return strings.Repeat(" ", pad) + sty.Render(s)
-		}
-		return sty.Render(s) + strings.Repeat(" ", pad)
-	}
-	return cell(style, name, nameW, false) + "  " +
-		cell(style, cmds, numW, true) + "  " +
-		cell(style, success, numW, true) + "  " +
-		cell(style, fails, numW, true) + "  " +
-		cell(style, avg, numW, true) + "  " +
-		cell(style, last, lastW, true)
 }
 
 func periodSuffix(label string) string {

@@ -15,6 +15,7 @@ type keyMap struct {
 	Page    key.Binding
 	Half    key.Binding // vim only: ctrl+u / ctrl+d half-page scroll
 	Jump    key.Binding
+	Scroll  key.Binding // left/right: horizontal scroll of the selected command
 	Focus   key.Binding
 	Search  key.Binding
 	Accept  key.Binding
@@ -24,7 +25,8 @@ type keyMap struct {
 	TagAdd  key.Binding
 	Stats   key.Binding
 	Agents  key.Binding
-	Prompts key.Binding
+	Period  key.Binding // 1-5: the shared time window, in every view
+	Zoom    key.Binding // z: expand the focused pane to the whole frame
 	Devices key.Binding
 	Sync    key.Binding
 	Help    key.Binding
@@ -47,6 +49,7 @@ func defaultKeyMap(vim bool) keyMap {
 		Page:    key.NewBinding(key.WithKeys("pgup", "pgdown"), key.WithHelp("pgup/pgdn", "page")),
 		Half:    key.NewBinding(key.WithKeys("ctrl+u", "ctrl+d"), key.WithHelp("^u/^d", "half-page")),
 		Jump:    key.NewBinding(key.WithKeys("g", "G"), key.WithHelp("g/G", "top/bottom")),
+		Scroll:  key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "scroll")),
 		Focus:   focus,
 		Search:  key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),
 		Accept:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "insert")),
@@ -56,7 +59,8 @@ func defaultKeyMap(vim bool) keyMap {
 		TagAdd:  key.NewBinding(key.WithKeys("ctrl+t"), key.WithHelp("^t", "tag row")),
 		Stats:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "stats")),
 		Agents:  key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "agents")),
-		Prompts: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "prompts")),
+		Period:  key.NewBinding(key.WithKeys("1", "2", "3", "4", "5"), key.WithHelp("1-5", "period")),
+		Zoom:    key.NewBinding(key.WithKeys("z"), key.WithHelp("z", "zoom pane")),
 		Devices: key.NewBinding(key.WithKeys("D"), key.WithHelp("D", "devices")),
 		Sync:    key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "sync now")),
 		Help:    key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
@@ -68,19 +72,19 @@ func defaultKeyMap(vim bool) keyMap {
 
 // ShortHelp implements help.KeyMap: the compact one-line hint bar.
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Focus, k.Search, k.Accept, k.Copy, k.Delete, k.Tag, k.Stats, k.Agents, k.Prompts, k.Help, k.Quit}
+	return []key.Binding{k.Focus, k.Search, k.Accept, k.Copy, k.Delete, k.Tag, k.Period, k.Zoom, k.Stats, k.Agents, k.Help, k.Quit}
 }
 
 // FullHelp implements help.KeyMap: the expanded ? menu.
 func (k keyMap) FullHelp() [][]key.Binding {
-	nav := []key.Binding{k.Up, k.Down, k.Page, k.Jump}
+	nav := []key.Binding{k.Up, k.Down, k.Page, k.Jump, k.Scroll}
 	if k.vim {
-		nav = []key.Binding{k.Up, k.Down, k.Page, k.Half, k.Jump}
+		nav = []key.Binding{k.Up, k.Down, k.Page, k.Half, k.Jump, k.Scroll}
 	}
 	return [][]key.Binding{
 		nav,
-		{k.Focus, k.Search, k.Accept, k.Copy, k.Delete},
-		{k.Tag, k.TagAdd, k.Stats, k.Agents, k.Prompts},
+		{k.Focus, k.Zoom, k.Search, k.Accept, k.Copy, k.Delete},
+		{k.Tag, k.TagAdd, k.Period, k.Stats, k.Agents},
 		{k.Devices, k.Sync, k.Help, k.Quit},
 	}
 }
@@ -96,8 +100,6 @@ func (m Model) helpKeys() help.KeyMap {
 		return devicesKeys{}
 	case viewAgents:
 		return agentsKeys{}
-	case viewPrompts:
-		return promptsKeys{}
 	default:
 		return m.keys
 	}
@@ -117,13 +119,16 @@ func (statsKeys) ShortHelp() []key.Binding {
 
 func (k statsKeys) FullHelp() [][]key.Binding { return [][]key.Binding{k.ShortHelp()} }
 
-// agentsKeys is the footer hint set for the agent-monitor view: period tabs,
-// a/esc returns to browse, q quits.
+// agentsKeys is the footer hint set for the agent explorer: pane focus, zoom,
+// period tabs; a/esc returns to browse, q quits.
 type agentsKeys struct{}
 
 func (agentsKeys) ShortHelp() []key.Binding {
 	return []key.Binding{
-		key.NewBinding(key.WithKeys("j", "k"), key.WithHelp("j/k", "select")),
+		key.NewBinding(key.WithKeys("j", "k"), key.WithHelp("j/k", "move")),
+		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "switch pane")),
+		key.NewBinding(key.WithKeys("z"), key.WithHelp("z", "zoom pane")),
+		key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "scroll")),
 		key.NewBinding(key.WithKeys("1", "2", "3", "4", "5"), key.WithHelp("1-5", "period")),
 		key.NewBinding(key.WithKeys("a", "esc"), key.WithHelp("a/esc", "back")),
 		key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
@@ -131,21 +136,6 @@ func (agentsKeys) ShortHelp() []key.Binding {
 }
 
 func (k agentsKeys) FullHelp() [][]key.Binding { return [][]key.Binding{k.ShortHelp()} }
-
-// promptsKeys is the footer hint set for the prompt-explorer view.
-type promptsKeys struct{}
-
-func (promptsKeys) ShortHelp() []key.Binding {
-	return []key.Binding{
-		key.NewBinding(key.WithKeys("j", "k"), key.WithHelp("j/k", "move")),
-		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "commands")),
-		key.NewBinding(key.WithKeys("1", "2", "3", "4", "5"), key.WithHelp("1-5", "period")),
-		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
-		key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
-	}
-}
-
-func (k promptsKeys) FullHelp() [][]key.Binding { return [][]key.Binding{k.ShortHelp()} }
 
 // devicesKeys is the footer hint set for the devices view (see handleDevicesKey:
 // a/x act, r refetches, j/k move; esc/q/D return to browse, ctrl+c quits — q

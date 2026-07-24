@@ -154,3 +154,42 @@ func TestTypedAccessorDefaults(t *testing.T) {
 func TestBackupDir(t *testing.T) {
 	assert.Equal(t, "/state/backups", BackupDir("/state"))
 }
+
+// TestUIStateRoundTrip proves the browser's remembered layout persists to its
+// OWN file, leaving the user's hand-edited config.toml untouched.
+func TestUIStateRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+
+	// Nothing saved yet: the zero state, and no error.
+	got, err := LoadUI(dir)
+	require.NoError(t, err, "a missing ui.toml is not an error")
+	require.Equal(t, UIState{}, got)
+
+	want := UIState{BrowseLeftSplit: 333, BrowseTopSplit: 700, AgentLeftSplit: 260, AgentTopSplit: 550}
+	require.NoError(t, SaveUI(dir, want))
+
+	got, err = LoadUI(dir)
+	require.NoError(t, err)
+	require.Equal(t, want, got)
+
+	// It is a separate file, and toml was never created by saving it.
+	require.NotEqual(t, ConfigPath(dir), UIStatePath(dir))
+	_, statErr := os.Stat(ConfigPath(dir))
+	require.True(t, os.IsNotExist(statErr), "saving UI state must not write toml")
+
+	fi, err := os.Stat(UIStatePath(dir))
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), fi.Mode().Perm())
+}
+
+// TestLoadUIMalformed proves a corrupt ui.toml degrades to defaults rather than
+// blocking the browser.
+func TestLoadUIMalformed(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, EnsureDir(dir))
+	require.NoError(t, os.WriteFile(UIStatePath(dir), []byte("not = = toml"), 0o600))
+
+	got, err := LoadUI(dir)
+	require.Error(t, err, "the parse failure is reported…")
+	require.Equal(t, UIState{}, got, "…but callers that ignore it still get a usable state")
+}
