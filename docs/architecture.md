@@ -12,11 +12,11 @@ role it plays:
 | Role | Subcommands |
 |---|---|
 | Shell-hook fast path | `record`, `filter`, `export` |
-| Search UIs | `search` (inline Ctrl-R TUI + `--headless`), `browse` (full-screen) |
+| Search UIs | `search` (inline Ctrl-R TUI + `--headless`), `browse` (full-screen), `stats` / `agents` (the browser, opened on one of its screens) |
 | Background daemon | `daemon` (`run`/`stop`/`status`), `status`, `stop`, `sync` |
 | Enrollment / devices | `setup`, `devices` (`approve`/`revoke`) |
 | Sync server | `server` (`stop`), `healthcheck` |
-| Setup / misc | `init`, `import`, `doctor`, `gen-id`, `version` |
+| Setup / misc | `init`, `uninit`, `import`, `doctor`, `gen-id`, `version` |
 
 Because everything is pure Go with `CGO_ENABLED=0`, it cross-compiles with no
 toolchain to the tier-1 matrix: **linux/amd64, linux/arm64, darwin/amd64,
@@ -78,8 +78,8 @@ Concise map by role. Leaf-contract packages import nothing else in the tree.
 - **tui/theme**, **tui/hl** — adaptive lipgloss styles; a best-effort shell-command
   syntax classifier layered under match highlighting.
 - **tui/search** — the inline Ctrl-R panel. **tui/browse** — the full-screen
-  browser (hosts / table / detail panes plus stats / agents / prompts / devices
-  screens).
+  browser: three tiled browse panes plus the stats, agent-explorer, and devices
+  screens. See "The browser" below.
 - **risk** — a deterministic, rule-based command classifier (`safe…critical`).
 - **mcp** — the local, read-only MCP server (`yore mcp-serve`) over the daemon
   query layer; exposes history to coding agents. See "MCP server" below.
@@ -164,6 +164,77 @@ Sort is **recency** (descending `start_ms`, ties by descending `seq`) or
 inherently collapses to one row per command). Recency sort can also `dedupe`
 (newest wins). The default window is 200 rows.
 
+## The browser (`internal/tui/browse`)
+
+`yore browse` (the `hb` alias) is one Bubble Tea program with four screens: the
+tiled **browse** panes, the full-screen **stats** screen (`s`), the **agent
+explorer** (`a`), and **devices** (`D`). `yore stats` and `yore agents` open the
+same program directly on one of those screens; Esc drops through to the browse
+table from either.
+
+**Panes and geometry.** `panes.go` is the single place that decides how the
+screen is carved up: it resolves each view's pane rectangles in absolute screen
+cells, plus the draggable seams between them. Renderers size themselves from
+that geometry and `mouse.go` hit-tests against it, so the two can never disagree
+about where a pane is. Browse tiles three panes (host sidebar; the command
+table over the detail pane); the agent explorer tiles four in a 2×2 grid — an
+executor sidebar and a details pane down the left, the prompt list over its
+command pane on the right. Every pane carries a title with its count or cursor
+position, and `Tab` cycles focus within the active view.
+
+- **Zoom** (`z`) expands the focused pane to the whole frame. Focus and zoom move
+  together, so `Tab` while zoomed swaps which pane fills the screen rather than
+  dropping back to the tiles; Esc unzooms before it leaves the view.
+- **Mouse** (cell-motion reporting, enabled in `Run`): click focuses a pane, the
+  wheel scrolls whatever the pointer is over without moving focus, and dragging a
+  seam resizes the panes either side of it. The trade-off is that the terminal's
+  own text selection needs the usual Shift modifier while the browser is open.
+- **Remembered layout.** Seam positions are stored as a fraction of the axis they
+  cut, so the ratio survives a terminal resize, and persisted to `ui.toml` when a
+  drag *settles* — one write per resize, and the file always holds a layout the
+  user stopped on. The unit is per-mille, not percent: at 140 columns one percent
+  is 1.4 cells, coarse enough that a dragged seam would visibly snap away from
+  the pointer. The zero value means "never dragged", so browse keeps its
+  long-standing default layout until a seam is actually moved.
+
+**The time window.** One period (`1`–`5`: Today / 7d / 30d / 90d / All, default
+All) drives every screen, with its tabs pinned to the same top-right corner
+everywhere. "Today" is the **calendar** day in local time, not a rolling 24
+hours — the tab says today, and a rolling window would fold yesterday evening
+into this morning's hour-of-day buckets. The daemon's query protocol carries no
+time field, so the browse table filters the rows it got back; that is the right
+semantics for this view, which shows the newest `queryLimit` commands and lets
+the period narrow *that*. The status bar names the window and how much it hides.
+
+**The agent explorer** groups agent commands by the prompt that caused them (see
+"Recording & redaction" below for how that trace is captured). Picking an
+executor in the sidebar filters the prompt,
+command, and details panes to its work; the filter is held by executor *name*,
+not row index, so an agent that drops out of the period releases the filter
+rather than silently handing it to whoever inherits its row. The details pane
+follows focus — prompt metadata while the prompt pane is active, the selected
+command's path/time/duration/exit once the command pane is.
+
+**The stats graphs** — the activity heatmap, the daily trend, and the hour-of-day
+histogram — all span the full width, and a wider terminal buys *more history*
+rather than more whitespace: the heatmap draws `(width − 4) / 2` week columns
+(two-cell days, so a cell reads as a square, up to two years) under a month
+ruler, and the daily trend draws one column per day for as many days as there
+are columns. The heatmap and the daily trend deliberately ignore the period:
+they exist to show the shape of activity *around* the window the other panels
+summarize, so narrowing to Today must not blank them. Both scale to the peak of
+what they actually draw, so a spike outside the visible window cannot flatten the
+bars on screen. The hour-of-day histogram does respect the period, widens its
+fixed 24 buckets to fill (the remainder going to the leftmost, so the row ends
+flush), and on Today leaves the hours that have not happened yet **blank** rather
+than drawing them as zero — "it isn't 11pm yet" is not "nothing ran at 11pm".
+
+**Sample honesty.** The stats and agent screens aggregate the newest `statsLimit`
+(5000) rows, not the whole archive. When that ceiling is hit, the header says so
+and how far back the sample actually reaches — without it, every window wider
+than the sample's reach shows identical numbers and the period tabs read as
+broken when they are working exactly as intended.
+
 ## Recording & redaction
 
 `yore record`, `yore import`, and the shell-history gate (`yore filter`) all run
@@ -209,23 +280,36 @@ cost and rules apply retroactively). `yore tag add/rm/list/create`; `yore search
 
 An agent whose commands run in a *non-interactive* shell (Claude Code's Bash
 tool is `zsh -c …`) is never seen by the rc hooks, so `yore init claude-code`
-installs three Claude Code hooks: **PostToolUse** pipes each *successful* Bash
+installs four Claude Code hooks: **PreToolUse** stamps each Bash command's start
+time (`yore hook claude-code-pre`), **PostToolUse** pipes each *successful* Bash
 command to `yore hook claude-code`, **PostToolUseFailure** pipes each *failed*
 one to `yore hook claude-code-failure`, and **UserPromptSubmit** pipes each
-prompt to `yore hook claude-prompt`. The two command hooks record the command's
+prompt to `yore hook claude-prompt`. The command hooks record the command's
 **exit status** — an explicit `tool_response.exit_code` when present, else the
 event decides (PostToolUse → 0, PostToolUseFailure → nonzero) — and its
-**duration** when the payload's `tool_start_time`/`tool_end_time` allow it, so
-agent commands carry the same outcome data as shell ones (success rates,
+**duration**: a payload timing (`tool_start_time`/`tool_end_time`) wins when
+present, otherwise the delta from the PreToolUse start-stamp (Claude Code's own
+payload carries no tool timing — this is how agent commands get real durations at
+all). So agent commands carry the same outcome data as shell ones (success rates,
 `what_failed`, risk of failed commands all work). The prompt hook writes the
 session's current prompt to a per-session state file; the command hooks read it
 and stamp `prompt_id` + `prompt` onto the record, so every command is traced to
-the prompt that triggered it. The browser's **prompt explorer** (`p`) groups on
-`prompt_id` — one row per prompt, `Enter` drilling into the exact command
-sequence it produced. All hooks go through the same redaction gate as the shell
-path (a secret-bearing command or prompt is dropped). `yore init claude-code`
-writes ~/.claude/settings.json (or, with --project, ./.claude/settings.json),
-merging without disturbing other settings.
+the prompt that triggered it. The start-stamp is keyed by session+command under
+`agent-cmd-starts/` and consumed once. That `prompt_id` is what the browser's
+agent explorer groups on (see "The browser" above). All hooks go through the same
+redaction gate as the shell path (a secret-bearing command or prompt is dropped).
+`yore init claude-code` writes ~/.claude/settings.json (or, with --project,
+./.claude/settings.json), merging without disturbing other settings.
+
+The **Devin CLI** integrates the same way — `yore init devin` merges into Devin's
+unified `config.json` (the global `~/.config/devin/config.json` by default, or
+`./.devin/config.json` with `--project`), binding PreToolUse/PostToolUse/
+UserPromptSubmit to Devin's `exec` tool (`yore hook devin{,-pre,-prompt}`, tagged
+`devin`) under the `hooks` key and registering yore's MCP server under
+`mcpServers` — the same file that holds Devin's auth, which the merge preserves
+untouched (and never reads out). Devin reports outcome as a boolean
+`tool_response.success` (mapped to exit 0/1) and, like Claude Code, no timing —
+so the PreToolUse start-stamp supplies the duration.
 
 **Cursor** capture works the same way via `yore init cursor`, which installs
 Cursor's `afterShellExecution` + `beforeSubmitPrompt` hooks into
@@ -255,6 +339,15 @@ appends an `[mcp_servers.yore]` block registering the MCP server.
 
 All MCP/hook installers are additive and idempotent, preserve unrelated config,
 and are verified by `yore doctor` (per-agent capture + MCP registration checks).
+
+**`yore uninit <agent>`** reverses any of them. It removes only yore's own hooks
+and MCP registration — matched by the exact command string the installer wrote —
+and leaves every other key in place, so an agent's own settings (and, for Devin,
+the auth that shares the file) survive. Emptied blocks, events, and maps are
+pruned so the file is left as it was found; a config that has been hand-edited
+past recognition reports "nothing to remove" rather than guessing. A missing file
+is a no-op and a malformed one is left untouched. Shells are not agents: the
+`eval "$(yore init zsh)"` line comes out of your rc file by hand.
 
 ## MCP server (`internal/mcp`)
 
@@ -426,6 +519,7 @@ forces everything back into the directory. The files:
 | Path | What |
 |---|---|
 | `config.toml` | settings (0600) |
+| `ui.toml` | pane-divider positions the browser remembers (0600) — deliberately **not** `config.toml`, which is the hand-edited settings file a TUI has no business rewriting every time a pane is dragged |
 | `redact.yml` | editable, seeded secret-redaction rules (0600) |
 | `data.db` | local bbolt store — this host's history only |
 | `device.key` | device X25519+Ed25519 identity — kept in the **OS keyring** when one is usable, else this file (0600; refused if group/other-readable) |
@@ -443,6 +537,11 @@ authoritative accessor pair (`config.Get`/`config.Set`). Nothing else parses the
 file: the emitted shell integration, for instance, asks `yore get-config
 enter_executes` at call time rather than grepping. Zero values mean "use
 default"; accessors apply defaults so callers never branch.
+
+Layout the browser *writes back* (dragged pane sizes) lives in a separate
+`ui.toml`, not here — `config.Save` marshals the whole struct, and a TUI that
+rewrote and reformatted the user's settings file every time a pane moved would
+be a poor neighbour. Same directory, same 0600, different concern.
 
 | Key | Default | Meaning |
 |---|---|---|

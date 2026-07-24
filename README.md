@@ -15,8 +15,8 @@ searchable on every machine you use — pointed at a sync server you host, and
 binary: client, background daemon, TUIs, importer, **and** sync server.
 
 It also gives your **AI coding agents** a memory: it captures what Claude Code,
-Cursor, OpenCode, and Codex run (traced to the prompt that caused it) and serves
-your cross-machine history back to them over **MCP** — end-to-end encrypted,
+Cursor, OpenCode, Codex, and the Devin CLI run (traced to the prompt that caused
+it) and serves your cross-machine history back to them over **MCP** — E2E,
 nothing leaving your devices.
 
 ## Why yore
@@ -42,35 +42,42 @@ Built for a threat model most history tools don't serve:
   `~/.zsh_history`, and `!N` / `!!` / Up still work — against yore's history.
 
 [Atuin](https://atuin.sh) is more mature and a great choice if you don't need
-this specific model.
+this specific key model. [suvadu](https://suvadu.sh) is excellent if you want the
+structured, agent-queryable history and only ever work on one machine.
 
 ## How it compares
 
-| | **yore** | **Atuin** | **hiSHtory** | **mcfly** | **plain history** |
-|---|---|---|---|---|---|
-| Sync across machines | Yes | Yes | Yes | No | No |
-| E2E (server can't read history) | Yes | Yes | Yes | n/a | n/a |
-| No shared master key (per-device keys) | Yes | No — one key you copy | No — one secret you copy | n/a | n/a |
-| Per-device revocation | Yes | No | No | n/a | n/a |
-| Single-use enrollment (no standing token) | Yes | No | No | n/a | n/a |
-| Recovery phrase if every device is lost | Yes | n/a — copy the key | n/a — copy the secret | n/a | n/a |
-| Other hosts' history never stored locally | Yes | No — replicated to each | No — replicated to each | n/a | n/a |
-| Secrets redaction | Yes (default-on) | Opt-in filter | — | No | No |
-| …and it gates sync | Yes | — | — | n/a | n/a |
-| Per-device request signing (incl. reads) | Yes | No | No | n/a | n/a |
-| Secrets in the OS keyring | Yes | No | No | n/a | n/a |
-| Self-hostable server | Yes | Yes | Yes | No | No |
-| Multi-tenant server | Yes | Yes | Yes | n/a | n/a |
-| Cross-shell (zsh + bash) | Yes | Yes | Yes | Yes | Yes |
-| Rich interactive TUI | Yes | Yes | Yes | Yes | No (basic `Ctrl-R`) |
-| Agent/executor tagging | Yes | No | No | No | No |
-| AI agents query your history (MCP, cross-machine) | Yes | No | No | No | No |
-| Single static binary | Yes | Yes | Yes | Yes | n/a |
+| | **yore** | **Atuin** | **suvadu** | **plain history** |
+|---|---|---|---|---|
+| Sync across machines | Yes | Yes | No — 100% local | No |
+| E2E (server can't read history) | Yes | Yes | n/a — no server | n/a |
+| No shared master key (per-device keys) | Yes | No — one key you copy | n/a | n/a |
+| Per-device revocation | Yes | No | n/a | n/a |
+| Single-use enrollment (no standing token) | Yes | No | n/a | n/a |
+| Recovery phrase if every device is lost | Yes | n/a — copy the key | n/a | n/a |
+| Other hosts' history never stored locally | Yes | No — replicated to each | n/a | n/a |
+| Per-device request signing (incl. reads) | Yes | No | n/a | n/a |
+| Secrets in the OS keyring | Yes | No | n/a | n/a |
+| Self-hostable server | Yes | Yes | n/a | No |
+| Multi-tenant server | Yes | Yes | n/a | n/a |
+| Secrets redaction | Yes — default-on, **drops** the command | Opt-in filter | Yes — default-on, **masks** the value | No |
+| …and it gates sync | Yes | — | n/a | n/a |
+| Exit code, duration, cwd, session per command | Yes | Yes | Yes | No |
+| Cross-shell (zsh + bash) | Yes | Yes | Yes | Yes |
+| Rich interactive TUI | Yes | Yes | Yes | No (basic `Ctrl-R`) |
+| Agent/executor tagging | Yes | No | Yes — wider agent coverage | No |
+| Prompt → the commands it triggered | Yes | No | Yes | No |
+| AI agents query your history (MCP) | Yes — cross-machine | Yes — cross-machine | Yes — local only | No |
+| History-aware risk assessment for agents | Yes | — | Yes | No |
+| Single static binary | Yes | Yes | Yes | n/a |
 
-Blank cells (`—`) aren't guessed. Atuin and hiSHtory both do E2E sync, but with a
-**single key you copy to each machine** (no per-device keys or revocation) and
-**replicate full history to every machine**. mcfly is local-only. Plain history
-is a plaintext file with no sync.
+Blank cells (`—`) aren't guessed. **Atuin** does E2E sync, but with a **single key
+you copy to each machine** (no per-device keys or revocation) and **replicates
+full history to every machine**; it also ships an MCP server, so the
+agent-facing half is no longer a yore differentiator — the key model is.
+**suvadu** is the closest thing to yore's agent story and is very good at it, but
+it is deliberately local-only: no sync, no server, nothing cross-machine. Plain
+history is a plaintext file with no sync.
 
 ## Quickstart
 
@@ -131,34 +138,51 @@ Multi-tenant hosting, server backups, and revocation:
 
 ### Uninstall
 
-Remove the `eval "$(yore init …)"` line from your `~/.zshrc` / `~/.bashrc`
-(reopen your shell), then:
+Un-wire any agents you set up, remove the `eval "$(yore init …)"` line from your
+`~/.zshrc` / `~/.bashrc` (reopen your shell), then:
 
 ```bash
+yore uninit claude-code       # …and cursor / opencode / codex / devin
 rm -f /usr/local/bin/yore     # or wherever you installed it
 rm -rf ~/.config/yore         # all of yore's state
 ```
+
+`uninit` removes only yore's hooks and MCP entry from each agent's config,
+leaving everything else — including the agent's own auth — exactly as it was.
 
 ## Highlights
 
 - **`Ctrl-R` search** — scopes (local / all / host / session / cwd / git-repo),
   frecency and fuzzy matching, syntax highlighting; Enter runs the pick by default
   (`enter_executes`).
-- **`hb` browser** — hosts / table / detail panes, plus full-screen **stats**
-  (`s`: KPIs, top programs/commands/dirs, per-host, a contribution heatmap +
-  hourly histogram, period tabs), an **agent monitor** (`a`), a **prompt
-  explorer** (`p`: drill from a prompt into the exact commands it triggered), and
-  **devices** (`D`). Tags column, `t` executor filter, `Ctrl+T` tag a row, `S`
-  sync-now; Enter recalls, `y` copies. (yore leaves your own `h` alone.)
+- **`hb` browser** — hosts / commands / details panes, plus full-screen **stats**
+  (`s`: KPIs, top programs/commands/dirs, per-host, and three full-width graphs —
+  a contribution heatmap with a month ruler, a daily trend, and an hour-of-day
+  histogram, all of which show *more history* on a wider terminal — with period
+  tabs), an **agent explorer** (`a`: four panes — an executor sidebar that
+  filters everything, every prompt, the exact commands the highlighted prompt
+  triggered, and details that follow focus), and **devices** (`D`). Any pane can
+  be **expanded to the full terminal** (`z`) or **resized by dragging its
+  border** with the mouse — and the sizes you pick are remembered between runs;
+  the wheel scrolls whatever the pointer is over. One **time window** (`1`-`5`:
+  Today / 7d / 30d / 90d / All) drives every view, including the command table,
+  with its tabs in the same top-right corner everywhere. `yore stats` and
+  `yore agents` open straight on those two screens. Tags column, `t` executor
+  filter, `Ctrl+T` tag a row, `S` sync-now; Enter recalls, `y` copies. (yore
+  leaves your own `h` alone.) Pane sizes you drag persist to
+  `~/.config/yore/ui.toml` — kept out of your hand-edited `config.toml`.
 - **`hs` + scoped `hsa`/`hss`/`hsc`/`hsw`** search aliases; `yore search
   --headless` for scripts and pipes.
 - **Freeform tags** — label commands and sessions (`yore tag add refactor`,
   filter `yore search --tag refactor`); a record can carry several, the executor
   is just an auto-applied one, `auto_tags` tags by directory, and they sync E2E.
 - **AI-agent capture** — auto-tags what agents run (`--executor claude-code`);
-  `yore init claude-code | cursor | opencode | codex` installs each one's native
-  hooks/plugin so even their non-interactive shells are captured, prompt-traced,
-  with exit status where the agent exposes it.
+  `yore init claude-code | cursor | opencode | codex | devin` installs each one's
+  native hooks/plugin so even their non-interactive shells are captured,
+  prompt-traced, with exit status and — via a PreToolUse start-stamp — real
+  command durations even when the agent's payload omits timing.
+  `yore uninit <agent>` cleanly reverses it (removing only yore's hooks + MCP,
+  preserving the agent's own config), and `yore doctor` shows what's wired up.
 - **Agent memory over MCP** — the same `init` registers a local, read-only MCP
   server so an agent can query your history back — search, failures, prompts,
   stats, and a history-aware `assess_risk` (*"run 3× across your machines, 1
@@ -182,9 +206,14 @@ in [architecture.md](docs/architecture.md)); all state lives under
 | Re-run an event by number | `!N`, `!!`, `!$` — native, against yore's history |
 | Cycle search scope (host / all / session / dir / repo) | `Ctrl-R` again inside the search |
 | Rank by frequency×recency, or fuzzy-match | frecency / fuzzy toggles inside the search |
-| Browse, get stats, watch agents, manage devices | `hb` — `s` stats, `a` agents, `p` prompts, `D` devices; `Enter` recalls, `y` copies |
-| See an agent's prompt and drill into its commands | `hb`, then `p`; `Enter` on a prompt |
-| Capture what Claude Code runs + let it query history (MCP) | `yore init claude-code` (once) |
+| Browse, get stats, watch agents, manage devices | `hb` — `s` stats, `a` agents, `D` devices; `Enter` recalls, `y` copies |
+| Jump straight to stats or the agent explorer | `yore stats` · `yore agents` |
+| See an agent's prompt and the commands it triggered | `yore agents` — `Tab` cycles the four panes, the sidebar filters to one agent |
+| Narrow any view to a time window | `1`-`5` — Today (the calendar day) / 7d / 30d / 90d / All |
+| Give one pane the whole screen | `z` (again to restore) |
+| Resize the panes | drag the border between them with the mouse (remembered in `~/.config/yore/ui.toml`) |
+| Read a command/prompt that's cut off with `…` | `←`/`→` scroll the selected row horizontally |
+| Capture what Claude Code / Devin runs + let it query history (MCP) | `yore init claude-code` \| `yore init devin` (once) |
 | See only what an agent ran | `yore search --executor claude-code` |
 | Tag commands/sessions and filter by tag | `yore tag add refactor` · `yore search --tag refactor` |
 | Let an agent check a command's risk / history | it calls the `assess_risk` MCP tool |

@@ -57,6 +57,13 @@ Drone (`.drone.yml`): `yamllint` → `golangci-lint` → `go test` (gotestfmt, c
 - **No planning references in code or comments.** No roadmap/phase numbers, token IDs, group names, or session notes in source — a comment explains the code to a contributor who has never seen the plan. Planning docs live under `docs/`.
 - **Docs are maintained.** Update `README.md` and `docs/` (`architecture.md`, `protocol.md`) when you change a capability; explain design and rationale, not what the code makes obvious.
 
+## Reference Projects
+
+Two sibling projects sit alongside this repo (in `../`) as reference material — read them for prior art and design comparison, but they are not part of yore's build:
+
+- **`../atuin`** — "magical shell history", the well-known Rust shell-history sync tool. The closest prior art to yore; consult it for protocol, sync, and UX design decisions.
+- **`../suvadu`** ([suvadu.sh](https://suvadu.sh/)) — a Rust shell-history replacement that stores structured history in SQLite and exposes it as queryable "shared memory" for AI agents. Reference for structured-history modeling and agent-facing query design.
+
 ## Shortcuts & Personas
 
 - **"Gopher"** = Go architecture mindset. Adopt when writing or reviewing Go structure: idiomatic patterns, interface design, package boundaries, error handling, naming, concurrency. Trigger: "put Gopher on it", "Gopher review".
