@@ -84,6 +84,12 @@ func runDoctor() int {
 	if p, perr := cursorMcpPath(false); perr == nil && mcpRegistered(p) {
 		ok("MCP server registered for Cursor (" + p + ")")
 	}
+	if devinCaptureInstalled(shell.DefaultBin) {
+		ok("Devin capture hooks installed (~/.config/devin/config.json)")
+	}
+	if devinMcpRegistered() {
+		ok("MCP server registered for Devin (~/.config/devin/config.json)")
+	}
 
 	// Secrets filter.
 	u.section("secrets filter")

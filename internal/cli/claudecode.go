@@ -126,8 +126,18 @@ func ingestClaudeTool(failed bool) {
 		Tag:     agentClaudeCode,
 		Exit:    deriveExit(in, failed),
 	}
+	// Duration: Claude Code's PostToolUse payload carries no tool timing, so the
+	// PreToolUse hook stamps a start time and we take the delta here (anchoring the
+	// record to the real start). An explicit payload timing still wins when a
+	// future Claude — or another agent reusing this path — provides it.
 	if d, ok := deriveDurMs(in); ok {
 		r.DurMs = &d
+	} else if start, ok := loadCmdStart(dir, in.SessionID, in.ToolInput.Command); ok {
+		if now := time.Now().UnixMilli(); now >= start {
+			d := now - start
+			r.StartMs = start
+			r.DurMs = &d
+		}
 	}
 	// Stamp the prompt this command served, if the UserPromptSubmit hook recorded
 	// one for this session. Best-effort: absent state just leaves it untraced.
@@ -168,6 +178,80 @@ func loadPromptState(dir, session string) (promptState, bool) {
 		return promptState{}, false
 	}
 	return ps, true
+}
+
+// cmdStart is a command's start time, written by the PreToolUse hook and read
+// (once) by the PostToolUse hook to compute a real duration.
+type cmdStart struct {
+	Ms int64 `json:"ms"`
+}
+
+// cmdStartPath is where a pending command's start time lives between the
+// PreToolUse and PostToolUse hooks. Keyed by session+command so parallel tool
+// calls in one session address distinct files (session ids are opaque; hash to a
+// safe filename).
+func cmdStartPath(dir, session, command string) string {
+	sum := sha256.Sum256([]byte(session + "\x00" + command))
+	return filepath.Join(dir, "agent-cmd-starts", hex.EncodeToString(sum[:])[:32]+".json")
+}
+
+// saveCmdStart records the current time as command's start (best-effort; a
+// missing start just leaves the later record untimed).
+func saveCmdStart(dir, session, command string) {
+	if session == "" || command == "" {
+		return
+	}
+	b, err := json.Marshal(cmdStart{Ms: time.Now().UnixMilli()})
+	if err != nil {
+		return
+	}
+	path := cmdStartPath(dir, session, command)
+	if os.MkdirAll(filepath.Dir(path), 0o700) != nil {
+		return
+	}
+	_ = os.WriteFile(path, b, 0o600)
+}
+
+// loadCmdStart reads and removes a command's pending start time (ok=false if
+// none). Removal keeps the directory from accreting stale files when a PreToolUse
+// fires without a matching PostToolUse (e.g. a denied or interrupted tool).
+func loadCmdStart(dir, session, command string) (int64, bool) {
+	if session == "" || command == "" {
+		return 0, false
+	}
+	path := cmdStartPath(dir, session, command)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0, false
+	}
+	_ = os.Remove(path)
+	var cs cmdStart
+	if json.Unmarshal(b, &cs) != nil || cs.Ms <= 0 {
+		return 0, false
+	}
+	return cs.Ms, true
+}
+
+// runHookClaudeCodePre ingests a Claude Code PreToolUse (Bash) payload and stamps
+// the command's start time, so the matching PostToolUse can report a real
+// duration (Claude Code's own payload carries no tool timing). Like the other
+// hooks it never blocks, never prints, and always exits 0.
+func runHookClaudeCodePre() {
+	raw, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
+	if err != nil {
+		return
+	}
+	var in claudeHookInput
+	if json.Unmarshal(raw, &in) != nil {
+		return
+	}
+	if in.ToolName != "" && in.ToolName != "Bash" {
+		return
+	}
+	if strings.TrimSpace(in.ToolInput.Command) == "" {
+		return
+	}
+	saveCmdStart(stateDir(), in.SessionID, in.ToolInput.Command)
 }
 
 // runHookClaudePrompt ingests a Claude Code UserPromptSubmit payload from stdin
@@ -223,6 +307,7 @@ func claudeSettingsPath(project bool) (string, error) {
 }
 
 // hook commands Claude Code runs, this binary ingesting the payload on stdin.
+func cmdPreToolUse(bin string) string         { return bin + " hook claude-code-pre" }
 func cmdPostToolUse(bin string) string        { return bin + " hook claude-code" }
 func cmdPostToolUseFailure(bin string) string { return bin + " hook claude-code-failure" }
 func cmdUserPromptSubmit(bin string) string   { return bin + " hook claude-prompt" }
@@ -266,15 +351,17 @@ func mergeHookInto(settings map[string]any, event, matcher, command string) bool
 	return true
 }
 
-// mergeClaudeHook installs the capture hooks: PostToolUse(Bash) records a
-// successful command, PostToolUseFailure(Bash) records a failed one (so exit
-// status is captured), and UserPromptSubmit records the prompt each served.
-// Idempotent; returns whether anything changed.
+// mergeClaudeHook installs the capture hooks: PreToolUse(Bash) stamps a command's
+// start time (so its duration is real — Claude Code's payload has no tool
+// timing), PostToolUse(Bash) records a successful command, PostToolUseFailure
+// records a failed one (so exit status is captured), and UserPromptSubmit records
+// the prompt each served. Idempotent; returns whether anything changed.
 func mergeClaudeHook(settings map[string]any, bin string) (added bool) {
+	p := mergeHookInto(settings, "PreToolUse", "Bash", cmdPreToolUse(bin))
 	a := mergeHookInto(settings, "PostToolUse", "Bash", cmdPostToolUse(bin))
 	f := mergeHookInto(settings, "PostToolUseFailure", "Bash", cmdPostToolUseFailure(bin))
 	b := mergeHookInto(settings, "UserPromptSubmit", "", cmdUserPromptSubmit(bin))
-	return a || f || b
+	return p || a || f || b
 }
 
 // mcpServerEntry is the stdio MCP server registration Claude Code (and Cursor)
@@ -509,8 +596,8 @@ func runInitClaudeCode(bin string, project, printOnly bool) int {
 		return 1
 	}
 
-	u.step("installed PostToolUse + PostToolUseFailure + UserPromptSubmit hooks", path)
-	u.step("captures every Bash command Claude Code runs", "tagged "+agentClaudeCode+", with exit status, traced to its prompt")
+	u.step("installed PreToolUse + PostToolUse + PostToolUseFailure + UserPromptSubmit hooks", path)
+	u.step("captures every Bash command Claude Code runs", "tagged "+agentClaudeCode+", with exit status + duration, traced to its prompt")
 
 	// Register the MCP server so the agent can query history back (across all
 	// machines). Non-fatal: capture still works without it.

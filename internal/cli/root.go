@@ -83,6 +83,7 @@ func newRootCmd() *cobra.Command {
 		newDaemonCmd(),
 		newImportCmd(),
 		newInitCmd(),
+		newUninitCmd(),
 		newHookCmd(),
 		newMcpServeCmd(),
 		newTagCmd(),
@@ -299,9 +300,15 @@ func newInitCmd() *cobra.Command {
 			"  yore init opencode                # ~/.config/opencode/{plugins/yore.js,opencode.json}\n\n" +
 			"codex installs PostToolUse + UserPromptSubmit hooks (tagged codex, traced\n" +
 			"to prompts) and registers the MCP server:\n" +
-			"  yore init codex                   # ~/.codex/config.toml",
+			"  yore init codex                   # ~/.codex/config.toml\n\n" +
+			"devin installs PreToolUse + PostToolUse + UserPromptSubmit hooks for the\n" +
+			"Devin CLI's exec tool (tagged devin, with exit + duration, traced to\n" +
+			"prompts) and registers yore's MCP server, in Devin's config.json:\n" +
+			"  yore init devin                   # ~/.config/devin/config.json\n" +
+			"  yore init devin --project         # ./.devin/config.json\n" +
+			"  yore init devin --print           # print the JSON, install by hand",
 		Args:      cobra.ExactArgs(1),
-		ValidArgs: []cobra.Completion{"zsh", "bash", "claude-code", "cursor", "opencode", "codex"},
+		ValidArgs: []cobra.Completion{"zsh", "bash", "claude-code", "cursor", "opencode", "codex", "devin"},
 		RunE: func(_ *cobra.Command, args []string) error {
 			switch args[0] {
 			case "claude-code":
@@ -312,6 +319,8 @@ func newInitCmd() *cobra.Command {
 				return code(runInitOpenCode(bin, project))
 			case "codex":
 				return code(runInitCodex(bin, project))
+			case "devin":
+				return code(runInitDevin(bin, project, prnt))
 			}
 			return code(runInit(args[0], bin, mode, noAliases))
 		},
@@ -319,8 +328,8 @@ func newInitCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&noAliases, "no-aliases", false, "omit the h/hs convenience aliases (shells)")
 	cmd.Flags().StringVar(&bin, "bin", shell.DefaultBin, "binary name or path the hooks should invoke")
 	cmd.Flags().StringVar(&mode, "mode", "", "integration mode: takeover|coexist|capture (shells; default: config)")
-	cmd.Flags().BoolVar(&project, "project", false, "claude-code: write ./.claude/settings.json instead of the user file")
-	cmd.Flags().BoolVar(&prnt, "print", false, "claude-code: print the hook JSON instead of writing settings.json")
+	cmd.Flags().BoolVar(&project, "project", false, "claude-code/devin: write the project-scoped config instead of the user file")
+	cmd.Flags().BoolVar(&prnt, "print", false, "claude-code/devin: print the config JSON instead of writing it")
 	_ = cmd.RegisterFlagCompletionFunc("mode", fixedComp("takeover", "coexist", "capture"))
 	return cmd
 }
@@ -394,6 +403,12 @@ func newHookCmd() *cobra.Command {
 		Hidden: true,
 	}
 	cmd.AddCommand(&cobra.Command{
+		Use:   "claude-code-pre",
+		Short: "Stamp a Bash command's start time from a Claude Code PreToolUse hook (reads JSON on stdin)",
+		Args:  cobra.NoArgs,
+		RunE:  func(*cobra.Command, []string) error { runHookClaudeCodePre(); return nil },
+	})
+	cmd.AddCommand(&cobra.Command{
 		Use:   "claude-code",
 		Short: "Record a Bash command from a Claude Code PostToolUse hook (reads JSON on stdin)",
 		Args:  cobra.NoArgs,
@@ -446,6 +461,24 @@ func newHookCmd() *cobra.Command {
 		Short: "Record a prompt from a Codex UserPromptSubmit hook (reads JSON on stdin)",
 		Args:  cobra.NoArgs,
 		RunE:  func(*cobra.Command, []string) error { runHookCodexPrompt(); return nil },
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "devin-pre",
+		Short: "Stamp an exec command's start time from a Devin PreToolUse hook (reads JSON on stdin)",
+		Args:  cobra.NoArgs,
+		RunE:  func(*cobra.Command, []string) error { runHookDevinPre(); return nil },
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "devin",
+		Short: "Record an exec command from a Devin PostToolUse hook (reads JSON on stdin)",
+		Args:  cobra.NoArgs,
+		RunE:  func(*cobra.Command, []string) error { runHookDevin(); return nil },
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "devin-prompt",
+		Short: "Record a prompt from a Devin UserPromptSubmit hook (reads JSON on stdin)",
+		Args:  cobra.NoArgs,
+		RunE:  func(*cobra.Command, []string) error { runHookDevinPrompt(); return nil },
 	})
 	return cmd
 }

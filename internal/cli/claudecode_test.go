@@ -175,6 +175,36 @@ func TestRunHookClaudeCodeCaptures(t *testing.T) {
 	assert.Equal(t, 0, *got.Exit, "success defaults to exit 0")
 }
 
+// TestRunHookClaudeCodePreStampsDuration covers the PreToolUse→PostToolUse
+// timing path: the pre hook records a start, the post hook turns it into a real
+// duration, and the stamp is consumed exactly once.
+func TestRunHookClaudeCodePreStampsDuration(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("YORE_DIR", dir)
+	require.NoError(t, config.EnsureDir(dir))
+
+	const cmd = "make build"
+	pre := `{"hook_event_name":"PreToolUse","session_id":"s9","tool_name":"Bash","tool_input":{"command":"` + cmd + `"}}`
+	post := `{"hook_event_name":"PostToolUse","session_id":"s9","cwd":"/w","tool_name":"Bash","tool_input":{"command":"` + cmd + `"}}`
+
+	feedStdin(t, pre, runHookClaudeCodePre)
+	require.Empty(t, spooledRecords(t, dir), "PreToolUse must not record a command")
+
+	feedStdin(t, post, runHookClaudeCode)
+	rows := spooledRecords(t, dir)
+	require.Len(t, rows, 1)
+	require.NotNil(t, rows[0].DurMs, "duration derived from the PreToolUse start stamp")
+	assert.GreaterOrEqual(t, *rows[0].DurMs, int64(0))
+	assert.Positive(t, rows[0].StartMs, "record anchored to the stamped start time")
+
+	// The start file is consumed on read, so a repeat PostToolUse for the same
+	// command has no timing left to attach.
+	feedStdin(t, post, runHookClaudeCode)
+	rows2 := spooledRecords(t, dir)
+	require.Len(t, rows2, 1)
+	assert.Nil(t, rows2[0].DurMs, "start stamp consumed once; no duration the second time")
+}
+
 // TestRunHookClaudeCodeExitAndDuration covers exit-status + duration capture:
 // an explicit tool_response.exit_code wins, the PostToolUseFailure hook records
 // a failure, and tool timestamps yield a duration.
