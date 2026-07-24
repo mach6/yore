@@ -12,6 +12,7 @@ import (
 	"yore/internal/daemon"
 	"yore/internal/proto"
 	"yore/internal/shell"
+	"yore/internal/tui/browse"
 )
 
 // exitErr carries a precise process exit code out through cobra's RunE. Each
@@ -80,6 +81,8 @@ func newRootCmd() *cobra.Command {
 		newExportCmd(),
 		newSearchCmd(),
 		newBrowseCmd(),
+		newStatsCmd(),
+		newAgentsCmd(),
 		newDaemonCmd(),
 		newImportCmd(),
 		newInitCmd(),
@@ -188,12 +191,47 @@ func newBrowseCmd() *cobra.Command {
 		Short: "Full-screen history browser",
 		Args:  cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
-			return code(runBrowse(acceptFile))
+			return code(runBrowse(acceptFile, browse.StartBrowse))
 		},
 	}
 	cmd.Flags().StringVar(&acceptFile, "accept-file", "",
 		"write the accepted command to this file instead of stdout (used by the `h` shell function)")
 	return cmd
+}
+
+// newStatsCmd and newAgentsCmd open the browser directly on one of its
+// full-screen views, so the two screens people actually go looking for are one
+// command away instead of `yore browse` plus a keystroke. Both are the same
+// program: Esc drops through to the browse table, and every key works as usual.
+func newStatsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "stats",
+		Short: "Open the browser on the full-screen stats view",
+		Long: "stats opens the history browser directly on its stats screen: KPIs,\n" +
+			"top programs / commands / directories, per-host and per-executor\n" +
+			"breakdowns, and the activity, daily-trend and hour-of-day graphs.\n\n" +
+			"Keys 1-5 pick the time window; Esc drops through to the browse table.",
+		Args: cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			return code(runBrowse("", browse.StartStats))
+		},
+	}
+}
+
+func newAgentsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "agents",
+		Short: "Open the browser on the agent explorer",
+		Long: "agents opens the history browser directly on its agent explorer: the\n" +
+			"executors that have run commands, the prompts they were given, the exact\n" +
+			"commands each prompt triggered, and the details of whatever is selected.\n\n" +
+			"Picking an executor in the sidebar filters the other panes; keys 1-5 pick\n" +
+			"the time window; Esc drops through to the browse table.",
+		Args: cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			return code(runBrowse("", browse.StartAgents))
+		},
+	}
 }
 
 // --- daemon ----------------------------------------------------------------
