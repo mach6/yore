@@ -54,11 +54,11 @@ func computePrompts(rows, prompts []rec.Record, now int64, periodDays int, execu
 		if r.Deleted() || r.ID == "" || r.StartMs < cutoff {
 			continue
 		}
-		if executor != "" && r.Tag != executor {
+		if executor != "" && r.Executor != executor {
 			continue
 		}
 		byID[r.ID] = &promptStat{
-			id: r.ID, text: r.Prompt, executor: r.Tag, session: r.Session,
+			id: r.ID, text: r.Prompt, executor: r.Executor, session: r.Session,
 			firstMs: r.StartMs, lastMs: r.StartMs,
 		}
 	}
@@ -66,13 +66,13 @@ func computePrompts(rows, prompts []rec.Record, now int64, periodDays int, execu
 		if r.Deleted() || r.PromptID == "" || r.StartMs < cutoff {
 			continue
 		}
-		if executor != "" && r.Tag != executor {
+		if executor != "" && r.Executor != executor {
 			continue
 		}
 		p := byID[r.PromptID]
 		if p == nil {
 			p = &promptStat{
-				id: r.PromptID, text: r.Prompt, executor: r.Tag, session: r.Session,
+				id: r.PromptID, text: r.Prompt, executor: r.Executor, session: r.Session,
 				firstMs: r.StartMs, lastMs: r.StartMs,
 			}
 			byID[r.PromptID] = p
@@ -81,7 +81,7 @@ func computePrompts(rows, prompts []rec.Record, now int64, periodDays int, execu
 			p.text = r.Prompt
 		}
 		if p.executor == "" {
-			p.executor = r.Tag
+			p.executor = r.Executor
 		}
 		if p.session == "" {
 			p.session = r.Session

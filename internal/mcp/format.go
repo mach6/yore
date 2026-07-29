@@ -13,7 +13,7 @@ import (
 // --- record formatting -------------------------------------------------------
 
 // formatCommandList renders rows as a titled list: time, exit glyph, command,
-// executor, directory, and (cross-machine) host.
+// executor, #tags, directory, and (cross-machine) host.
 func formatCommandList(title string, rows []rec.Record, localHost string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n\n", title)
@@ -23,11 +23,15 @@ func formatCommandList(title string, rows []rec.Record, localHost string) string
 	}
 	for _, r := range rows {
 		fmt.Fprintf(&b, "%s  %s  %s", relTime(r.StartMs), exitGlyph(r), oneLine(r.Cmd, 120))
+		// Both, never one or the other: which agent ran a command and what the
+		// user labelled it are different facts, and the else-if here used to hide
+		// the executor the moment a row picked up a tag.
 		var tail []string
+		if r.Executor != "" {
+			tail = append(tail, r.Executor)
+		}
 		if len(r.Tags) > 0 {
-			tail = append(tail, strings.Join(r.Tags, ","))
-		} else if r.Tag != "" {
-			tail = append(tail, r.Tag)
+			tail = append(tail, "#"+strings.Join(r.Tags, " #"))
 		}
 		if r.Cwd != "" {
 			tail = append(tail, r.Cwd)
@@ -158,12 +162,12 @@ func groupSessions(rows []rec.Record, executor string) []*sessionAgg {
 		if r.Session == "" || r.Deleted() {
 			continue
 		}
-		if executor != "" && r.Tag != executor {
+		if executor != "" && r.Executor != executor {
 			continue
 		}
 		a := by[r.Session]
 		if a == nil {
-			a = &sessionAgg{id: r.Session, executor: r.Tag, host: r.Hostname, firstMs: r.StartMs, lastMs: r.StartMs, dirs: map[string]bool{}}
+			a = &sessionAgg{id: r.Session, executor: r.Executor, host: r.Hostname, firstMs: r.StartMs, lastMs: r.StartMs, dirs: map[string]bool{}}
 			by[r.Session] = a
 			order = append(order, r.Session)
 		}
@@ -226,14 +230,14 @@ func groupPrompts(rows, prompts []rec.Record, executor, session, dir string) []*
 			if r.ID == "" || r.Deleted() {
 				continue
 			}
-			if executor != "" && r.Tag != executor {
+			if executor != "" && r.Executor != executor {
 				continue
 			}
 			if session != "" && r.Session != session {
 				continue
 			}
 			by[r.ID] = &promptAgg{
-				id: r.ID, text: r.Prompt, executor: r.Tag, session: r.Session,
+				id: r.ID, text: r.Prompt, executor: r.Executor, session: r.Session,
 				firstMs: r.StartMs, lastMs: r.StartMs,
 			}
 			order = append(order, r.ID)
@@ -244,7 +248,7 @@ func groupPrompts(rows, prompts []rec.Record, executor, session, dir string) []*
 		if r.PromptID == "" || r.Deleted() {
 			continue
 		}
-		if executor != "" && r.Tag != executor {
+		if executor != "" && r.Executor != executor {
 			continue
 		}
 		if session != "" && r.Session != session {
@@ -255,7 +259,7 @@ func groupPrompts(rows, prompts []rec.Record, executor, session, dir string) []*
 		}
 		a := by[r.PromptID]
 		if a == nil {
-			a = &promptAgg{id: r.PromptID, text: r.Prompt, executor: r.Tag, session: r.Session, firstMs: r.StartMs, lastMs: r.StartMs}
+			a = &promptAgg{id: r.PromptID, text: r.Prompt, executor: r.Executor, session: r.Session, firstMs: r.StartMs, lastMs: r.StartMs}
 			by[r.PromptID] = a
 			order = append(order, r.PromptID)
 		}
@@ -263,7 +267,7 @@ func groupPrompts(rows, prompts []rec.Record, executor, session, dir string) []*
 			a.text = r.Prompt
 		}
 		if a.executor == "" {
-			a.executor = r.Tag
+			a.executor = r.Executor
 		}
 		a.count++
 		a.cmds = append(a.cmds, r)
@@ -312,7 +316,7 @@ func groupFailures(rows []rec.Record, dir string, cutoff int64) []*promptAgg {
 		}
 		a := by[key]
 		if a == nil {
-			a = &promptAgg{id: key, text: r.Prompt, session: r.Session, executor: r.Tag, firstMs: r.StartMs, lastMs: r.StartMs}
+			a = &promptAgg{id: key, text: r.Prompt, session: r.Session, executor: r.Executor, firstMs: r.StartMs, lastMs: r.StartMs}
 			by[key] = a
 			order = append(order, key)
 		}
@@ -365,7 +369,7 @@ func formatStats(rows []rec.Record, dir string, days int, excluded func(string) 
 		if r.Cwd != "" {
 			dirs[r.Cwd]++
 		}
-		execs[execLabel(r.Tag)]++
+		execs[execLabel(r.Executor)]++
 		if r.Hostname != "" {
 			hosts[r.Hostname]++
 		}

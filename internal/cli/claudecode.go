@@ -117,11 +117,11 @@ func ingestClaudeTool(failed bool) {
 	}
 	dir := stateDir()
 	r := rec.Record{
-		Session: in.SessionID,
-		Cmd:     in.ToolInput.Command,
-		Cwd:     in.Cwd,
-		Tag:     agentClaudeCode,
-		Exit:    deriveExit(in, failed),
+		Session:  in.SessionID,
+		Cmd:      in.ToolInput.Command,
+		Cwd:      in.Cwd,
+		Executor: agentClaudeCode,
+		Exit:     deriveExit(in, failed),
 	}
 	// Duration: Claude Code's PostToolUse payload carries no tool timing, so the
 	// PreToolUse hook stamps a start time and we take the delta here (anchoring the

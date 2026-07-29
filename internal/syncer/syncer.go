@@ -130,6 +130,8 @@ func (s *Syncer) DeviceID() string { return s.deviceID }
 // Exit and DurMs are pointers so nil (unknown) is preserved distinctly from a
 // zero value across the round trip.
 type payload struct {
+	// V is the shape of what follows. 2 moved the executor off the "tag" key and
+	// onto its own; 1 is pre-release and not read anywhere.
 	V        int    `json:"v"`
 	ID       string `json:"id"`
 	HostID   string `json:"host_id"`
@@ -140,7 +142,7 @@ type payload struct {
 	Exit     *int   `json:"exit,omitempty"`
 	DurMs    *int64 `json:"dur_ms,omitempty"`
 	StartMs  int64  `json:"start_ms,omitempty"`
-	Tag      string `json:"tag,omitempty"`
+	Executor string `json:"executor,omitempty"`
 	Type     string `json:"type,omitempty"`
 	TargetID string `json:"target_id,omitempty"`
 	PromptID string `json:"prompt_id,omitempty"`
@@ -153,7 +155,7 @@ type payload struct {
 // marshalPayload renders a record's meaningful fields as the sealed plaintext.
 func marshalPayload(r rec.Record) ([]byte, error) {
 	return json.Marshal(payload{
-		V:        1,
+		V:        2,
 		ID:       r.ID,
 		HostID:   r.HostID,
 		Hostname: r.Hostname,
@@ -163,7 +165,7 @@ func marshalPayload(r rec.Record) ([]byte, error) {
 		Exit:     r.Exit,
 		DurMs:    r.DurMs,
 		StartMs:  r.StartMs,
-		Tag:      r.Tag,
+		Executor: r.Executor,
 		Type:     r.Type,
 		TargetID: r.TargetID,
 		PromptID: r.PromptID,
@@ -195,7 +197,7 @@ func recordFromPayload(pt []byte, hostID string, seq uint64, keyID string) (rec.
 		Exit:     p.Exit,
 		DurMs:    p.DurMs,
 		StartMs:  p.StartMs,
-		Tag:      p.Tag,
+		Executor: p.Executor,
 		PromptID: p.PromptID,
 		Prompt:   p.Prompt,
 		TagName:  p.TagName,

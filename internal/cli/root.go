@@ -9,7 +9,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"yore/internal/daemon"
 	"yore/internal/proto"
 	"yore/internal/shell"
 	"yore/internal/tui/browse"
@@ -104,7 +103,57 @@ func newRootCmd() *cobra.Command {
 		newSetConfigCmd(),
 		newVersionCmd(),
 	)
+	strictSubcommands(root)
 	return root
+}
+
+// strictSubcommands makes every command group reject an unknown subcommand the
+// way the root does.
+//
+// Cobra's default argument check (legacyArgs) only looks for unknown
+// subcommands on the root, so every group below it silently swallowed the
+// argument instead: `yore tag refactor` fell through to the help text and
+// exited 0, and `yore daemon bogus` ignored the word and started the daemon.
+// One rule for the whole tree is the only version of this a user can predict.
+//
+// Groups that declare their own Args are left alone — they have already said
+// what they accept — as are commands that take positional arguments.
+func strictSubcommands(c *cobra.Command) {
+	for _, sub := range c.Commands() {
+		strictSubcommands(sub)
+	}
+	if !c.HasSubCommands() || !c.HasParent() || c.Args != nil {
+		return
+	}
+	c.Args = func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return nil
+		}
+		return fmt.Errorf("unknown command %q for %q%s",
+			args[0], cmd.CommandPath(), suggestionsFor(cmd, args[0]))
+	}
+	if !c.Runnable() {
+		// Cobra bails out to the help text as soon as it sees a group with
+		// nothing to run — before it ever validates the arguments. A bare group
+		// like `yore tag` still has to print its help, so it gets a Run that does
+		// exactly that, and the check above finally gets to see the argument.
+		c.RunE = func(cmd *cobra.Command, _ []string) error { return cmd.Help() }
+	}
+}
+
+// suggestionsFor renders cobra's "did you mean" block for an unknown
+// subcommand, matching the wording the root already produces.
+func suggestionsFor(c *cobra.Command, typedName string) string {
+	names := c.SuggestionsFor(typedName)
+	if len(names) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\nDid you mean this?\n")
+	for _, n := range names {
+		fmt.Fprintf(&b, "\t%v\n", n)
+	}
+	return b.String()
 }
 
 // --- fast path -------------------------------------------------------------
@@ -135,7 +184,7 @@ func newRecordCmd() *cobra.Command {
 	cmd.Flags().StringVar(&session, "session", "", "shell session id")
 	cmd.Flags().StringVar(&cwd, "cwd", "", "working directory the command ran in")
 	cmd.Flags().Int64Var(&startMs, "start-ms", 0, "start time unix millis (0 = derive from now-duration)")
-	cmd.Flags().StringVar(&executor, "executor", "", "executor tag (default: auto-detect agent, else interactive)")
+	cmd.Flags().StringVar(&executor, "executor", "", "agent that ran it (default: auto-detect, else interactive)")
 	// Never break the shell on a malformed flag: swallow it and exit 0.
 	cmd.SetFlagErrorFunc(func(*cobra.Command, error) error { return exitErr(0) })
 	return cmd
@@ -173,7 +222,7 @@ func newSearchCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&noHost, "no-host", false, "headless: hide the host column (shown only for --scope all)")
 	cmd.Flags().StringVar(&scope, "scope", proto.ScopeLocal, "search scope: local|all|host|session|cwd|workspace")
 	cmd.Flags().StringVar(&executor, "executor", "", "filter by executor (e.g. claude-code)")
-	cmd.Flags().StringVar(&tag, "tag", "", "filter by a freeform tag (any effective tag on the record)")
+	cmd.Flags().StringVar(&tag, "tag", "", "filter by a user tag (a label you applied; for agents use --executor)")
 	cmd.Flags().StringVar(&sortMode, "sort", "", "sort: recency (default) or frecency")
 	cmd.Flags().BoolVar(&fuzzy, "fuzzy", false, "subsequence (fzf-style) matching")
 
@@ -373,23 +422,29 @@ func newInitCmd() *cobra.Command {
 }
 
 // newTagCmd groups the user-tag commands: freeform labels on commands and
-// sessions that sync end-to-end. The executor/agent is auto-tagged; these are
-// the tags you set yourself.
+// sessions that sync end-to-end. Which agent ran a command is a separate axis
+// (--executor); these are the labels you apply yourself.
 func newTagCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "tag",
 		Short: "Manage freeform tags on commands and sessions",
-		Long: "tag applies freeform labels to commands and sessions. A record can carry\n" +
-			"several tags; the agent/executor is auto-tagged, and you add your own\n" +
-			"(e.g. `refactor`). Filter with `yore search --tag <name>`. Tags sync\n" +
-			"end-to-end like everything else.",
+		Long: "tag applies freeform labels to commands and sessions; a record can carry\n" +
+			"several. With no --command or --session, `tag add` labels the shell you\n" +
+			"are in — which covers everything it has run and everything it runs next.\n\n" +
+			"Filter with `yore search --tag <name>`, or t in the browser. Tags sync\n" +
+			"end-to-end like everything else.\n\n" +
+			"Tags are not executors: which agent ran a command is recorded separately\n" +
+			"and filtered with `--executor claude-code`, never `--tag`.",
 	}
-	var desc string
+	var desc, listScope string
 	list := &cobra.Command{
-		Use: "list", Short: "List known tags with counts", Aliases: []string{"ls"},
-		Args: cobra.NoArgs,
-		RunE: func(*cobra.Command, []string) error { return code(runTagList()) },
+		Use: "list", Short: "List known tags with how many commands carry each",
+		Aliases: []string{"ls"},
+		Args:    cobra.NoArgs,
+		RunE:    func(*cobra.Command, []string) error { return code(runTagList(listScope)) },
 	}
+	list.Flags().StringVar(&listScope, "scope", "local", "count over: local|all")
+	_ = list.RegisterFlagCompletionFunc("scope", fixedComp("local", "all"))
 	create := &cobra.Command{
 		Use: "create <name>", Short: "Create a tag (name + optional description)",
 		Args: cobra.ExactArgs(1),
@@ -552,31 +607,22 @@ func newSetupCmd() *cobra.Command {
 	return cmd
 }
 
+// newDevicesCmd opens the browser on its devices pane — the one place devices
+// are managed. It used to also print the list and carry `approve`/`revoke`
+// subcommands, which was a second implementation of the same three actions,
+// with its own confirmation rules and its own idea of what a device looks like.
+// `token` stays: minting an enrollment credential is a thing you pipe
+// (`TOKEN=$(yore devices token)`), not a thing you manage.
 func newDevicesCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "devices",
-		Short: "List, approve, or revoke enrolled machines",
-		Args:  cobra.NoArgs, // bare = list; anything else must be a subcommand
+		Short: "Manage enrolled machines (opens the browser's devices pane)",
+		Long: "devices opens the history browser on its devices pane: approve a pending\n" +
+			"machine with a, revoke one with x (both ask first), r refetches. It is the\n" +
+			"same screen the browser reaches with D.",
+		Args: cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
-			return code(runDevicesList())
-		},
-	}
-	approve := &cobra.Command{
-		Use:               "approve <id>",
-		Short:             "Approve a pending device",
-		Args:              cobra.ExactArgs(1),
-		ValidArgsFunction: completeDeviceIDs,
-		RunE: func(_ *cobra.Command, args []string) error {
-			return code(runDevicesApprove(args[0]))
-		},
-	}
-	revoke := &cobra.Command{
-		Use:               "revoke <id>",
-		Short:             "Revoke a device and rotate keys",
-		Args:              cobra.ExactArgs(1),
-		ValidArgsFunction: completeDeviceIDs,
-		RunE: func(_ *cobra.Command, args []string) error {
-			return code(runDevicesRevoke(args[0]))
+			return code(runBrowse("", browse.StartDevices))
 		},
 	}
 	token := &cobra.Command{
@@ -587,7 +633,7 @@ func newDevicesCmd() *cobra.Command {
 			return code(runDevicesToken())
 		},
 	}
-	cmd.AddCommand(approve, revoke, token)
+	cmd.AddCommand(token)
 	return cmd
 }
 
@@ -744,24 +790,4 @@ func fixedComp(values ...string) cobra.CompletionFunc {
 	return func(*cobra.Command, []string, string) ([]cobra.Completion, cobra.ShellCompDirective) {
 		return values, cobra.ShellCompDirectiveNoFileComp
 	}
-}
-
-// completeDeviceIDs offers enrolled device ids (with names as descriptions) for
-// `devices approve|revoke`. Best-effort and non-fatal: any error yields no
-// suggestions rather than blocking completion.
-func completeDeviceIDs(*cobra.Command, []string, string) ([]cobra.Completion, cobra.ShellCompDirective) {
-	c, err := daemon.EnsureRunning(stateDir())
-	if err != nil {
-		return nil, cobra.ShellCompDirectiveNoFileComp
-	}
-	defer func() { _ = c.Close() }()
-	info, err := c.Devices()
-	if err != nil {
-		return nil, cobra.ShellCompDirectiveNoFileComp
-	}
-	out := make([]cobra.Completion, 0, len(info.Devices))
-	for _, d := range info.Devices {
-		out = append(out, cobra.CompletionWithDesc(d.ID, d.Name))
-	}
-	return out, cobra.ShellCompDirectiveNoFileComp
 }

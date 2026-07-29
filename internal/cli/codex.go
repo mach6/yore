@@ -50,10 +50,10 @@ func runHookCodex() {
 	dir := stateDir()
 	session := codexSession(in.SessionID)
 	r := rec.Record{
-		Session: session,
-		Cmd:     cmd,
-		Cwd:     in.Cwd,
-		Tag:     agentCodex,
+		Session:  session,
+		Cmd:      cmd,
+		Cwd:      in.Cwd,
+		Executor: agentCodex,
 		// Codex has no failure event to distinguish outcomes, and its
 		// tool_response exit field is not precisely documented, so exit is
 		// best-effort: use tool_response.exit_code when present, else unknown.

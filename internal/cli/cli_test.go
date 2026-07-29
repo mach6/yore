@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -176,5 +177,42 @@ func TestHeadlessShowHost(t *testing.T) {
 		proto.ScopeLocal, proto.ScopeHost, proto.ScopeSession, proto.ScopeCwd, proto.ScopeWorkspace,
 	} {
 		assert.False(t, headlessShowHost(scope, false), "single-host scope %q hides the host column", scope)
+	}
+}
+
+// TestUnknownSubcommandIsAnError covers every command group at once: cobra only
+// checks the root for unknown subcommands, which left `yore tag refactor`
+// printing help and exiting 0 while `yore daemon bogus` ignored the word and
+// started the daemon. All of them now fail the same way, with the same status.
+//
+// Nothing here reaches a RunE — argument validation rejects the line first —
+// so no daemon, server, or socket is touched.
+func TestUnknownSubcommandIsAnError(t *testing.T) {
+	for _, args := range [][]string{
+		{"bogus"},
+		{"tag", "refactor"},
+		{"hook", "bogus"},
+		{"daemon", "bogus"},
+		{"server", "bogus"},
+		{"devices", "bogus"},
+		// Devices are managed in one place — the browser's pane. These were a
+		// second implementation of the same actions and are gone.
+		{"devices", "approve", "01AAAAAAAAAAAAAAAAAAAAAAAA"},
+		{"devices", "revoke", "01AAAAAAAAAAAAAAAAAAAAAAAA"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			assert.Equal(t, 2, Run(args), "an unknown subcommand is a usage error")
+		})
+	}
+}
+
+// TestGroupWithoutArgsPrintsHelp is the other half: a bare group still explains
+// itself and exits 0, which is what makes the check above safe to apply to the
+// whole tree.
+func TestGroupWithoutArgsPrintsHelp(t *testing.T) {
+	for _, group := range []string{"tag", "hook"} {
+		t.Run(group, func(t *testing.T) {
+			assert.Equal(t, 0, Run([]string{group}))
+		})
 	}
 }

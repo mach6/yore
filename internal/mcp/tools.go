@@ -50,7 +50,7 @@ func (s *Server) buildTools() []toolDef {
 				"query":     str("substring to match in the command (empty matches all)"),
 				"directory": str("only commands run in this directory (exact path)"),
 				"executor":  str("only commands run by this executor, e.g. claude-code (empty = any)"),
-				"tag":       str("only commands with this freeform tag (matches any effective tag)"),
+				"tag":       str("only commands carrying this user tag (a label the user applied; NOT an executor name)"),
 				"scope":     scope,
 				"limit":     intg("max results (default 20)"),
 			}),

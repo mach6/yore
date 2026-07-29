@@ -425,12 +425,29 @@ func (s *server) dispatch(req *proto.Request, f *match.Filter) (proto.Response, 
 		}
 		return proto.Response{OK: true, Token: &ti}, false
 
+	case proto.OpTokens:
+		tl, err := s.listTokens()
+		if err != nil {
+			return proto.Response{Err: "tokens: " + err.Error()}, false
+		}
+		return proto.Response{OK: true, Tokens: &tl}, false
+
+	case proto.OpRevokeTk:
+		if err := s.revokeToken(req.TokenID); err != nil {
+			return proto.Response{Err: "revoke token: " + err.Error()}, false
+		}
+		return proto.Response{OK: true}, false
+
 	case proto.OpStatus:
 		st := s.status()
 		return proto.Response{OK: true, Status: &st}, false
 
 	case proto.OpTags:
-		ti := proto.TagsInfo{Tags: s.tags.list()}
+		scope := proto.ScopeLocal
+		if req.Tags != nil && req.Tags.Scope != "" {
+			scope = req.Tags.Scope
+		}
+		ti := proto.TagsInfo{Tags: s.tags.list(s.tagCorpus(scope)), Scope: scope}
 		return proto.Response{OK: true, Tags: &ti}, false
 
 	case proto.OpSync:

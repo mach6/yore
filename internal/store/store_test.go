@@ -284,7 +284,7 @@ func TestPromptRecordsStayOutOfTheCorpus(t *testing.T) {
 	t.Cleanup(func() { _ = s.Close() })
 
 	_, err = s.AppendBatch([]rec.Record{
-		{ID: "p1", Type: rec.TypePrompt, Prompt: "add rate limiting", Tag: "claude-code"},
+		{ID: "p1", Type: rec.TypePrompt, Prompt: "add rate limiting", Executor: "claude-code"},
 		{ID: "c1", Cmd: "cargo add tower", PromptID: "p1"},
 		{ID: "t1", Type: rec.TypeTag, TagName: "work", TargetID: "c1"},
 	})

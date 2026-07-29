@@ -171,7 +171,7 @@ func TestRunHookClaudeCodeCaptures(t *testing.T) {
 	assert.Equal(t, "cargo test", got.Cmd)
 	assert.Equal(t, "/work/proj", got.Cwd)
 	assert.Equal(t, "sess-1", got.Session)
-	assert.Equal(t, agentClaudeCode, got.Tag, "must be tagged claude-code")
+	assert.Equal(t, agentClaudeCode, got.Executor, "must be tagged claude-code")
 	require.NotNil(t, got.Exit, "PostToolUse fires on success -> exit recorded")
 	assert.Equal(t, 0, *got.Exit, "success defaults to exit 0")
 }
@@ -313,7 +313,7 @@ func TestPromptTracing(t *testing.T) {
 	prompt := rows[0]
 	require.Equal(t, rec.TypePrompt, prompt.Type, "the prompt is a record in its own right")
 	assert.Equal(t, "add rate limiting to the API", prompt.Prompt)
-	assert.Equal(t, agentClaudeCode, prompt.Tag)
+	assert.Equal(t, agentClaudeCode, prompt.Executor)
 	assert.Empty(t, prompt.Cmd, "a prompt record is not a command")
 
 	cmds := rows[1:]

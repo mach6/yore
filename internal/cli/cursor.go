@@ -63,10 +63,10 @@ func runHookCursor() {
 		cwd = in.WorkspaceRoots[0]
 	}
 	r := rec.Record{
-		Session: session,
-		Cmd:     cmd,
-		Cwd:     cwd,
-		Tag:     agentCursor,
+		Session:  session,
+		Cmd:      cmd,
+		Cwd:      cwd,
+		Executor: agentCursor,
 	}
 	if in.Duration != nil && *in.Duration >= 0 {
 		r.DurMs = in.Duration

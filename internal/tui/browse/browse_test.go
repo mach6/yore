@@ -34,6 +34,10 @@ type fakeBackend struct {
 	devices    proto.DevicesInfo
 	approved   []string
 	revoked    []string
+	tokens     proto.TokensInfo
+	tokRevoked []string
+	minted     proto.TokenInfo
+	mintCalls  int
 	synced     int
 	syncErr    error
 }
@@ -92,6 +96,26 @@ func (f *fakeBackend) Revoke(id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.revoked = append(f.revoked, id)
+	return nil
+}
+
+func (f *fakeBackend) Tokens() (proto.TokensInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.tokens, nil
+}
+
+func (f *fakeBackend) Token() (proto.TokenInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.mintCalls++
+	return f.minted, nil
+}
+
+func (f *fakeBackend) RevokeToken(id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.tokRevoked = append(f.tokRevoked, id)
 	return nil
 }
 
@@ -719,32 +743,91 @@ func TestRefreshPreservesCursor(t *testing.T) {
 	require.Equal(t, 0, m.sel, "a result missing the selected record resets to row 0")
 }
 
+// TestExecutorAndTagColumns holds the two axes apart in the table: the executor
+// is an attribute of the row, the tags are what somebody put on it, and one
+// merged cell used to render them as a single indistinguishable list.
+func TestExecutorAndTagColumns(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 40)
+	rows := mkRows("agent-run", "ls", "vim")
+	rows[0].Executor = "claude-code"
+	rows[1].Tags = []string{"refactor"} // resolved by the daemon; no executor in it
+
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(rows)})
+
+	require.True(t, m.hasExec, "a row an agent ran should set hasExec")
+	require.True(t, m.hasTags, "a labelled row should set hasTags")
+	l := m.colLayout()
+	require.True(t, l.showExec, "the exec column shows when a row carries an executor")
+	require.True(t, l.showTag, "the tags column shows when a row carries a tag")
+
+	out := strip(m.View())
+	require.Containsf(t, out, "exec", "table header should name the exec column:\n%s", out)
+	require.Containsf(t, out, "tags", "table header should name the tags column:\n%s", out)
+	require.Containsf(t, out, "claude-code", "the exec cell should render the executor:\n%s", out)
+	require.Containsf(t, out, "refactor", "the tags cell should render the user tag:\n%s", out)
+
+	// Neither column claims the other's value.
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "agent-run") {
+			require.NotContains(t, line, "refactor", "the agent row carries no user tag")
+		}
+		if strings.Contains(line, "ls") && strings.Contains(line, "refactor") {
+			require.NotContains(t, line, "claude-code", "the tagged row was not run by an agent")
+		}
+	}
+}
+
+// TestExecutorFilter covers e: adopt the selected row's executor, send it as
+// Executor, clear on a second press.
+func TestExecutorFilter(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 40)
+	rows := mkRows("agent-run", "ls", "vim")
+	rows[0].Executor = "claude-code"
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(rows)})
+
+	m, cmd := step(t, m, press("e"))
+	require.Equal(t, "claude-code", m.executorFilter, "e should adopt the selected row's executor")
+	require.NotNil(t, cmd, "toggling the executor filter should re-issue the query")
+	require.Equal(t, "claude-code", m.buildReq().Executor, "buildReq should carry the executor filter")
+	require.Empty(t, m.buildReq().Tag, "the executor filter must not travel as a tag")
+	require.Containsf(t, strip(m.View()), "executor: claude-code", "status bar should name the executor filter")
+
+	m, _ = step(t, m, press("e"))
+	require.Equal(t, "", m.executorFilter, "second e should clear the filter")
+	require.Equal(t, "", m.buildReq().Executor)
+}
+
+// TestTagFilter covers t: the mirror of e on the other axis. An agent-run row
+// with no user tag has nothing for it to adopt — which is the whole point of
+// keeping the two apart.
 func TestTagFilter(t *testing.T) {
 	f := &fakeBackend{}
 	m := ready(t, f, 120, 40)
 	rows := mkRows("agent-run", "ls", "vim")
-	rows[0].Tag = "claude-code"
-	rows[0].Tags = []string{"claude-code"} // effective tags, as the daemon resolves them
+	rows[0].Executor = "claude-code"
+	rows[1].Tags = []string{"refactor"}
 	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(rows)})
 
-	// The tags column appears once a row carries tags; the header advertises it.
-	require.True(t, m.hasTags, "a tagged row should set hasTags")
-	require.True(t, m.colLayout().showTag, "the tag column should show when the result set has tags")
-	out := strip(m.View())
-	require.Containsf(t, out, "tag", "table header should show the tags column:\n%s", out)
-	require.Containsf(t, out, "claude-code", "the tag cell should render the row's tags:\n%s", out)
-
-	// t on the tagged row (row 0 selected) adopts its tag; buildReq carries it.
+	// Row 0 is the agent row: an executor, no tags. t finds nothing to adopt.
 	m, cmd := step(t, m, press("t"))
-	require.Equal(t, "claude-code", m.executorFilter, "t should adopt the selected row's tag")
-	require.NotNil(t, cmd, "toggling the tag filter should re-issue the query")
-	require.Equal(t, "claude-code", m.buildReq().Executor, "buildReq should carry the active tag filter")
-	require.Containsf(t, strip(m.View()), "executor: claude-code", "status bar should show the active executor filter")
+	require.Empty(t, m.tagFilter, "an executor is not a tag t can adopt")
+	require.NotNil(t, cmd, "the flash still needs a tick")
+	require.Contains(t, strip(m.View()), "no tags on this row")
 
-	// t again clears the filter.
+	// Move to the tagged row and adopt it.
+	m, _ = step(t, m, press("down"))
+	m, cmd = step(t, m, press("t"))
+	require.Equal(t, "refactor", m.tagFilter, "t should adopt the selected row's tag")
+	require.NotNil(t, cmd, "toggling the tag filter should re-issue the query")
+	require.Equal(t, "refactor", m.buildReq().Tag, "buildReq should carry the tag filter")
+	require.Empty(t, m.buildReq().Executor, "the tag filter must not travel as an executor")
+	require.Containsf(t, strip(m.View()), "tag: refactor", "status bar should name the tag filter")
+
 	m, _ = step(t, m, press("t"))
-	require.Equal(t, "", m.executorFilter, "second t should clear the tag filter")
-	require.Equal(t, "", m.buildReq().Executor, "a cleared filter sends an empty Tag")
+	require.Equal(t, "", m.tagFilter, "second t should clear the filter")
+	require.Equal(t, "", m.buildReq().Tag)
 }
 
 func TestTagRowPicker(t *testing.T) {
@@ -799,22 +882,41 @@ func TestDevicesPane(t *testing.T) {
 	}
 	m := ready(t, f, 120, 30)
 
-	// Enter the devices view; it fetches asynchronously.
+	// Enter the devices view; it fetches both lists asynchronously.
 	m, cmd := step(t, m, press("D"))
 	require.Equal(t, viewDevices, m.view)
 	require.NotNil(t, cmd, "entering devices view did not fetch")
-	m, _ = step(t, m, cmd())
+	for _, msg := range collect(cmd) {
+		m, _ = step(t, m, msg)
+	}
 	require.Len(t, m.devices, 2)
 	out := strip(m.View())
 	require.Containsf(t, out, "laptop", "devices view missing device/code:\n%s", out)
 	require.Containsf(t, out, "AB12-CD34", "devices view missing device/code:\n%s", out)
 
-	// Move to the pending device and approve it.
+	// Move to the pending device and approve it. Approving asks first, and the
+	// question quotes the verification code: admitting a machine to the group is
+	// only safe if the user checked that code against the one it is showing.
 	m, _ = step(t, m, press("j"))
-	m, acmd := step(t, m, press("a"))
-	require.NotNil(t, acmd, "approve produced no command")
+	m, _ = step(t, m, press("a"))
+	require.NotEmpty(t, m.devConfirm, "a did not arm an approve confirmation")
+	require.True(t, m.devApproving, "the armed action should be an approval")
+	out = strip(m.View())
+	require.Containsf(t, out, "AB12-CD34", "the approve prompt must show the code:\n%s", out)
+	require.Containsf(t, out, "server", "the approve prompt must name the machine:\n%s", out)
+	require.Empty(t, f.approved, "nothing is approved until the question is answered")
+
+	m, acmd := step(t, m, press("y"))
+	require.NotNil(t, acmd, "y did not trigger approve")
 	acmd()
 	require.Equal(t, []string{"01BBBBBBBBBBBBBBBBBBBBBBBB"}, f.approved)
+
+	// Anything else cancels.
+	m, _ = step(t, m, press("a"))
+	require.NotEmpty(t, m.devConfirm)
+	m, _ = step(t, m, press("n"))
+	require.Empty(t, m.devConfirm, "n cleared the confirmation")
+	require.Len(t, f.approved, 1, "a cancelled approval approves nothing")
 
 	// Revoke needs confirmation: x then y.
 	m, _ = step(t, m, press("x"))
@@ -856,9 +958,9 @@ func wheelAt(x, y int, btn tea.MouseButton) tea.MouseMsg {
 // under prompt p1, devin one (failing) under p2.
 func agentSample() []rec.Record {
 	rows := mkRows("cargo add tower", "cargo build", "cargo test")
-	rows[0].Tag, rows[0].PromptID, rows[0].Prompt, rows[0].Session = "claude-code", "p1", "add rate limiting", "sessionAAAA1111"
-	rows[1].Tag, rows[1].PromptID, rows[1].Prompt, rows[1].Session = "claude-code", "p1", "add rate limiting", "sessionAAAA1111"
-	rows[2].Tag, rows[2].PromptID, rows[2].Prompt, rows[2].Session = "devin", "p2", "fix the N+1 query", "sessionBBBB2222"
+	rows[0].Executor, rows[0].PromptID, rows[0].Prompt, rows[0].Session = "claude-code", "p1", "add rate limiting", "sessionAAAA1111"
+	rows[1].Executor, rows[1].PromptID, rows[1].Prompt, rows[1].Session = "claude-code", "p1", "add rate limiting", "sessionAAAA1111"
+	rows[2].Executor, rows[2].PromptID, rows[2].Prompt, rows[2].Session = "devin", "p2", "fix the N+1 query", "sessionBBBB2222"
 	rows[2].Exit = rec.IntPtr(1)
 	return rows
 }
@@ -1200,7 +1302,7 @@ func TestAgentsDurColumnAdapts(t *testing.T) {
 	// its own), so the DUR column is dropped from both panes.
 	rows := mkRows("go build", "go test")
 	for i := range rows {
-		rows[i].Tag, rows[i].PromptID, rows[i].Prompt = "claude-code", "p1", "ship it"
+		rows[i].Executor, rows[i].PromptID, rows[i].Prompt = "claude-code", "p1", "ship it"
 	}
 	f := &fakeBackend{
 		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 2}}},
@@ -1229,7 +1331,7 @@ func TestAgentsHorizontalScroll(t *testing.T) {
 		"path is throttled per client without dropping legitimate bursts ZZZEND"
 	rows := mkRows("go build", "go test")
 	for i := range rows {
-		rows[i].Tag, rows[i].PromptID, rows[i].Prompt = "claude-code", "p1", long
+		rows[i].Executor, rows[i].PromptID, rows[i].Prompt = "claude-code", "p1", long
 	}
 	f := &fakeBackend{
 		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 2}}},
@@ -1260,7 +1362,7 @@ func TestAgentsHorizontalScroll(t *testing.T) {
 func TestAgentsNavigationAndPeriod(t *testing.T) {
 	rows := mkRows("a", "b")
 	for i := range rows {
-		rows[i].Tag = "claude-code"
+		rows[i].Executor = "claude-code"
 	}
 	rows[0].PromptID, rows[0].Prompt = "p1", "newer prompt"
 	rows[1].PromptID, rows[1].Prompt = "p2", "older prompt"
@@ -1769,6 +1871,37 @@ func TestStartViewOpensDirectly(t *testing.T) {
 	require.Equal(t, viewBrowse, NewModel(f, Options{Start: "nope"}).view)
 }
 
+// TestStartDevicesFetchesTheList is what `yore devices` rides on. It is its own
+// test because the devices pane draws from a different fetch than the stats
+// sample: without it the pane opens on "loading…" and never leaves.
+func TestStartDevicesFetchesTheList(t *testing.T) {
+	f := &fakeBackend{
+		resp: mkResp(mkRows("ls")),
+		devices: proto.DevicesInfo{Devices: []proto.DeviceInfo{
+			{ID: "01AAAAAAAAAAAAAAAAAAAAAAAA", Name: "laptop", Status: "active", Self: true},
+		}},
+	}
+	m := NewModel(f, Options{Version: "v1", Now: now, Start: StartDevices})
+	require.Equal(t, viewDevices, m.view, "Start=devices did not open the devices pane")
+
+	m, _ = step(t, m, tea.WindowSizeMsg{Width: 120, Height: 30})
+	mm, cmd := step(t, m, initMsg{})
+	require.NotNil(t, cmd)
+	var got bool
+	for _, msg := range collect(cmd) {
+		if dr, ok := msg.(devicesResultMsg); ok {
+			got = true
+			mm, _ = step(t, mm, dr)
+		}
+	}
+	require.True(t, got, "opening on devices issued no device fetch")
+	require.Containsf(t, strip(mm.View()), "laptop", "the pane rendered without its list")
+
+	// Esc still drops through to the browse table, as from any other view.
+	mm, _ = step(t, mm, press("esc"))
+	require.Equal(t, viewBrowse, mm.view)
+}
+
 // collect flattens a tea.Cmd into the messages it produces, following one level
 // of tea.Batch (which is how Init returns its several commands).
 func collect(cmd tea.Cmd) []tea.Msg {
@@ -1822,4 +1955,103 @@ func TestPeriodTabsPinnedRight(t *testing.T) {
 	require.False(t, narrow.showPeriodTabs())
 	require.NotContains(t, strip(narrow.View()), "5 All",
 		"a cramped header should drop the tabs rather than overflow")
+}
+
+// devicesFixture is a devices view with one machine and three tokens in
+// different states, already loaded.
+func devicesFixture(t *testing.T) (Model, *fakeBackend) {
+	t.Helper()
+	f := &fakeBackend{
+		resp: mkResp(mkRows("ls")),
+		devices: proto.DevicesInfo{Devices: []proto.DeviceInfo{
+			{ID: "01AAAAAAAAAAAAAAAAAAAAAAAA", Name: "laptop", Status: "active", Self: true},
+		}},
+		tokens: proto.TokensInfo{Tokens: []proto.EnrollToken{
+			{ID: "aaaa111122223333", State: proto.TokenOpen, CreatedMs: now - 60_000, ExpiresMs: now + 600_000},
+			{ID: "bbbb444455556666", State: proto.TokenClaimed, CreatedMs: now - 300_000,
+				ClaimedMs: now - 240_000, ClaimedBy: "01CCCCCCCCCCCCCCCCCCCCCCCC"},
+			{ID: "cccc777788889999", State: proto.TokenRevoked, CreatedMs: now - 900_000, RevokedMs: now - 800_000},
+		}},
+		minted: proto.TokenInfo{Token: "s3cret-enrollment-token", ExpiresMs: now + 1_800_000},
+	}
+	m := ready(t, f, 120, 30)
+	m, cmd := step(t, m, press("D"))
+	for _, msg := range collect(cmd) {
+		m, _ = step(t, m, msg)
+	}
+	return m, f
+}
+
+// TestTokensPaneShowsWhatBecameOfEach is the point of the pane: an open token
+// is a standing invitation to join the group, and until now nothing said one
+// existed.
+func TestTokensPaneShowsWhatBecameOfEach(t *testing.T) {
+	m, _ := devicesFixture(t)
+	require.Len(t, m.tokens, 3)
+
+	out := strip(m.View())
+	require.Containsf(t, out, "MACHINES", "both panes should be titled:\n%s", out)
+	require.Containsf(t, out, "TOKENS", "both panes should be titled:\n%s", out)
+	for _, want := range []string{"open", "claimed", "revoked", "01CCCCCCCC"} {
+		require.Containsf(t, out, want, "tokens pane missing %q:\n%s", want, out)
+	}
+
+	// Two panes, stacked, both full width and neither overlapping the other.
+	g := m.geo
+	require.Equal(t, 0, g.p[dpDevices].x)
+	require.Equal(t, g.p[dpDevices].w, g.p[dpTokens].w, "both panes span the frame")
+	require.Equal(t, g.p[dpDevices].y+g.p[dpDevices].h, g.p[dpTokens].y, "tokens sit under machines")
+}
+
+// TestTokensPaneRevoke covers x on each pane: the same key, aimed by focus at
+// the thing the pane holds.
+func TestTokensPaneRevoke(t *testing.T) {
+	m, f := devicesFixture(t)
+
+	// On the machines pane, x aims at the device — and this one is self, so it
+	// is refused outright.
+	m, _ = step(t, m, press("x"))
+	require.Empty(t, m.devConfirm, "you cannot revoke the machine you are sitting at")
+
+	// Tab to the tokens pane; x arms a token revoke, naming it as such.
+	m, _ = step(t, m, press("tab"))
+	require.Equal(t, dpTokens, m.dpane)
+	m, _ = step(t, m, press("x"))
+	require.Equal(t, "aaaa111122223333", m.devConfirm)
+	require.Equal(t, dpTokens, m.devConfirmKind)
+	require.Containsf(t, strip(m.View()), "revoke this token", "the prompt must say what it will revoke")
+	require.Empty(t, f.tokRevoked, "nothing is revoked until the question is answered")
+
+	m, cmd := step(t, m, press("y"))
+	require.NotNil(t, cmd)
+	cmd()
+	require.Equal(t, []string{"aaaa111122223333"}, f.tokRevoked)
+	require.Empty(t, f.revoked, "revoking a token must not revoke a device")
+
+	// A claimed token has nothing to cancel: it already let someone in.
+	m, _ = step(t, m, press("j"))
+	m, _ = step(t, m, press("x"))
+	require.Empty(t, m.devConfirm, "a claimed token cannot be revoked")
+}
+
+// TestTokensPaneMint proves n mints and puts the plaintext on screen — the one
+// moment it exists, since the server keeps only a hash.
+func TestTokensPaneMint(t *testing.T) {
+	m, f := devicesFixture(t)
+	m, _ = step(t, m, press("tab"))
+
+	m, cmd := step(t, m, press("n"))
+	require.NotNil(t, cmd, "n issued no mint")
+	m, _ = step(t, m, cmd())
+	require.Equal(t, 1, f.mintCalls)
+
+	out := strip(m.View())
+	require.Containsf(t, out, "s3cret-enrollment-token", "the minted token must be shown:\n%s", out)
+	require.Containsf(t, out, "never shown again", "the pane must say it cannot be recovered:\n%s", out)
+
+	// Esc dismisses it and leaves the view where it was.
+	m, _ = step(t, m, press("esc"))
+	require.Empty(t, m.minted)
+	require.Equal(t, viewDevices, m.view, "dismissing the token is not leaving the view")
+	require.NotContains(t, strip(m.View()), "s3cret-enrollment-token")
 }

@@ -91,7 +91,7 @@ func (s *server) runQuery(f *match.Filter, q proto.QueryReq) proto.QueryResp {
 	if q.Executor != "" {
 		kept := rows[:0]
 		for _, r := range rows {
-			if r.Tag == q.Executor {
+			if r.Executor == q.Executor {
 				kept = append(kept, r)
 			}
 		}
@@ -107,7 +107,7 @@ func (s *server) runQuery(f *match.Filter, q proto.QueryReq) proto.QueryResp {
 	if q.HumanOnly {
 		kept := rows[:0]
 		for _, r := range rows {
-			if r.Tag == "" {
+			if r.Executor == "" {
 				kept = append(kept, r)
 			} else {
 				hiddenAgents++
@@ -201,6 +201,25 @@ func (s *server) runQuery(f *match.Filter, q proto.QueryReq) proto.QueryResp {
 		resp.Prompts = s.prompts.since(periodCutoff(s.nowMs(), q.PromptDays), q.Executor)
 	}
 	return resp
+}
+
+// tagCorpus is the row set `yore tag list` counts over: this host's commands,
+// plus every other host's when the scope is ScopeAll. Deep scope reads the RAM
+// remote cache as it stands and does not nudge a sync — counting labels is not
+// worth waking the network for, and a cold cache simply counts local.
+func (s *server) tagCorpus(scope string) []rec.Record {
+	s.mu.RLock()
+	local := s.corpus // append-only; its [0,len) prefix is a stable view
+	s.mu.RUnlock()
+	if scope != proto.ScopeAll || !s.remote.enabled() {
+		return local
+	}
+	remote := s.remote.search("", "")
+	// A fresh slice: appending onto the corpus snapshot would write into the
+	// corpus's own spare capacity.
+	out := make([]rec.Record, 0, len(local)+len(remote))
+	out = append(out, local...)
+	return append(out, remote...)
 }
 
 // periodCutoff is the oldest timestamp within a lookback window of days; 0 days

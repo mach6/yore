@@ -2,8 +2,10 @@ package server
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -99,15 +101,21 @@ func newToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b[:]), nil
 }
 
-// pruneTokens drops expired and redeemed tokens so the bucket cannot grow
-// without bound. Errors are ignored: pruning is housekeeping, never a reason to
-// fail the mint that triggered it.
+// pruneTokens drops tokens nobody will ask about again, so the bucket cannot
+// grow without bound: an unclaimed one (expired, or revoked before it was used)
+// goes tokenKeep after its expiry. A claimed token is kept — it is the record
+// of which token admitted which machine, and that answer should outlive the
+// half hour the token itself was good for. Unreadable rows go too.
+//
+// Errors are ignored: pruning is housekeeping, never a reason to fail the mint
+// that triggered it.
 func pruneTokens(tx *bbolt.Tx, now time.Time) {
 	b := tx.Bucket(bucketTokens)
+	cutoff := now.Add(-tokenKeep).UnixMilli()
 	var dead [][]byte
 	_ = b.ForEach(func(k, v []byte) error {
 		var st storedToken
-		if json.Unmarshal(v, &st) != nil || st.Redeemed || now.UnixMilli() >= st.ExpiresMs {
+		if json.Unmarshal(v, &st) != nil || (st.ClaimedMs == 0 && st.ExpiresMs <= cutoff) {
 			dead = append(dead, append([]byte(nil), k...))
 		}
 		return nil
@@ -115,6 +123,86 @@ func pruneTokens(tx *bbolt.Tx, now time.Time) {
 	for _, k := range dead {
 		_ = b.Delete(k)
 	}
+}
+
+// GET /v1/tokens — every enrollment token and what became of it (signed)
+//
+// The token plaintexts are not here and cannot be: the server kept only hashes.
+// What this answers is "what is outstanding, and who used what" — an open token
+// admits a machine to the group, so it is something an operator has to be able
+// to see.
+func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
+	db, ok := mustDB(w, r)
+	if !ok {
+		return
+	}
+	now := time.Now()
+	tokens := []wire.EnrollToken{}
+	err := db.View(func(tx *bbolt.Tx) error {
+		return tx.Bucket(bucketTokens).ForEach(func(k, v []byte) error {
+			var st storedToken
+			if err := json.Unmarshal(v, &st); err != nil {
+				return err
+			}
+			tokens = append(tokens, wire.EnrollToken{
+				ID:        hex.EncodeToString(k),
+				State:     st.state(now),
+				CreatedMs: st.CreatedMs,
+				ExpiresMs: st.ExpiresMs,
+				ClaimedMs: st.ClaimedMs,
+				ClaimedBy: st.ClaimedBy,
+				RevokedMs: st.RevokedMs,
+			})
+			return nil
+		})
+	})
+	if err != nil {
+		writeAPIErr(w, err)
+		return
+	}
+	// Newest first: the one you just minted is the one you are looking for.
+	sort.Slice(tokens, func(i, j int) bool { return tokens[i].CreatedMs > tokens[j].CreatedMs })
+	writeJSON(w, http.StatusOK, tokens)
+}
+
+// POST /v1/tokens/{id}/revoke — cancel an unused enrollment token (signed)
+//
+// This is not device revocation and rotates nothing: the token has admitted no
+// one, so there is no key any holder of it could already have read with. It
+// exists so a token that got away from you stops being live before its half
+// hour is up.
+func (s *Server) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
+	db, ok := mustDB(w, r)
+	if !ok {
+		return
+	}
+	sum, err := hex.DecodeString(r.PathValue("id"))
+	if err != nil || len(sum) != sha256.Size {
+		writeErr(w, http.StatusBadRequest, "malformed token id")
+		return
+	}
+	now := time.Now()
+	err = db.Update(func(tx *bbolt.Tx) error {
+		st, found := loadToken(tx, sum)
+		if !found {
+			return fail(http.StatusNotFound, "no such token")
+		}
+		if st.ClaimedMs != 0 {
+			// Already spent: revoking would say something untrue about how that
+			// device got in, and would take nothing away from it.
+			return fail(http.StatusConflict, "token already claimed")
+		}
+		if st.RevokedMs != 0 {
+			return nil // idempotent
+		}
+		st.RevokedMs = now.UnixMilli()
+		return putToken(tx, sum, st)
+	})
+	if err != nil {
+		writeAPIErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // GET /v1/recovery/salt — the Argon2id salt (open)
@@ -568,7 +656,9 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	err := db.Update(func(tx *bbolt.Tx) error {
 		if !bootstrap {
-			if rerr := redeemToken(tx, hashToken(token), time.Now()); rerr != nil {
+			// Stamped with the id of the device this same transaction is about to
+			// write, so the token record answers "which machine used it".
+			if rerr := redeemToken(tx, hashToken(token), time.Now(), req.ID); rerr != nil {
 				return rerr
 			}
 		}

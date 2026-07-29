@@ -99,11 +99,11 @@ func runHookDevin() {
 	dir := stateDir()
 	session := devinSession(in.SessionID)
 	r := rec.Record{
-		Session: session,
-		Cmd:     in.ToolInput.Command,
-		Cwd:     devinCwd(in),
-		Tag:     agentDevin,
-		Exit:    deriveDevinExit(in),
+		Session:  session,
+		Cmd:      in.ToolInput.Command,
+		Cwd:      devinCwd(in),
+		Executor: agentDevin,
+		Exit:     deriveDevinExit(in),
 	}
 	// Devin's payload carries no tool timing, so the PreToolUse hook stamps a start
 	// and we take the delta here (anchoring the record to the real start).

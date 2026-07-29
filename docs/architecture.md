@@ -14,7 +14,7 @@ role it plays:
 | Shell-hook fast path | `record`, `filter`, `export` |
 | Search UIs | `search` (inline Ctrl-R TUI + `--headless`), `browse` (full-screen), `stats` / `agents` (the browser, opened on one of its screens) |
 | Background daemon | `daemon` (`run`/`stop`/`status`), `status`, `stop`, `sync` |
-| Enrollment / devices | `setup`, `devices` (`approve`/`revoke`) |
+| Enrollment / devices | `setup`, `devices` (the browser's devices pane; `token` mints an enrollment credential) |
 | Sync server | `server` (`stop`), `healthcheck` |
 | Setup / misc | `init`, `uninit`, `import`, `doctor`, `gen-id`, `version` |
 
@@ -153,9 +153,10 @@ local bbolt store and the authority for all search.
 | `record` | spool one record (fsync) + nudge ingest — same durability as the CLI |
 | `query` | search (scope, sort, fuzzy, executor + freeform-tag filter, dedupe, paging) |
 | `hosts` | per-host live-record counts (browse sidebar); warms the remote cache |
-| `tags` | list known user tags with their counts |
+| `tags` | list known user tags with how many commands carry each (scoped) |
 | `delete` | tombstone one record by id (syncs as a tombstone) |
 | `devices` | list enrolled devices (proxied to the syncer) |
+| `tokens` / `revoketk` | list enrollment tokens with their states / cancel an unclaimed one (proxied) |
 | `token` | mint a single-use enrollment token (proxied to the syncer) |
 | `approve` / `revoke` | approve a pending device / revoke+rotate keys |
 | `sync` | force a **synchronous** push/pull cycle (backs `yore sync`) |
@@ -193,9 +194,36 @@ what the top-N callers (Ctrl-R, MCP, headless search) deliberately do not.
 
 `yore browse` (the `hb` alias) is one Bubble Tea program with four screens: the
 tiled **browse** panes, the full-screen **stats** screen (`s`), the **agent
-explorer** (`a`), and **devices** (`D`). `yore stats` and `yore agents` open the
-same program directly on one of those screens; Esc drops through to the browse
-table from either.
+explorer** (`a`), and **devices** (`D`). `yore stats`, `yore agents`, and `yore
+devices` open the same program directly on one of those screens; Esc drops
+through to the browse table from any of them.
+
+Devices are managed *only* there. The view is two stacked panes — **MACHINES**
+over **TOKENS** — with `tab` between them, `z` to zoom either, and every action
+asking first:
+
+| pane | key | effect |
+|---|---|---|
+| machines | `a` | approve a pending machine — the prompt quotes its verification code, so the out-of-band check is in front of the person answering |
+| machines | `x` | revoke it and rotate the group's keys |
+| tokens | `n` | mint an enrollment token, shown once (see below) |
+| tokens | `x` | cancel an unclaimed token |
+
+The CLI had a second implementation of the machine actions (`devices
+approve|revoke` plus a printed list); two code paths for one dangerous operation
+is two sets of confirmation rules to keep honest, so the CLI one is gone. `yore
+devices token` stays, because minting an enrollment credential is something you
+pipe, not something you manage.
+
+**Why tokens are on screen at all.** An open enrollment token admits a machine
+to everything the group can read, and until it was listed nothing told you one
+existed. Each row carries its state — `open`, `claimed` (by which device),
+`expired`, `revoked` — computed by the server so no client re-derives "expired"
+from its own clock. A newly minted token's plaintext is displayed until
+dismissed and held nowhere else: the server kept only `sha256(token)`, so that
+is genuinely the one moment it exists, and it is never written to `ui.toml`, the
+log, or anywhere on disk. Cancelling a token rotates nothing — it let no one in
+— which is what separates it from revoking a device.
 
 **Panes and geometry.** `panes.go` is the single place that decides how the
 screen is carved up: it resolves each view's pane rectangles in absolute screen
@@ -465,23 +493,42 @@ individual invalid regex is skipped with a warning while the rest stay active.
 `yore doctor` reports any built-in the file lacks rather than re-adding it (a
 rule may be absent because it was deliberately deleted).
 
-**Executor tagging.** Each record carries an executor `tag` naming what ran it:
-an explicit `--executor`, else `$YORE_TAG`, else auto-detection from agent env
-markers (`CLAUDECODE`/`CLAUDE_CODE_ENTRYPOINT` → `claude-code`, `CURSOR_TRACE_ID`
-→ `cursor`, `AIDER_MODEL` → `aider`, etc.), else `""` (interactive). `yore
-search --executor claude-code` separates "what I typed" from "what an agent ran".
+**Executors and tags are two different axes**, and yore keeps them apart
+everywhere: an executor is an *attribute* of a record — which agent ran the
+command — captured once from the environment and never edited; a tag is a
+*label* somebody applied, and can be added and removed at will. They were once
+one field (`Record.Tag`, resolved into one merged set), which meant a UI could
+not tell "an agent ran this" from "I called this a refactor", and labelling a
+command hid which agent had run it. They are now separate all the way down to
+the format: the executor is its own `executor` key on disk and in the sealed
+payload, next to the `tag_name`/`tag_desc`/`tag_op` keys a user-tag record uses.
 
-**User tags** are freeform labels, and a record can carry several — the executor
-above is just one *auto-applied* tag. A `tag` record (`Type == "tag"`) adds or
-removes a named label on a command (`target_id`) or a session, and rides the
-same E2E stream as commands: sealed per record, remapped by name on sync (names
-are the identity, so no id reconciliation), server ciphertext-only. The daemon
-folds tag records into an in-RAM index (`command|session → {tags}`, fed by both
-local ingest and remote pull) and resolves each row's **effective tags** at
-query time — executor auto-tag ∪ command tags ∪ session tags ∪ `auto_tags`
-(cwd-prefix rules from config, applied at read time so there is no record-path
-cost and rules apply retroactively). `yore tag add/rm/list/create`; `yore search
---tag <name>` matches any effective tag (so `--tag claude-code` still works).
+**Executor.** Each record names what ran it: an explicit `--executor`, else
+`$YORE_EXECUTOR` (`$YORE_TAG` is the older name and still works), else
+auto-detection from agent env markers (`CLAUDECODE`/`CLAUDE_CODE_ENTRYPOINT` →
+`claude-code`, `CURSOR_TRACE_ID` → `cursor`, `AIDER_MODEL` → `aider`, etc.), else
+`""` (interactive). `yore search --executor claude-code` separates "what I typed"
+from "what an agent ran"; in the browser, `e` filters by the selected row's
+executor and `A` hides agent commands wholesale.
+
+**User tags** are freeform labels, and a record can carry several. A `tag` record
+(`Type == "tag"`) adds or removes a named label on a command (`target_id`) or a
+session, and rides the same E2E stream as commands: sealed per record, remapped
+by name on sync (names are the identity, so no id reconciliation), server
+ciphertext-only. The daemon folds tag records into an in-RAM index
+(`command|session → {tags}`, fed by both local ingest and remote pull) and
+resolves each row's **effective tags** at query time — command tags ∪ session
+tags ∪ `auto_tags` (cwd-prefix rules from config, applied at read time so there
+is no record-path cost and rules apply retroactively). `yore tag
+add/rm/list/create`; `yore search --tag <name>`, or `t` in the browser. Tagging a
+session is the common case: it covers every command that shell has run and every
+one it runs afterwards.
+
+`yore tag list` counts **commands**, not associations — one session tag over a
+day's work reads as that day's work, not as the single `tag add` that created it
+— which means the listing resolves the corpus and so also shows `auto_tags`
+rules. `--scope all` counts every host instead of this one. Executors are never
+listed as tags, and `--tag claude-code` matches nothing.
 
 An agent whose commands run in a *non-interactive* shell (Claude Code's Bash
 tool is `zsh -c …`) is never seen by the rc hooks, so `yore init claude-code`
@@ -842,7 +889,7 @@ be a poor neighbour. Same directory, same 0600, different concern.
 | `ignore_patterns` | — | user regexes whose matching commands are **dropped** (not redacted — this is "never record this", unlike a secret rule, which only costs the command its credential) |
 | `ignore_dirs` | — | cwd prefixes whose commands are never recorded |
 | `record_space_prefixed` | `false` | record leading-space commands too |
-| `auto_tags` | — | cwd-prefix → tag rules (`/work=refactor,…`); tags matching commands at query time |
+| `auto_tags` | — | cwd-prefix → tag rules (`/work=refactor,…`); tags matching commands at query time, and listed by `yore tag list` |
 | `capture_spool_only` | `false` | capture writes to the spool only — never pokes/spawns the daemon; the spool is drained the next time a daemon runs |
 | `backup_interval` | `1h` | local db backup cadence; `"0"` disables |
 | `backup_keep` | `3` | local db backups retained |

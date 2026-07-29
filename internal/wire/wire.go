@@ -50,6 +50,30 @@ type TokenResp struct {
 	ExpiresMs int64  `json:"expires_ms"`
 }
 
+// Token states, as computed by the server so every client agrees on what
+// "expired" means without re-deriving it from its own clock.
+const (
+	TokenOpen    = "open"    // unclaimed, unrevoked, not yet expired — still admits a machine
+	TokenClaimed = "claimed" // a device enrolled on it; ClaimedBy names which
+	TokenExpired = "expired" // its window passed without anyone using it
+	TokenRevoked = "revoked" // cancelled before it was used
+)
+
+// EnrollToken is one enrollment token as listed. ID is the hex of the token's
+// storage key — sha256 of the token, never the token itself, which the server
+// does not keep. Publishing it is safe: enrolling requires presenting the
+// plaintext, which the server hashes, so the id is a handle and not a
+// credential.
+type EnrollToken struct {
+	ID        string `json:"id"`
+	State     string `json:"state"`
+	CreatedMs int64  `json:"created_ms"`
+	ExpiresMs int64  `json:"expires_ms"`
+	ClaimedMs int64  `json:"claimed_ms,omitempty"`
+	ClaimedBy string `json:"claimed_by,omitempty"`
+	RevokedMs int64  `json:"revoked_ms,omitempty"`
+}
+
 // RecoveryInit publishes the recovery keypair derived from the recovery
 // passphrase, plus the History Key sealed to it. Uploaded once at bootstrap.
 type RecoveryInit struct {

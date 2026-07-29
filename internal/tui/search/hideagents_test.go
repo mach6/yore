@@ -24,7 +24,7 @@ func (a *agentQuerier) Query(req proto.QueryReq) (proto.QueryResp, error) {
 
 	var rows []rec.Record
 	hidden := 0
-	for i, s := range []struct{ cmd, tag string }{
+	for i, s := range []struct{ cmd, executor string }{
 		{"git status", ""},
 		{"cargo build", "claude-code"},
 		{"cargo test", "claude-code"},
@@ -33,12 +33,12 @@ func (a *agentQuerier) Query(req proto.QueryReq) (proto.QueryResp, error) {
 		if req.Q != "" && !strings.Contains(s.cmd, req.Q) {
 			continue
 		}
-		if req.HumanOnly && s.tag != "" {
+		if req.HumanOnly && s.executor != "" {
 			hidden++
 			continue
 		}
 		rows = append(rows, rec.Record{
-			ID: strconv.Itoa(i), Cmd: s.cmd, Tag: s.tag, Hostname: "host",
+			ID: strconv.Itoa(i), Cmd: s.cmd, Executor: s.executor, Hostname: "host",
 			StartMs: 1000 - int64(i), Exit: rec.IntPtr(0),
 		})
 	}
@@ -80,7 +80,7 @@ func TestPanelOpensWithoutAgentCommands(t *testing.T) {
 	require.True(t, q.lastReq.HumanOnly, "the filter must be applied server-side")
 	require.Len(t, m.rows, 2)
 	for _, r := range m.rows {
-		require.Emptyf(t, r.Tag, "%q is an agent command", r.Cmd)
+		require.Emptyf(t, r.Executor, "%q is an agent command", r.Cmd)
 	}
 }
 

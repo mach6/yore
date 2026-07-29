@@ -64,7 +64,7 @@ func (p *promptIndex) since(cutoffMs int64, executor string) []rec.Record {
 		if r.StartMs < cutoffMs {
 			continue
 		}
-		if executor != "" && r.Tag != executor {
+		if executor != "" && r.Executor != executor {
 			continue
 		}
 		out = append(out, r)

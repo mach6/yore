@@ -6,11 +6,22 @@ import (
 	"strings"
 
 	"yore/internal/daemon"
+	"yore/internal/proto"
 	"yore/internal/rec"
 )
 
-// runTagList prints every known user tag with its association count.
-func runTagList() int {
+// runTagList prints every known user tag with how many commands carry it. scope
+// bounds the count: "local" (the default) this host, "all" every host.
+func runTagList(scope string) int {
+	switch scope {
+	case "", "local":
+		scope = proto.ScopeLocal
+	case "all":
+		scope = proto.ScopeAll
+	default:
+		fmt.Fprintf(os.Stderr, "yore: unknown scope %q (want local or all)\n", scope)
+		return 2
+	}
 	c, err := daemon.EnsureRunning(stateDir())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "yore: daemon unavailable:", err)
@@ -18,7 +29,7 @@ func runTagList() int {
 	}
 	defer func() { _ = c.Close() }()
 
-	info, err := c.Tags()
+	info, err := c.Tags(scope)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "yore:", err)
 		return 1

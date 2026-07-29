@@ -311,44 +311,45 @@ func (m Model) hostLine(i, w int) string {
 // --- results table ------------------------------------------------------
 
 type colLayout struct {
-	relW, hostW, exitW, durW, tagW, cmdW int
-	showHost, showTag                    bool
+	relW, hostW, exitW, durW, execW, tagW, cmdW int
+	showHost, showExec, showTag                 bool
 }
 
 // colLayout distributes the table content width across fixed columns, dropping
-// optional columns (tag, duration, host, exit) when the terminal is too narrow
-// so the command always keeps room and the row never overflows. The tag column
-// only appears when the result set actually carries tags, and it sheds first so
-// it never crowds out host/exit on a narrow terminal.
+// optional columns (executor, tag, duration, host, exit) when the terminal is
+// too narrow so the command always keeps room and the row never overflows.
+//
+// Executor and tags are two columns, never one. They answer different questions
+// — which agent ran this, versus what did I label it — and merging them meant a
+// user tag competed for cells with "claude-code" on every agent row. Each
+// appears only when a visible row actually carries one. Executor sheds first: it
+// is also in the details pane, the agent explorer, and stats, whereas a user tag
+// is shown nowhere else in the table.
 func (m Model) colLayout() colLayout {
 	w := m.tableWidth
 	showHost := m.hosts[m.hostSel].scope == proto.ScopeAll
-	showTag := m.hasTags
-	relW, exitW, durW, hostW, tagW := 8, 4, 7, 0, 0
+	showExec, showTag := m.hasExec, m.hasTags
+	relW, exitW, durW, hostW, execW, tagW := 8, 4, 7, 0, 0, 0
 	if showHost {
 		hostW = 14
+	}
+	if showExec {
+		execW = 12
 	}
 	if showTag {
 		tagW = 12
 	}
 	prefix := func() int {
 		p := 0
-		if relW > 0 {
-			p += relW + 1
-		}
-		if hostW > 0 {
-			p += hostW + 1
-		}
-		if exitW > 0 {
-			p += exitW + 1
-		}
-		if durW > 0 {
-			p += durW + 1
-		}
-		if tagW > 0 {
-			p += tagW + 1
+		for _, c := range []int{relW, hostW, exitW, durW, execW, tagW} {
+			if c > 0 {
+				p += c + 1
+			}
 		}
 		return p
+	}
+	if prefix()+5 > w {
+		execW, showExec = 0, false
 	}
 	if prefix()+5 > w {
 		tagW, showTag = 0, false
@@ -369,7 +370,10 @@ func (m Model) colLayout() colLayout {
 	if cmdW < 0 {
 		cmdW = 0
 	}
-	return colLayout{relW: relW, hostW: hostW, exitW: exitW, durW: durW, tagW: tagW, cmdW: cmdW, showHost: showHost, showTag: showTag}
+	return colLayout{
+		relW: relW, hostW: hostW, exitW: exitW, durW: durW, execW: execW, tagW: tagW, cmdW: cmdW,
+		showHost: showHost, showExec: showExec, showTag: showTag,
+	}
 }
 
 func (m Model) tableInner(w, h int) string {
@@ -434,6 +438,9 @@ func (m Model) tableHeader(l colLayout, w int) string {
 	}
 	add("exit", l.exitW, true)
 	add("dur", l.durW, false)
+	if l.showExec {
+		add("exec", l.execW, true)
+	}
 	if l.showTag {
 		add("tags", l.tagW, true)
 	}
@@ -469,9 +476,16 @@ func (m Model) renderRow(r rec.Record, l colLayout, q match.Query, selected bool
 		segs = append(segs, styledSeg{text: padLeft(dur, l.durW), style: th.Dim})
 		sep()
 	}
+	if l.showExec {
+		// Metadata, so Dim — the same weight as the host and duration cells, and
+		// deliberately not the accent the user's own tags get. Blank for a command
+		// the user typed.
+		segs = append(segs, styledSeg{text: padRight(truncCols(r.Executor, l.execW), l.execW), style: th.Dim})
+		sep()
+	}
 	if l.showTag {
-		// Tagged cells stand out (accent); interactive rows render blank. Shows
-		// the full effective tag set (executor auto-tag + user tags).
+		// The user's own labels, in the accent: they are the one thing in the row
+		// that is there because somebody put it there.
 		segs = append(segs, styledSeg{text: padRight(truncCols(strings.Join(r.Tags, ","), l.tagW), l.tagW), style: th.Accent})
 		sep()
 	}
@@ -553,8 +567,8 @@ func (m *Model) syncDetail() {
 	meta("Path", dashIfEmpty(r.Cwd))
 	meta("Host", dashIfEmpty(r.Hostname))
 	meta("Session", dashIfEmpty(r.Session))
-	if r.Tag != "" {
-		meta("Executor", r.Tag)
+	if r.Executor != "" {
+		meta("Executor", r.Executor)
 	}
 	if len(r.Tags) > 0 {
 		meta("Tags", strings.Join(r.Tags, ", "))
@@ -625,8 +639,13 @@ func (m Model) statusBar(w int) string {
 			}
 			pieces = append(pieces, th.Accent.Render(label))
 		}
+		// Two filters, named separately: they narrow on different axes and can
+		// both be up at once.
 		if m.executorFilter != "" {
 			pieces = append(pieces, th.Accent.Render("executor: "+m.executorFilter))
+		}
+		if m.tagFilter != "" {
+			pieces = append(pieces, th.Accent.Render("tag: "+m.tagFilter))
 		}
 		// A filter that drops a whole category of history has to say so. Without
 		// this the view is indistinguishable from one where no agent ever ran, and

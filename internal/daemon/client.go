@@ -53,22 +53,23 @@ func Dial(dir string) (*Client, error) {
 // goroutine, so a second connection runs genuinely in parallel.
 //
 // A client with no dir (constructed directly in tests) falls back to the shared
-// connection rather than failing.
-func (c *Client) solo(req proto.Request, deadline time.Duration) (proto.Response, error) {
+// connection rather than failing. Every op routed here reaches the sync server,
+// so they all wait the same syncDeadline.
+func (c *Client) solo(req proto.Request) (proto.Response, error) {
 	if c.dir == "" {
-		return c.roundtrip(req, deadline)
+		return c.roundtrip(req, syncDeadline)
 	}
 	sc, err := Dial(c.dir)
 	if err != nil {
 		return proto.Response{}, err
 	}
 	defer func() { _ = sc.Close() }()
-	return sc.roundtrip(req, deadline)
+	return sc.roundtrip(req, syncDeadline)
 }
 
 // soloOK is solo plus the Response.OK check.
-func (c *Client) soloOK(req proto.Request, deadline time.Duration) error {
-	resp, err := c.solo(req, deadline)
+func (c *Client) soloOK(req proto.Request) error {
+	resp, err := c.solo(req)
 	if err != nil {
 		return err
 	}
@@ -129,9 +130,11 @@ func (c *Client) SubmitRecord(r rec.Record) error {
 	return c.ok(proto.Request{Op: proto.OpRecord, Record: &r})
 }
 
-// Tags lists the known user tags with their counts.
-func (c *Client) Tags() (proto.TagsInfo, error) {
-	resp, err := c.roundtrip(proto.Request{Op: proto.OpTags}, opDeadline)
+// Tags lists the known user tags with how many commands carry each. scope is a
+// proto.Scope* value bounding what is counted; "" counts this host.
+func (c *Client) Tags(scope string) (proto.TagsInfo, error) {
+	req := proto.Request{Op: proto.OpTags, Tags: &proto.TagsReq{Scope: scope}}
+	resp, err := c.roundtrip(req, opDeadline)
 	if err != nil {
 		return proto.TagsInfo{}, err
 	}
@@ -181,7 +184,7 @@ func (c *Client) Delete(id string) error {
 
 // Devices lists enrolled devices (via the daemon's syncer).
 func (c *Client) Devices() (proto.DevicesInfo, error) {
-	resp, err := c.solo(proto.Request{Op: proto.OpDevices}, syncDeadline)
+	resp, err := c.solo(proto.Request{Op: proto.OpDevices})
 	if err != nil {
 		return proto.DevicesInfo{}, err
 	}
@@ -196,17 +199,17 @@ func (c *Client) Devices() (proto.DevicesInfo, error) {
 
 // Approve admits a pending device (wraps the History Key for it).
 func (c *Client) Approve(id string) error {
-	return c.soloOK(proto.Request{Op: proto.OpApprove, DeviceID: id}, syncDeadline)
+	return c.soloOK(proto.Request{Op: proto.OpApprove, DeviceID: id})
 }
 
 // Revoke revokes a device and rotates keys.
 func (c *Client) Revoke(id string) error {
-	return c.soloOK(proto.Request{Op: proto.OpRevoke, DeviceID: id}, syncDeadline)
+	return c.soloOK(proto.Request{Op: proto.OpRevoke, DeviceID: id})
 }
 
 // Token mints a single-use enrollment token for adding another machine.
 func (c *Client) Token() (proto.TokenInfo, error) {
-	resp, err := c.solo(proto.Request{Op: proto.OpToken}, syncDeadline)
+	resp, err := c.solo(proto.Request{Op: proto.OpToken})
 	if err != nil {
 		return proto.TokenInfo{}, err
 	}
@@ -219,9 +222,30 @@ func (c *Client) Token() (proto.TokenInfo, error) {
 	return *resp.Token, nil
 }
 
+// Tokens lists the enrollment tokens the server records, and what became of
+// each. It never carries a token's plaintext — that existed only at mint time.
+func (c *Client) Tokens() (proto.TokensInfo, error) {
+	resp, err := c.solo(proto.Request{Op: proto.OpTokens})
+	if err != nil {
+		return proto.TokensInfo{}, err
+	}
+	if !resp.OK {
+		return proto.TokensInfo{}, respErr(resp)
+	}
+	if resp.Tokens == nil {
+		return proto.TokensInfo{}, errors.New("daemon: tokens response missing body")
+	}
+	return *resp.Tokens, nil
+}
+
+// RevokeToken cancels an unclaimed enrollment token so it can admit no one.
+func (c *Client) RevokeToken(id string) error {
+	return c.soloOK(proto.Request{Op: proto.OpRevokeTk, TokenID: id})
+}
+
 // Sync forces a synchronous push/pull cycle (no-op if sync isn't configured).
 func (c *Client) Sync() error {
-	return c.soloOK(proto.Request{Op: proto.OpSync}, syncDeadline)
+	return c.soloOK(proto.Request{Op: proto.OpSync})
 }
 
 // Shutdown asks the daemon to exit gracefully.

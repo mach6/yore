@@ -27,8 +27,9 @@ const (
 )
 
 // Record is one captured shell command (or tombstone) as spooled, stored,
-// and synced. JSON field names are the wire format for both the spool and
-// the encrypted sync payload — do not rename them.
+// and synced. JSON field names are the wire format for both the spool and the
+// encrypted sync payload: renaming one is a format change, not a code change,
+// and records already written keep the key they were written under.
 type Record struct {
 	ID       string `json:"id"`
 	Type     string `json:"type,omitempty"`
@@ -46,7 +47,13 @@ type Record struct {
 	Exit    *int   `json:"exit,omitempty"`   // nil = unknown (e.g. imported)
 	DurMs   *int64 `json:"dur_ms,omitempty"` // nil = unknown
 	StartMs int64  `json:"start_ms,omitempty"`
-	Tag     string `json:"tag,omitempty"` // executor: agent/tool that ran it (e.g. "claude-code"), "" = interactive
+
+	// Executor is the agent/tool that ran the command ("claude-code", "cursor",
+	// …), empty when the user typed it. It is NOT a tag: it is an attribute of
+	// the record, captured once and never edited, whereas tags are labels the
+	// user puts on and takes off — which is why it has its own key rather than
+	// riding on "tag".
+	Executor string `json:"executor,omitempty"`
 
 	// Prompt tracing. A TypePrompt record carries the prompt text in Prompt and
 	// IS the prompt: its ID is what agent commands reference in PromptID. So the
@@ -70,8 +77,9 @@ type Record struct {
 	TagOp   string `json:"tag_op,omitempty"`
 
 	// Tags is the record's resolved freeform tags, filled by the daemon at query
-	// time (executor auto-tag ∪ command tags ∪ session tags). Never stored or
-	// synced — it is derived on read.
+	// time (command tags ∪ session tags ∪ the cwd-prefix auto_tags rules). The
+	// executor is deliberately not among them. Never stored or synced — it is
+	// derived on read.
 	Tags []string `json:"tags,omitempty"`
 
 	DeletedMs int64  `json:"deleted_ms,omitempty"` // tombstone applied locally

@@ -123,3 +123,29 @@ func FuzzRecordUnmarshal(f *testing.F) {
 		_ = json.Unmarshal(data, &r)
 	})
 }
+
+// TestExecutorHasItsOwnKey pins the format apart from the user-tag fields. The
+// executor once rode on "tag", the same key user tags are named by, and every
+// consumer downstream inherited the ambiguity. The keys are the contract, so
+// they are asserted here rather than left to whatever the struct tags happen to
+// say.
+func TestExecutorHasItsOwnKey(t *testing.T) {
+	b, err := json.Marshal(Record{ID: "x", Cmd: "go test", Executor: "claude-code"})
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"executor":"claude-code"`)
+	assert.NotContains(t, string(b), `"tag"`, "the executor must not be written under a tag key")
+
+	// A user-tag record uses the tag_* keys and carries no executor.
+	b, err = json.Marshal(Record{ID: "y", Type: TypeTag, TagName: "refactor", TargetID: "x"})
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"tag_name":"refactor"`)
+	assert.NotContains(t, string(b), `"executor"`)
+
+	// And the two survive together on one decode.
+	var got Record
+	require.NoError(t, json.Unmarshal([]byte(
+		`{"id":"z","cmd":"make","executor":"cursor","tag_name":"wip","tag_op":"remove"}`), &got))
+	assert.Equal(t, "cursor", got.Executor)
+	assert.Equal(t, "wip", got.TagName)
+	assert.Equal(t, TagOpRemove, got.TagOp)
+}

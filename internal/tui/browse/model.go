@@ -31,6 +31,9 @@ type Backend interface {
 	Devices() (proto.DevicesInfo, error)
 	Approve(id string) error
 	Revoke(id string) error
+	Tokens() (proto.TokensInfo, error)
+	Token() (proto.TokenInfo, error)
+	RevokeToken(id string) error
 	Sync() error
 }
 
@@ -65,9 +68,10 @@ type Options struct {
 type StartView string
 
 const (
-	StartBrowse StartView = ""       // the command table (the default)
-	StartStats  StartView = "stats"  // the full-screen stats screen
-	StartAgents StartView = "agents" // the agent explorer
+	StartBrowse  StartView = ""        // the command table (the default)
+	StartStats   StartView = "stats"   // the full-screen stats screen
+	StartAgents  StartView = "agents"  // the agent explorer
+	StartDevices StartView = "devices" // the enrolled-device pane
 )
 
 // Tunables.
@@ -170,7 +174,8 @@ type Model struct {
 	remote    proto.RemoteInfo
 	lastErr   error
 	gotResult bool
-	hasTags   bool // any current row carries a Tag (gates the tag column)
+	hasExec   bool // any current row was run by an executor (gates the exec column)
+	hasTags   bool // any current row carries a user tag (gates the tags column)
 
 	// hideAgents keeps agent-run commands out of the table (the A key). hidden
 	// is how many the daemon dropped for the current query — the number the
@@ -225,18 +230,37 @@ type Model struct {
 	confirmDelete  bool
 	showHelp       bool   // ?: the key panel, over whichever view is beneath it
 	helpTop        int    // first visible row of that panel, when it overflows
-	executorFilter string // active executor-tag filter (the t key); "" = no filter
+	executorFilter string // active executor filter (the e key); "" = no filter
+	tagFilter      string // active user-tag filter (the t key); "" = no filter
 	flash          string
 	flashID        int
 	quitting       bool
 	accepted       string // command the user chose with enter; read by Run on exit
 
-	// devices pane
+	// devices view: the enrolled machines over the enrollment tokens.
 	devices    []proto.DeviceInfo
 	devSel     int
 	devErr     error
 	gotDevices bool
-	devConfirm string // pending "revoke <id>" awaiting y/n; "" = none
+	dpane      devPane // which of the two panes has focus
+	tokens     []proto.EnrollToken
+	tokSel     int
+	gotTokens  bool
+	// minted is a token this session just created, held only so it can be read
+	// off the screen. The server keeps a hash, so this is the one moment the
+	// plaintext exists — and it goes nowhere but here: not to ui.toml, not to
+	// the log, not to disk.
+	minted     string
+	mintedTill int64 // expiry of that token, unix ms
+	// devConfirm is the id of an action awaiting y/n ("" = none); devApproving
+	// and devConfirmKind say which action, on which kind of thing. Every action
+	// here asks first: revoking a device rotates the group's keys, revoking a
+	// token cannot be undone, and approving admits a machine to everything the
+	// group can read — which is only safe if the verification code on screen is
+	// checked against the one that machine is showing.
+	devConfirm     string
+	devApproving   bool
+	devConfirmKind devPane // whether devConfirm names a device or a token
 
 	// query sequencing
 	seq        uint64
@@ -335,6 +359,8 @@ func NewModel(b Backend, opts Options) Model {
 		m.view = viewStats
 	case StartAgents:
 		m.view = viewAgents
+	case StartDevices:
+		m.view = viewDevices
 	}
 	m.applyLayout()
 	return m
@@ -365,6 +391,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if mm.needsStatsSample() {
 			mm.statsSeq++
 			cmds = append(cmds, mm.statsCmd(mm.statsSeq))
+		}
+		// Same for `yore devices`: the D key fetches both lists on the way in, so
+		// landing on that view directly has to fetch them too or it opens on
+		// "loading…" and stays there.
+		// Appended individually rather than as one batch: Init's own return is
+		// already a tea.Batch, and nesting one inside it buys nothing.
+		if mm.view == viewDevices {
+			cmds = append(cmds, mm.devicesCmd(), mm.tokensCmd())
 		}
 		return mm, tea.Batch(cmds...)
 
@@ -404,6 +438,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.devSel = 0
 		}
 		return m, nil
+
+	case tokensResultMsg:
+		m.gotTokens = true
+		if msg.err != nil {
+			m.devErr = msg.err // one error line for the view; the panes share it
+		}
+		m.tokens = msg.info.Tokens
+		if m.tokSel >= len(m.tokens) {
+			m.tokSel = 0
+		}
+		return m, nil
+
+	case mintedMsg:
+		if msg.err != nil {
+			m.devErr = msg.err
+			return m, nil
+		}
+		// Held for display only, and only until dismissed. A refetch follows so
+		// the new token appears in the list beneath it as "open".
+		m.minted, m.mintedTill = msg.info.Token, msg.info.ExpiresMs
+		return m, m.tokensCmd()
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -586,10 +641,11 @@ func (m Model) buildReq() proto.QueryReq {
 		Scope:    it.scope,
 		Host:     it.host,
 		Executor: m.executorFilter,
+		Tag:      m.tagFilter,
 		Limit:    proto.LimitAll,
 		Dedupe:   false, // browse shows the real timeline, newest first
 		// Asking for one executor is asking for agent commands, so the two
-		// filters cannot both apply — t wins over A while it is set.
+		// filters cannot both apply — e wins over A while it is set.
 		HumanOnly: m.hideAgents && m.executorFilter == "",
 	}
 	return req
@@ -696,8 +752,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.syncNow()
 	case "D":
 		m.view = viewDevices
-		m.devConfirm = ""
-		return m, m.devicesCmd()
+		m.devConfirm, m.dpane, m.zoom = "", dpDevices, false
+		m.applyLayout()
+		return m, m.refreshDevicesCmd()
 	}
 
 	// The agent explorer is interactive (four focusable panes), so it owns its
@@ -725,6 +782,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.ti.Focus()
 		return m, nil
 	case "t":
+		return m.toggleTagFilter()
+	case "e":
 		return m.toggleExecutorFilter()
 	case "A":
 		return m.toggleHideAgents()
@@ -901,10 +960,11 @@ func (m *Model) applyPeriodFilter() {
 		}
 		m.rows, m.total = kept, len(kept)
 	}
-	m.hasTags = false
+	m.hasExec, m.hasTags = false, false
 	for _, r := range m.rows {
-		if len(r.Tags) > 0 {
-			m.hasTags = true
+		m.hasExec = m.hasExec || r.Executor != ""
+		m.hasTags = m.hasTags || len(r.Tags) > 0
+		if m.hasExec && m.hasTags {
 			break
 		}
 	}
@@ -968,27 +1028,53 @@ func (m Model) toggleHideAgents() (tea.Model, tea.Cmd) {
 	return m, tea.Batch(q, flashTick(m.flashID))
 }
 
-// toggleExecutorFilter flips the executor-tag filter (the t key). With a filter
-// active it clears it; otherwise it adopts the selected row's Tag if it has one
-// (flashing "no tag" and doing nothing when it doesn't). Either change re-issues
-// the query and flashes the new state.
+// toggleExecutorFilter flips the executor filter (the e key). With a filter
+// active it clears it; otherwise it adopts the selected row's executor if it has
+// one (flashing and doing nothing when the user typed the command). Either
+// change re-issues the query and flashes the new state.
 func (m Model) toggleExecutorFilter() (tea.Model, tea.Cmd) {
 	if m.executorFilter != "" {
 		m.executorFilter = ""
-		m.flash = "executor filter cleared"
-	} else {
-		r, ok := m.selected()
-		if !ok || r.Tag == "" {
-			m.flash = "no tag"
-			m.flashID++
-			return m, flashTick(m.flashID)
-		}
-		m.executorFilter = r.Tag
-		m.flash = "executor: " + r.Tag
+		return m.afterFilterChange("executor filter cleared")
 	}
+	r, ok := m.selected()
+	if !ok || r.Executor == "" {
+		return m.flashOnly("no executor on this row")
+	}
+	m.executorFilter = r.Executor
+	return m.afterFilterChange("executor: " + r.Executor)
+}
+
+// toggleTagFilter flips the user-tag filter (the t key), the mirror of e for the
+// other axis: with one active it clears it, otherwise it adopts the selected
+// row's first tag. Executors are not tags, so a row an agent ran but nobody
+// labelled has nothing to adopt here.
+func (m Model) toggleTagFilter() (tea.Model, tea.Cmd) {
+	if m.tagFilter != "" {
+		m.tagFilter = ""
+		return m.afterFilterChange("tag filter cleared")
+	}
+	r, ok := m.selected()
+	if !ok || len(r.Tags) == 0 {
+		return m.flashOnly("no tags on this row — ^t adds one")
+	}
+	m.tagFilter = r.Tags[0]
+	return m.afterFilterChange("tag: " + r.Tags[0])
+}
+
+// afterFilterChange re-issues the query and flashes what changed.
+func (m Model) afterFilterChange(msg string) (tea.Model, tea.Cmd) {
+	m.flash = msg
 	m.flashID++
 	mm, qcmd := m.issueQuery()
 	return mm, tea.Batch(qcmd, flashTick(mm.flashID))
+}
+
+// flashOnly says why nothing happened, without spending a query on it.
+func (m Model) flashOnly(msg string) (tea.Model, tea.Cmd) {
+	m.flash = msg
+	m.flashID++
+	return m, flashTick(m.flashID)
 }
 
 // recomputeStats re-derives the stats, agent, and prompt aggregates from the
@@ -1786,6 +1872,8 @@ func (m *Model) applyGeometry(w, mid int) {
 		switch m.view {
 		case viewAgents:
 			g.p[m.apane] = full
+		case viewDevices:
+			g.p[m.dpane] = full
 		default:
 			g.p[m.focus] = full
 		}
@@ -1797,6 +1885,9 @@ func (m *Model) applyGeometry(w, mid int) {
 		lw := splitAt(m.splits.AgentLeft, w, minPaneCols, w*defaultAgentLeftRatio/ratioFull)
 		topH := splitAt(m.splits.AgentTop, mid, minPaneRows, mid*defaultAgentTopRatio/ratioFull)
 		m.geo = agentGeom(w, mid, lw, topH)
+	case viewDevices:
+		topH := splitAt(m.splits.DevicesTop, mid, minPaneRows, mid*defaultDevicesTopRatio/ratioFull)
+		m.geo = devicesGeom(w, mid, topH)
 	default:
 		m.geo = browseGeom(w, mid, m.leftW, m.tableOuterH)
 	}

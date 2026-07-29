@@ -25,7 +25,7 @@ func (a *agentBackend) Query(req proto.QueryReq) (proto.QueryResp, error) {
 
 	var rows []rec.Record
 	hidden := 0
-	for i, s := range []struct{ cmd, tag string }{
+	for i, s := range []struct{ cmd, executor string }{
 		{"git status", ""},
 		{"cargo build", "claude-code"},
 		{"cargo test", "claude-code"},
@@ -35,12 +35,12 @@ func (a *agentBackend) Query(req proto.QueryReq) (proto.QueryResp, error) {
 		if req.Q != "" && !strings.Contains(s.cmd, req.Q) {
 			continue
 		}
-		if req.HumanOnly && s.tag != "" {
+		if req.HumanOnly && s.executor != "" {
 			hidden++
 			continue
 		}
 		rows = append(rows, rec.Record{
-			ID: strconv.Itoa(i), Cmd: s.cmd, Tag: s.tag, Hostname: "host", Cwd: "/w",
+			ID: strconv.Itoa(i), Cmd: s.cmd, Executor: s.executor, Hostname: "host", Cwd: "/w",
 			StartMs: now - int64(i)*60_000, Exit: rec.IntPtr(0),
 		})
 	}
@@ -78,7 +78,7 @@ func TestBrowseOpensWithoutAgentCommands(t *testing.T) {
 	require.True(t, f.lastHumanOnly, "the filter must be applied server-side")
 	require.Len(t, m.rows, 2, "only the commands the user typed")
 	for _, r := range m.rows {
-		require.Emptyf(t, r.Tag, "%q is an agent command", r.Cmd)
+		require.Emptyf(t, r.Executor, "%q is an agent command", r.Cmd)
 	}
 }
 

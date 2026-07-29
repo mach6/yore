@@ -188,8 +188,34 @@ signature, or an unknown/redeemed/expired token), `409` (id already registered).
 ### `POST /v1/tokens` — mint an enrollment token *(signed)*
 → `200 wire.TokenResp` `{token, expires_ms}`. Valid **30 minutes**, single-use.
 The plaintext is returned exactly once; the server stores only
-`sha256("yore/token/v1|" ‖ token)`, so a database read yields no usable token.
-Redeemed and expired entries are pruned on each mint.
+`sha256("yore/token/v1|" ‖ token)`, so a database read yields no usable token —
+and so a token can never be shown again after the moment it was minted.
+
+The stored record is `{created_ms, expires_ms, claimed_ms, claimed_by,
+revoked_ms}`. `claimed_by` is the id of the device that enrolled on it, stamped
+in the same transaction as the registration (which is what keeps redemption
+single-use). Retention, applied on each mint: an **unclaimed** token is deleted
+7 days after it expires; a **claimed** one is kept, because "which token
+admitted this machine" should outlive the half hour the token was good for.
+
+### `GET /v1/tokens` — list enrollment tokens *(signed)*
+→ `200 [wire.EnrollToken, …]`, newest first. `EnrollToken` = `{id, state,
+created_ms, expires_ms, claimed_ms, claimed_by, revoked_ms}`. `id` is the hex of
+the stored hash — safe to publish, since enrolling requires presenting the
+plaintext, which the server hashes; the id is a handle, not a credential.
+`state` ∈ `open|claimed|expired|revoked`, computed **server-side** so every
+client agrees on what "expired" means without consulting its own clock. Claimed
+and revoked are terminal and outrank expiry.
+
+An open token is a standing invitation into the group, which is why this is
+readable at all — and why it is signed rather than bearer-token-only.
+
+### `POST /v1/tokens/{id}/revoke` — cancel an unused token *(signed)*
+→ `204`. Idempotent. `400` for a malformed id, `404` if unknown, `409` if it was
+already claimed — revoking then would say something untrue about how that
+machine got in and take nothing away from it. Unlike device revocation this
+rotates **nothing**: the token admitted no one, so there is no key a holder
+could already have read with.
 
 ### `GET /v1/devices` — list
 → `200 [wire.Device, …]` (all statuses), sorted by id. `Device` =
@@ -357,11 +383,14 @@ generation. `epoch` is unix millis of the epoch start.
 
 ## Per-record seal
 
-Each record's plaintext is the JSON of its meaningful fields — `{v:1, id,
-host_id, hostname, session, cmd, cwd, exit, dur_ms, start_ms, tag, type,
+Each record's plaintext is the JSON of its meaningful fields — `{v:2, id,
+host_id, hostname, session, cmd, cwd, exit, dur_ms, start_ms, executor, type,
 target_id, prompt_id, prompt, tag_name, tag_desc, tag_op}` — so **everything,
-including the hostname, travels encrypted**. (`tag` is the executor auto-tag;
-`tag_name`/`tag_desc`/`tag_op` carry a user-tag record when `type == "tag"`.)
+including the hostname, travels encrypted**. (`executor` is the agent that ran
+the command; `tag_name`/`tag_desc`/`tag_op` carry a *user*-tag record when `type
+== "tag"`. Two different things, two sets of keys — see
+[architecture](architecture.md). `v` was 1 while the executor shared the `tag`
+key; pre-1.0, nothing reads the old shape.)
 
 `type` selects what a record *is*: `""` a captured command, `"delete"` a
 tombstone naming its victim in `target_id`, `"tag"` a user-tag op, and
@@ -479,7 +508,9 @@ never touches the network and is unrelated to the HTTP API above.
 | `q` | query string |
 | `scope` | `local`(default) \| `all` \| `host` \| `session` \| `cwd` \| `workspace` |
 | `host` / `session` / `cwd` | selector for the host/session/cwd scopes |
-| `tag` | executor filter (e.g. `claude-code`); `""` = any |
+| `executor` | which agent ran it (e.g. `claude-code`); `""` = any |
+| `human_only` | drop everything an agent ran; `hidden_agents` reports how many went |
+| `tag` | a user tag the row carries (a label, never an executor name); `""` = any |
 | `sort` | `""` = recency (newest first) \| `frecency` (implies dedupe) |
 | `fuzzy` | subsequence matching instead of substring |
 | `limit` | `0` = daemon default (200) |
@@ -501,10 +532,12 @@ and so appears in no row.
 | `record` | `record` | `ok` (spools + fsyncs, nudges ingest) |
 | `query` | `query` | `query` (`QueryResp`) |
 | `hosts` | — | `hosts` (`HostsInfo`) |
-| `tags` | — | `tags` (`TagsInfo`: known user tags + counts) |
+| `tags` | `tags` (`TagsReq`: `scope`, `""` = local) | `tags` (`TagsInfo`: known user tags, each with how many commands in scope carry it) |
 | `delete` | `delete_id` | `ok` |
 | `devices` | — | `devices` (`DevicesInfo`) |
 | `token` | — | `token` (`TokenInfo`: a single-use enrollment token) |
+| `tokens` | — | `tokens_list` (`TokensInfo`: every token and what became of it) |
+| `revoketk` | `token_id` | `ok` (cancels an unclaimed token; rotates nothing) |
 | `approve` | `device_id` | `ok` |
 | `revoke` | `device_id` | `ok` (revoke + key rotation) |
 | `sync` | — | `ok` (runs a full synchronous push/pull cycle) |

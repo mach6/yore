@@ -52,7 +52,7 @@ func TestRunHookCursorCaptures(t *testing.T) {
 	require.Len(t, rows, 1)
 	got := rows[0]
 	assert.Equal(t, "cargo test", got.Cmd)
-	assert.Equal(t, agentCursor, got.Tag)
+	assert.Equal(t, agentCursor, got.Executor)
 	assert.Equal(t, "cursor-conv-1", got.Session, "session is prefixed with the conversation id")
 	assert.Equal(t, "/work/proj", got.Cwd, "cwd falls back to the first workspace root")
 	require.NotNil(t, got.DurMs)

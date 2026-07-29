@@ -23,6 +23,8 @@ const (
 	OpApprove  = "approve"  // approve a pending device (DeviceID)
 	OpRevoke   = "revoke"   // revoke a device and rotate keys (DeviceID)
 	OpToken    = "token"    // mint a single-use enrollment token
+	OpTokens   = "tokens"   // list enrollment tokens and what became of them
+	OpRevokeTk = "revoketk" // cancel an unclaimed enrollment token (TokenID)
 	OpStatus   = "status"   // daemon status
 	OpSync     = "sync"     // force a push/pull cycle now
 	OpTags     = "tags"     // list known user tags with counts
@@ -55,8 +57,18 @@ type Request struct {
 	Op       string      `json:"op"`
 	Record   *rec.Record `json:"record,omitempty"`
 	Query    *QueryReq   `json:"query,omitempty"`
+	Tags     *TagsReq    `json:"tags,omitempty"`      // OpTags parameters
 	DeleteID string      `json:"delete_id,omitempty"` // OpDelete target
 	DeviceID string      `json:"device_id,omitempty"` // OpApprove / OpRevoke target
+	TokenID  string      `json:"token_id,omitempty"`  // OpRevokeTk target
+}
+
+// TagsReq parameterizes OpTags. Scope decides which commands the counts are
+// taken over: ScopeLocal (the default) this host, ScopeAll every host in the
+// RAM remote cache. Tags themselves are group-wide either way — the scope is
+// about how much history is being counted, not which labels exist.
+type TagsReq struct {
+	Scope string `json:"scope,omitempty"`
 }
 
 type QueryReq struct {
@@ -167,16 +179,47 @@ type TokenInfo struct {
 	ExpiresMs int64  `json:"expires_ms"`
 }
 
-// TagCount is one known user tag with how many commands/sessions carry it.
+// Token states, mirroring the server's (wire.Token*). The browser reads proto
+// and never imports wire, so the names live in both places.
+const (
+	TokenOpen    = "open"
+	TokenClaimed = "claimed"
+	TokenExpired = "expired"
+	TokenRevoked = "revoked"
+)
+
+// EnrollToken is one enrollment token as listed in the devices view. ID is the
+// hex of its hash, not the token — the server keeps no plaintext, so a token
+// can never be shown again after the moment it was minted.
+type EnrollToken struct {
+	ID        string `json:"id"`
+	State     string `json:"state"`
+	CreatedMs int64  `json:"created_ms"`
+	ExpiresMs int64  `json:"expires_ms"`
+	ClaimedMs int64  `json:"claimed_ms,omitempty"`
+	ClaimedBy string `json:"claimed_by,omitempty"` // device id that enrolled on it
+	RevokedMs int64  `json:"revoked_ms,omitempty"`
+}
+
+// TokensInfo answers OpTokens.
+type TokensInfo struct {
+	Tokens []EnrollToken `json:"tokens"`
+}
+
+// TagCount is one known user tag and how many commands carry it within the
+// requested scope. Zero is a real answer: the tag is defined (a bare
+// `tag create`, or an auto_tags rule) and nothing currently matches it.
 type TagCount struct {
 	Name  string `json:"name"`
 	Desc  string `json:"desc,omitempty"`
 	Count int    `json:"count"`
 }
 
-// TagsInfo answers OpTags: every known user tag, name-sorted.
+// TagsInfo answers OpTags: every known user tag, name-sorted, with the scope the
+// counts were taken over echoed back so the caller can say what it counted.
 type TagsInfo struct {
-	Tags []TagCount `json:"tags"`
+	Tags  []TagCount `json:"tags"`
+	Scope string     `json:"scope,omitempty"`
 }
 
 type Response struct {
@@ -186,6 +229,7 @@ type Response struct {
 	Hosts   *HostsInfo   `json:"hosts,omitempty"`
 	Devices *DevicesInfo `json:"devices,omitempty"`
 	Token   *TokenInfo   `json:"token,omitempty"`
+	Tokens  *TokensInfo  `json:"tokens_list,omitempty"`
 	Status  *StatusResp  `json:"status,omitempty"`
 	Tags    *TagsInfo    `json:"tags,omitempty"`
 }

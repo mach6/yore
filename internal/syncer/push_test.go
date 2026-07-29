@@ -102,8 +102,8 @@ func TestSyncPromptsOff(t *testing.T) {
 	a, aStore, b, _ := enrollPair(t, url)
 	a.SetSyncPrompts(false)
 
-	prompt := rec.Record{ID: rec.NewID(), Type: rec.TypePrompt, Prompt: "secret plan", Tag: "claude-code", StartMs: 1_700_000_000_000}
-	cmd := rec.Record{ID: rec.NewID(), Cmd: "make", PromptID: prompt.ID, Tag: "claude-code", StartMs: 1_700_000_000_001}
+	prompt := rec.Record{ID: rec.NewID(), Type: rec.TypePrompt, Prompt: "secret plan", Executor: "claude-code", StartMs: 1_700_000_000_000}
+	cmd := rec.Record{ID: rec.NewID(), Cmd: "make", PromptID: prompt.ID, Executor: "claude-code", StartMs: 1_700_000_000_001}
 	_, err := aStore.AppendBatch([]rec.Record{prompt, cmd})
 	require.NoError(t, err)
 

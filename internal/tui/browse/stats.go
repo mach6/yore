@@ -246,11 +246,11 @@ func computeStats(rows []rec.Record, total int, now int64, periodDays int) *stat
 		if r.Cwd != "" {
 			dirs[r.Cwd]++
 		}
-		execs[executorLabel(r.Tag)]++
+		execs[executorLabel(r.Executor)]++
 		if r.Hostname != "" {
 			hosts[r.Hostname]++
 		}
-		if r.Tag != "" {
+		if r.Executor != "" {
 			s.agentPS++
 		}
 		if r.Exit != nil {

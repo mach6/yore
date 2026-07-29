@@ -10,7 +10,7 @@ import (
 )
 
 func promptRec(id, text string) rec.Record {
-	return rec.Record{ID: id, Type: rec.TypePrompt, Prompt: text, Tag: "claude-code", StartMs: 1000}
+	return rec.Record{ID: id, Type: rec.TypePrompt, Prompt: text, Executor: "claude-code", StartMs: 1000}
 }
 
 // promptText resolves one id through hydrate — the index's only production read
@@ -63,9 +63,9 @@ func TestHydrateOverwritesStaleText(t *testing.T) {
 // a period, optionally for one executor, newest first.
 func TestSinceWindowsAndFilters(t *testing.T) {
 	p := newPromptIndex()
-	p.apply(rec.Record{ID: "old", Type: rec.TypePrompt, Prompt: "old", Tag: "claude-code", StartMs: 100})
-	p.apply(rec.Record{ID: "new", Type: rec.TypePrompt, Prompt: "new", Tag: "claude-code", StartMs: 900})
-	p.apply(rec.Record{ID: "other", Type: rec.TypePrompt, Prompt: "other", Tag: "codex", StartMs: 800})
+	p.apply(rec.Record{ID: "old", Type: rec.TypePrompt, Prompt: "old", Executor: "claude-code", StartMs: 100})
+	p.apply(rec.Record{ID: "new", Type: rec.TypePrompt, Prompt: "new", Executor: "claude-code", StartMs: 900})
+	p.apply(rec.Record{ID: "other", Type: rec.TypePrompt, Prompt: "other", Executor: "codex", StartMs: 800})
 
 	all := p.since(0, "")
 	require.Len(t, all, 3)
@@ -77,7 +77,7 @@ func TestSinceWindowsAndFilters(t *testing.T) {
 	claude := p.since(0, "claude-code")
 	require.Len(t, claude, 2)
 	for _, r := range claude {
-		assert.Equal(t, "claude-code", r.Tag)
+		assert.Equal(t, "claude-code", r.Executor)
 	}
 }
 

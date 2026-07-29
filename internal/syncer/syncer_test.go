@@ -3,6 +3,7 @@ package syncer
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"testing"
@@ -440,4 +441,30 @@ func TestRecoverWrongPhraseFails(t *testing.T) {
 	require.NoError(t, err, "wrong phrase")
 	_, _, err = RecoverHK(ctx, NewHTTPClient(url, ""), wrong)
 	require.Error(t, err, "a wrong recovery phrase must not recover the History Key")
+}
+
+// TestSealedPayloadKeysExecutorSeparately pins the sealed plaintext's shape.
+// The executor and a user tag are different facts about a record and travel
+// under different keys; sharing "tag" is what made them indistinguishable to
+// everything that read a record back.
+func TestSealedPayloadKeysExecutorSeparately(t *testing.T) {
+	pt, err := marshalPayload(rec.Record{
+		ID: "r1", Cmd: "go test", Executor: "claude-code",
+		Type: rec.TypeTag, TagName: "refactor", TagOp: rec.TagOpRemove,
+	})
+	require.NoError(t, err, "marshalPayload")
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(pt, &raw))
+	require.Equal(t, "claude-code", raw["executor"])
+	require.Equal(t, "refactor", raw["tag_name"])
+	require.NotContains(t, raw, "tag", "the executor must not ride on the tag key")
+	require.EqualValues(t, 2, raw["v"], "a changed payload shape gets a new version")
+
+	// And it comes back as what went in.
+	got, err := recordFromPayload(pt, "host-1", 7, "k1")
+	require.NoError(t, err, "recordFromPayload")
+	require.Equal(t, "claude-code", got.Executor)
+	require.Equal(t, "refactor", got.TagName)
+	require.Equal(t, rec.TagOpRemove, got.TagOp)
 }

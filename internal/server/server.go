@@ -100,13 +100,41 @@ const hdrToken = "X-Yore-Token"
 // tokenTTL bounds how long a minted enrollment token stays usable.
 const tokenTTL = 30 * time.Minute
 
-// storedToken is one minted enrollment token. Only the hash of the token is
-// a key in the bucket, so the server never holds a usable token at rest.
+// tokenKeep is how long an unclaimed token is kept past its expiry so it can
+// still be listed. A claimed one is never pruned: it is the record of an
+// enrollment, and "which token admitted this machine" stops being answerable
+// the moment it is thrown away.
+const tokenKeep = 7 * 24 * time.Hour
+
+// storedToken is one minted enrollment token. Only the hash of the token is a
+// key in the bucket, so the server never holds a usable token at rest — which
+// is also why a token can never be shown again after it is minted.
 type storedToken struct {
-	CreatedMs int64 `json:"created_ms"`
-	ExpiresMs int64 `json:"expires_ms"`
-	Redeemed  bool  `json:"redeemed"`
+	CreatedMs int64  `json:"created_ms"`
+	ExpiresMs int64  `json:"expires_ms"`
+	ClaimedMs int64  `json:"claimed_ms,omitempty"` // 0 = never claimed
+	ClaimedBy string `json:"claimed_by,omitempty"` // device id that enrolled on it
+	RevokedMs int64  `json:"revoked_ms,omitempty"` // 0 = not revoked
 }
+
+// state classifies a token for display. Claimed and revoked are terminal and
+// outrank expiry: a token that was used at minute 2 reads "claimed" forever,
+// not "expired" from minute 30.
+func (st storedToken) state(now time.Time) string {
+	switch {
+	case st.ClaimedMs != 0:
+		return wire.TokenClaimed
+	case st.RevokedMs != 0:
+		return wire.TokenRevoked
+	case now.UnixMilli() >= st.ExpiresMs:
+		return wire.TokenExpired
+	default:
+		return wire.TokenOpen
+	}
+}
+
+// usable reports whether this token may still admit a machine.
+func (st storedToken) usable(now time.Time) bool { return st.state(now) == wire.TokenOpen }
 
 // hashToken maps a token to its storage key.
 func hashToken(token string) []byte {
@@ -114,41 +142,44 @@ func hashToken(token string) []byte {
 	return sum[:]
 }
 
-// tokenValid reports whether sum names a token that is stored, unredeemed,
-// and unexpired.
-func tokenValid(tx *bbolt.Tx, sum []byte, now time.Time) bool {
+// loadToken reads one stored token by its bucket key.
+func loadToken(tx *bbolt.Tx, sum []byte) (storedToken, bool) {
 	raw := tx.Bucket(bucketTokens).Get(sum)
 	if raw == nil {
-		return false
+		return storedToken{}, false
 	}
 	var st storedToken
 	if json.Unmarshal(raw, &st) != nil {
-		return false
+		return storedToken{}, false
 	}
-	return !st.Redeemed && now.UnixMilli() < st.ExpiresMs
+	return st, true
 }
 
-// redeemToken marks a token used. Redemption is single-use and happens in the
-// same transaction as the device registration it authorizes, so two devices can
-// never enroll on one token.
-func redeemToken(tx *bbolt.Tx, sum []byte, now time.Time) error {
-	raw := tx.Bucket(bucketTokens).Get(sum)
-	if raw == nil {
-		return fail(http.StatusUnauthorized, "unauthorized")
-	}
-	var st storedToken
-	if err := json.Unmarshal(raw, &st); err != nil {
-		return err
-	}
-	if st.Redeemed || now.UnixMilli() >= st.ExpiresMs {
-		return fail(http.StatusUnauthorized, "unauthorized")
-	}
-	st.Redeemed = true
+// putToken writes one stored token back under its bucket key.
+func putToken(tx *bbolt.Tx, sum []byte, st storedToken) error {
 	val, err := json.Marshal(st)
 	if err != nil {
 		return err
 	}
 	return tx.Bucket(bucketTokens).Put(sum, val)
+}
+
+// tokenValid reports whether sum names a token that may still be used.
+func tokenValid(tx *bbolt.Tx, sum []byte, now time.Time) bool {
+	st, ok := loadToken(tx, sum)
+	return ok && st.usable(now)
+}
+
+// redeemToken marks a token claimed by the device enrolling on it. Redemption
+// is single-use and happens in the same transaction as the device registration
+// it authorizes, so two devices can never enroll on one token.
+func redeemToken(tx *bbolt.Tx, sum []byte, now time.Time, deviceID string) error {
+	st, ok := loadToken(tx, sum)
+	if !ok || !st.usable(now) {
+		return fail(http.StatusUnauthorized, "unauthorized")
+	}
+	st.ClaimedMs, st.ClaimedBy = now.UnixMilli(), deviceID
+	return putToken(tx, sum, st)
 }
 
 // Server is an open sync server. Each tenant has its own bbolt file; the bearer
@@ -483,6 +514,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/keys/dek", s.handlePostDEK)
 	mux.HandleFunc("POST /v1/keys/rotate", s.handleRotate)
 	mux.HandleFunc("POST /v1/tokens", s.handleMintToken)
+	mux.HandleFunc("GET /v1/tokens", s.signed(s.handleListTokens))
+	mux.HandleFunc("POST /v1/tokens/{id}/revoke", s.signed(s.handleRevokeToken))
 
 	// Recovery runs when no device survives to authenticate. The salt is public
 	// (it is an Argon2id input, not a secret) and must be readable before the

@@ -348,8 +348,8 @@ func TestHumanOnlyFilter(t *testing.T) {
 	dir := t.TempDir()
 	seed(t, dir, []rec.Record{
 		{ID: "h1", Cmd: "git status", StartMs: 1000},
-		{ID: "a1", Cmd: "git add -A", Tag: "claude-code", StartMs: 2000},
-		{ID: "a2", Cmd: "git commit", Tag: "devin", StartMs: 3000},
+		{ID: "a1", Cmd: "git add -A", Executor: "claude-code", StartMs: 2000},
+		{ID: "a2", Cmd: "git commit", Executor: "devin", StartMs: 3000},
 		{ID: "h2", Cmd: "git push", StartMs: 4000},
 	})
 	c, _ := startDaemon(t, dir, 30*time.Second)
@@ -371,4 +371,66 @@ func TestHumanOnlyFilter(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, none.Rows, "the only match was an agent's")
 	assert.Equal(t, 1, none.HiddenAgents, "so the caller can say the match exists")
+}
+
+// TestTagAndExecutorAreDifferentFilters is the split, end to end through the
+// socket: --tag asks about labels the user applied, --executor asks which agent
+// ran the command, and neither answers the other's question.
+func TestTagAndExecutorAreDifferentFilters(t *testing.T) {
+	dir := t.TempDir()
+	seed(t, dir, []rec.Record{
+		{ID: "h1", Cmd: "git status", Session: "s1", StartMs: 1000},
+		{ID: "a1", Cmd: "git add -A", Session: "s2", Executor: "claude-code", StartMs: 2000},
+		{ID: "t1", Type: rec.TypeTag, TagName: "refactor", TargetID: "h1", StartMs: 3000},
+	})
+	c, _ := startDaemon(t, dir, 30*time.Second)
+
+	byTag, err := c.Query(proto.QueryReq{Tag: "refactor"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"h1"}, ids(byTag.Rows), "--tag matches the labelled command")
+
+	byExecName, err := c.Query(proto.QueryReq{Tag: "claude-code"})
+	require.NoError(t, err)
+	assert.Empty(t, byExecName.Rows, "an executor name is not a tag")
+
+	byExec, err := c.Query(proto.QueryReq{Executor: "claude-code"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a1"}, ids(byExec.Rows), "--executor is how you ask for agent commands")
+
+	// And the resolved tags on a returned row never smuggle the executor back in.
+	for _, r := range byExec.Rows {
+		assert.NotContains(t, r.Tags, "claude-code", "the executor must not appear as a tag")
+	}
+}
+
+// TestTagsListCountsCommands covers OpTags: the number is how much history
+// carries the label, not how many associations created it. One `tag add` against
+// a session used to report 1 however long the session ran.
+func TestTagsListCountsCommands(t *testing.T) {
+	dir := t.TempDir()
+	seed(t, dir, []rec.Record{
+		{ID: "c1", Cmd: "make", Session: "s1", StartMs: 1000},
+		{ID: "c2", Cmd: "make test", Session: "s1", StartMs: 2000},
+		{ID: "c3", Cmd: "vim", Session: "s2", Executor: "claude-code", StartMs: 3000},
+		{ID: "t1", Type: rec.TypeTag, TagName: "release", Session: "s1", StartMs: 4000},
+		{ID: "t2", Type: rec.TypeTag, TagName: "someday", TagDesc: "later", StartMs: 5000},
+	})
+	c, _ := startDaemon(t, dir, 30*time.Second)
+
+	info, err := c.Tags(proto.ScopeLocal)
+	require.NoError(t, err)
+	assert.Equal(t, proto.ScopeLocal, info.Scope, "the scope counted is echoed back")
+
+	got := map[string]int{}
+	for _, tc := range info.Tags {
+		got[tc.Name] = tc.Count
+	}
+	assert.Equal(t, 2, got["release"], "one session tag counts every command in the session")
+	assert.Equal(t, 0, got["someday"], "a bare definition lists at zero")
+	assert.NotContains(t, got, "claude-code", "executors are not tags")
+
+	// An empty scope means local, so the daemon never has to guess.
+	same, err := c.Tags("")
+	require.NoError(t, err)
+	assert.Equal(t, info.Tags, same.Tags)
 }

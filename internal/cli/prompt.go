@@ -98,13 +98,13 @@ func recordPrompt(dir, session, executor, cwd, text string) {
 	}
 
 	spoolRecord(dir, rec.Record{
-		ID:      ps.ID,
-		Type:    rec.TypePrompt,
-		Session: session,
-		Prompt:  text,
-		Tag:     executor,
-		Cwd:     cwd,
-		StartMs: ps.Ms,
+		ID:       ps.ID,
+		Type:     rec.TypePrompt,
+		Session:  session,
+		Prompt:   text,
+		Executor: executor,
+		Cwd:      cwd,
+		StartMs:  ps.Ms,
 	})
 }
 

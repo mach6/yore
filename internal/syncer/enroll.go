@@ -93,6 +93,18 @@ func (s *Syncer) MintToken(ctx context.Context) (wire.TokenResp, error) {
 	return s.http.MintToken(ctx)
 }
 
+// Tokens returns every enrollment token the server still records, newest first,
+// with what became of each (for display).
+func (s *Syncer) Tokens(ctx context.Context) ([]wire.EnrollToken, error) {
+	return s.http.ListTokens(ctx)
+}
+
+// RevokeToken cancels an unclaimed enrollment token so it can no longer admit a
+// machine. It is not device revocation and rotates no keys.
+func (s *Syncer) RevokeToken(ctx context.Context, id string) error {
+	return s.http.RevokeToken(ctx, id)
+}
+
 // RecoverHK retrieves the History Key using only the recovery passphrase, for
 // when no enrolled device survives. It fetches the salt, derives the recovery
 // keypair, proves possession by signing with it, and unwraps HK.

@@ -72,14 +72,14 @@ func computeAgents(rows []rec.Record, now int64, periodDays int) *agentsData {
 	byTag := map[string]*agentStat{}
 	total := 0
 	for _, r := range rows {
-		if r.Deleted() || r.Tag == "" || r.StartMs < cutoff {
+		if r.Deleted() || r.Executor == "" || r.StartMs < cutoff {
 			continue
 		}
 		total++
-		a := byTag[r.Tag]
+		a := byTag[r.Executor]
 		if a == nil {
-			a = &agentStat{name: r.Tag}
-			byTag[r.Tag] = a
+			a = &agentStat{name: r.Executor}
+			byTag[r.Executor] = a
 		}
 		a.count++
 		if r.StartMs > a.lastMs {
@@ -435,7 +435,7 @@ func (m Model) cmdInfoLines(r rec.Record, w int) []string {
 		{"Path", dashIfEmpty(r.Cwd)},
 		{"Host", dashIfEmpty(r.Hostname)},
 		{"Session", shortSession(r.Session)},
-		{"Executor", dashIfEmpty(r.Tag)},
+		{"Executor", dashIfEmpty(r.Executor)},
 		{"Time", theme.AbsTime(r.StartMs)},
 		{"Duration", dur},
 		{"Exit", exitWord(r)},

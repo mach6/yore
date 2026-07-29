@@ -9,12 +9,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.etcd.io/bbolt"
 
 	"yore/internal/reqsign"
 	"yore/internal/wire"
@@ -885,4 +887,181 @@ func TestConcurrentPushDistinctHosts(t *testing.T) {
 	for _, h := range resp.Hosts {
 		require.Equalf(t, uint64(perHost), h.MaxSeq, "host %s maxSeq", h.HostID)
 	}
+}
+
+// listTokens fetches the token list as c.
+func listTokens(t *testing.T, c *testClient) []wire.EnrollToken {
+	t.Helper()
+	status, body := c.do("GET", "/v1/tokens", nil)
+	require.Equalf(t, http.StatusOK, status, "list tokens: body %s", body)
+	return mustJSON[[]wire.EnrollToken](t, body)
+}
+
+// TestTokenLifecycleIsRecorded walks a token through every state the devices
+// view shows. Before this the server erased a token the moment it was spent, so
+// "is anything outstanding, and who used what" had no answer at all.
+func TestTokenLifecycleIsRecorded(t *testing.T) {
+	base := setup(t)
+	a := bootstrapActive(t, base, "dev-a")
+
+	// Minted and untouched: open.
+	tok := mintToken(t, a)
+	toks := listTokens(t, a)
+	require.Len(t, toks, 1)
+	require.Equal(t, wire.TokenOpen, toks[0].State)
+	require.NotEmpty(t, toks[0].ID, "a token needs a handle to revoke it by")
+	require.NotContains(t, string(marshal(t, toks)), tok,
+		"the listing must never carry a token's plaintext — the server does not have it")
+
+	// Claimed by the device that enrolled on it, and it says which.
+	registerWithToken(t, a, "dev-b", tok)
+	toks = listTokens(t, a)
+	require.Len(t, toks, 1, "the claimed token is kept, not pruned")
+	require.Equal(t, wire.TokenClaimed, toks[0].State)
+	require.Equal(t, "dev-b", toks[0].ClaimedBy)
+	require.NotZero(t, toks[0].ClaimedMs)
+
+	// A second token, revoked before anyone uses it.
+	tok2 := mintToken(t, a)
+	var id2 string
+	for _, tk := range listTokens(t, a) {
+		if tk.State == wire.TokenOpen {
+			id2 = tk.ID
+		}
+	}
+	require.NotEmpty(t, id2)
+	status, body := a.do("POST", "/v1/tokens/"+id2+"/revoke", nil)
+	require.Equalf(t, http.StatusNoContent, status, "revoke token: body %s", body)
+
+	var revoked wire.EnrollToken
+	for _, tk := range listTokens(t, a) {
+		if tk.ID == id2 {
+			revoked = tk
+		}
+	}
+	require.Equal(t, wire.TokenRevoked, revoked.State)
+	require.NotZero(t, revoked.RevokedMs)
+
+	// And it is genuinely dead: the whole point is that it stops admitting a
+	// machine before its half hour is up.
+	pub, priv, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err, "genkey")
+	dc := base.withKey("dev-c", priv).withToken(tok2)
+	status, _ = dc.do("POST", "/v1/devices", wire.RegisterReq{
+		ID: "dev-c", Name: "dev-c", PubKey: pubKey(), SignKey: pub,
+	})
+	require.Equal(t, http.StatusUnauthorized, status, "a revoked token must admit no one")
+}
+
+// TestRevokeTokenRules covers the answers that are not "done".
+func TestRevokeTokenRules(t *testing.T) {
+	base := setup(t)
+	a := bootstrapActive(t, base, "dev-a")
+	tok := mintToken(t, a)
+	id := listTokens(t, a)[0].ID
+
+	// Revoking twice is idempotent, not an error: the outcome the caller wanted
+	// is already true.
+	for range 2 {
+		status, body := a.do("POST", "/v1/tokens/"+id+"/revoke", nil)
+		require.Equalf(t, http.StatusNoContent, status, "revoke: body %s", body)
+	}
+
+	// A token that was already claimed cannot be revoked — revoking would say
+	// something untrue about how that machine got in, and take nothing away.
+	tok2 := mintToken(t, a)
+	registerWithToken(t, a, "dev-b", tok2)
+	var claimedID string
+	for _, tk := range listTokens(t, a) {
+		if tk.State == wire.TokenClaimed {
+			claimedID = tk.ID
+		}
+	}
+	require.NotEmpty(t, claimedID)
+	status, _ := a.do("POST", "/v1/tokens/"+claimedID+"/revoke", nil)
+	require.Equal(t, http.StatusConflict, status)
+
+	// Nonsense ids are rejected before anything is touched.
+	status, _ = a.do("POST", "/v1/tokens/not-hex/revoke", nil)
+	require.Equal(t, http.StatusBadRequest, status)
+	status, _ = a.do("POST", "/v1/tokens/"+strings.Repeat("ab", 32)+"/revoke", nil)
+	require.Equal(t, http.StatusNotFound, status)
+
+	_ = tok
+}
+
+// TestTokenEndpointsRequireASignature: an enrollment token is a credential, so
+// who is outstanding — and cancelling one — is not readable by an unsigned
+// caller holding only the bearer token.
+func TestTokenEndpointsRequireASignature(t *testing.T) {
+	base := setup(t)
+	a := bootstrapActive(t, base, "dev-a")
+	mintToken(t, a)
+	id := listTokens(t, a)[0].ID
+
+	for _, tc := range []struct{ method, path string }{
+		{"GET", "/v1/tokens"},
+		{"POST", "/v1/tokens/" + id + "/revoke"},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			req := base.newRequest(tc.method, tc.path, nil) // bearer token only, no signature
+			status, _ := base.roundtrip(req)
+			require.Equal(t, http.StatusUnauthorized, status)
+		})
+	}
+}
+
+// TestPruneTokensKeepsTheClaimedOnes pins the retention rule: an unclaimed
+// token is housekeeping once it is well past its window, but a claimed one is
+// the record of an enrollment and outlives it.
+func TestPruneTokensKeepsTheClaimedOnes(t *testing.T) {
+	now := time.Now()
+	tests := []struct {
+		name string
+		tok  storedToken
+		kept bool
+	}{
+		{"open", storedToken{ExpiresMs: now.Add(time.Hour).UnixMilli()}, true},
+		{"recently expired", storedToken{ExpiresMs: now.Add(-time.Hour).UnixMilli()}, true},
+		{"long expired", storedToken{ExpiresMs: now.Add(-8 * 24 * time.Hour).UnixMilli()}, false},
+		{"long revoked, never claimed", storedToken{
+			ExpiresMs: now.Add(-8 * 24 * time.Hour).UnixMilli(),
+			RevokedMs: now.Add(-8 * 24 * time.Hour).UnixMilli(),
+		}, false},
+		{"claimed long ago", storedToken{
+			ExpiresMs: now.Add(-365 * 24 * time.Hour).UnixMilli(),
+			ClaimedMs: now.Add(-365 * 24 * time.Hour).UnixMilli(),
+			ClaimedBy: "dev-b",
+		}, true},
+	}
+
+	db, err := bbolt.Open(filepath.Join(t.TempDir(), "p.db"), 0o600, nil)
+	require.NoError(t, err, "open")
+	t.Cleanup(func() { _ = db.Close() })
+
+	require.NoError(t, db.Update(func(tx *bbolt.Tx) error {
+		b, berr := tx.CreateBucketIfNotExists(bucketTokens)
+		if berr != nil {
+			return berr
+		}
+		for i, tc := range tests {
+			if perr := b.Put([]byte{byte(i)}, marshal(t, tc.tok)); perr != nil {
+				return perr
+			}
+		}
+		return nil
+	}), "seed")
+
+	require.NoError(t, db.Update(func(tx *bbolt.Tx) error {
+		pruneTokens(tx, now)
+		return nil
+	}), "prune")
+
+	require.NoError(t, db.View(func(tx *bbolt.Tx) error {
+		for i, tc := range tests {
+			got := tx.Bucket(bucketTokens).Get([]byte{byte(i)}) != nil
+			require.Equalf(t, tc.kept, got, "%s: kept = %v", tc.name, got)
+		}
+		return nil
+	}), "check")
 }

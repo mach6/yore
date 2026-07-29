@@ -34,7 +34,7 @@ func TestRunHookCodexCaptures(t *testing.T) {
 	require.Len(t, rows, 1)
 	got := rows[0]
 	assert.Equal(t, "go vet ./...", got.Cmd)
-	assert.Equal(t, agentCodex, got.Tag)
+	assert.Equal(t, agentCodex, got.Executor)
 	assert.Equal(t, "codex-cx1", got.Session)
 	assert.Equal(t, "/work", got.Cwd)
 	require.NotNil(t, got.Exit, "exit_code from tool_response is honored")
@@ -66,7 +66,7 @@ func TestCodexPromptTracing(t *testing.T) {
 	require.Len(t, rows, 2, "the prompt record plus the command it caused")
 	assert.Equal(t, rec.TypePrompt, rows[0].Type)
 	assert.Equal(t, "refactor the parser", rows[0].Prompt)
-	assert.Equal(t, agentCodex, rows[0].Tag)
+	assert.Equal(t, agentCodex, rows[0].Executor)
 	assert.Equal(t, rows[0].ID, rows[1].PromptID, "the command references the prompt record")
 	assert.Empty(t, rows[1].Prompt, "text lives on the prompt record only")
 }

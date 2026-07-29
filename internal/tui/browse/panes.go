@@ -52,6 +52,7 @@ type Splits struct {
 	BrowseTop  int // results-table height, ‰ of the middle region
 	AgentLeft  int // agent sidebar width, ‰ of the terminal width
 	AgentTop   int // prompt-list height, ‰ of the middle region
+	DevicesTop int // device-list height, ‰ of the middle region
 }
 
 // Divider bounds. The ratios keep both sides of a seam meaningful; the absolute
@@ -71,6 +72,11 @@ const (
 	// pane below it.
 	defaultAgentLeftRatio = 260
 	defaultAgentTopRatio  = 550
+
+	// Devices default: the machine list is short and bounded (you have as many
+	// machines as you have), while tokens accumulate — so the tokens pane gets
+	// the larger share.
+	defaultDevicesTopRatio = 400
 )
 
 // withDefaults fills in the agent explorer's starting proportions. That view is
@@ -83,6 +89,9 @@ func (s Splits) withDefaults() Splits {
 	}
 	if s.AgentTop == 0 {
 		s.AgentTop = defaultAgentTopRatio
+	}
+	if s.DevicesTop == 0 {
+		s.DevicesTop = defaultDevicesTopRatio
 	}
 	return s
 }
@@ -158,6 +167,20 @@ func browseGeom(w, mid, leftW, tableH int) layout {
 		vDiv:     leftW,
 		hDiv:     1 + tableH,
 		hDivFrom: leftW,
+	}
+}
+
+// devicesGeom lays out the devices view: the enrolled machines over the
+// enrollment tokens, both full width. One seam, spanning the frame.
+func devicesGeom(w, mid, topH int) layout {
+	return layout{
+		p: [maxPanes]rect{
+			{x: 0, y: 1, w: w, h: topH},
+			{x: 0, y: 1 + topH, w: w, h: mid - topH},
+		},
+		vDiv:     -1,
+		hDiv:     1 + topH,
+		hDivFrom: 0,
 	}
 }
 

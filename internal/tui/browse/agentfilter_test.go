@@ -30,7 +30,7 @@ func filterFixture() (rows, prompts []rec.Record) {
 	for i, s := range specs {
 		rows = append(rows, rec.Record{
 			ID: strconv.Itoa(i), Cmd: s.cmd, PromptID: s.prompt,
-			Tag: "claude-code", Session: "sess", Hostname: "host", Cwd: "/work",
+			Executor: "claude-code", Session: "sess", Hostname: "host", Cwd: "/work",
 			StartMs: now - s.minsAgo*60_000, Exit: rec.IntPtr(0),
 		})
 	}
@@ -44,7 +44,7 @@ func filterFixture() (rows, prompts []rec.Record) {
 	} {
 		prompts = append(prompts, rec.Record{
 			ID: p.id, Type: rec.TypePrompt, Prompt: p.text,
-			Tag: "claude-code", Session: "sess", StartMs: now - p.minsAgo*60_000,
+			Executor: "claude-code", Session: "sess", StartMs: now - p.minsAgo*60_000,
 		})
 	}
 	return rows, prompts

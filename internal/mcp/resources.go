@@ -198,7 +198,7 @@ func formatRiskSummary(rows []rec.Record) string {
 	}
 	for i := range rows {
 		r := rows[i]
-		if r.Deleted() || r.Tag == "" {
+		if r.Deleted() || r.Executor == "" {
 			continue
 		}
 		a := risk.Assess(r.Cmd)
@@ -237,14 +237,14 @@ func formatAgentActivity(rows []rec.Record) string {
 	order := []string{}
 	for i := range rows {
 		r := rows[i]
-		if r.Deleted() || r.Tag == "" {
+		if r.Deleted() || r.Executor == "" {
 			continue
 		}
-		a := by[r.Tag]
+		a := by[r.Executor]
 		if a == nil {
 			a = &agg{}
-			by[r.Tag] = a
-			order = append(order, r.Tag)
+			by[r.Executor] = a
+			order = append(order, r.Executor)
 		}
 		a.count++
 		if r.Exit != nil {

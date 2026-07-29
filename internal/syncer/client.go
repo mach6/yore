@@ -341,6 +341,22 @@ func (c *HTTPClient) RevokeDevice(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodPost, "/v1/devices/"+url.PathEscape(id)+"/revoke", nil, nil, nil, nil)
 }
 
+// ListTokens returns every enrollment token the server still holds a record of,
+// newest first. Only hashes and outcomes — the plaintexts are gone.
+func (c *HTTPClient) ListTokens(ctx context.Context) ([]wire.EnrollToken, error) {
+	var toks []wire.EnrollToken
+	if err := c.do(ctx, http.MethodGet, "/v1/tokens", nil, nil, &toks, nil); err != nil {
+		return nil, err
+	}
+	return toks, nil
+}
+
+// RevokeToken cancels an unclaimed enrollment token. Unlike revoking a device
+// this rotates nothing — the token admitted no one.
+func (c *HTTPClient) RevokeToken(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodPost, "/v1/tokens/"+url.PathEscape(id)+"/revoke", nil, nil, nil, nil)
+}
+
 // GetHKWrap fetches the HK wrap sealed to deviceID. The bool is false (with a
 // nil error) when the server has no wrap for the device (HTTP 404) — the normal
 // state for a pending or revoked device.

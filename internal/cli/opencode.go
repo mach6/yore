@@ -50,11 +50,11 @@ func runHookOpenCode() {
 	dir := stateDir()
 	session := opencodeSession(in.SessionID)
 	r := rec.Record{
-		Session: session,
-		Cmd:     cmd,
-		Cwd:     in.Cwd,
-		Tag:     agentOpenCode,
-		Exit:    in.Exit,
+		Session:  session,
+		Cmd:      cmd,
+		Cwd:      in.Cwd,
+		Executor: agentOpenCode,
+		Exit:     in.Exit,
 	}
 	stampPrompt(dir, session, &r)
 	spoolRecord(dir, r)

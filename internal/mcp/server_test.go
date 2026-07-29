@@ -23,7 +23,7 @@ func (f fakeQ) Query(q proto.QueryReq) (proto.QueryResp, error) {
 		if q.Q != "" && !strings.Contains(r.Cmd, q.Q) {
 			continue
 		}
-		if q.Executor != "" && r.Tag != q.Executor {
+		if q.Executor != "" && r.Executor != q.Executor {
 			continue
 		}
 		if q.Scope == proto.ScopeCwd && r.Cwd != q.Cwd {
@@ -42,8 +42,8 @@ func exit(i int) *int { return &i }
 func sampleRows() []rec.Record {
 	return []rec.Record{
 		{ID: "1", Cmd: "go build ./...", Cwd: "/repo", Hostname: "laptop", Exit: exit(0), StartMs: 10_000, Session: "s1"},
-		{ID: "2", Cmd: "go test ./...", Cwd: "/repo", Hostname: "laptop", Exit: exit(1), StartMs: 20_000, Session: "s1", Tag: "claude-code", PromptID: "p1", Prompt: "fix the failing test"},
-		{ID: "3", Cmd: "npm install", Cwd: "/web", Hostname: "server", Exit: exit(0), StartMs: 30_000, Session: "s2", Tag: "claude-code", PromptID: "p1", Prompt: "fix the failing test"},
+		{ID: "2", Cmd: "go test ./...", Cwd: "/repo", Hostname: "laptop", Exit: exit(1), StartMs: 20_000, Session: "s1", Executor: "claude-code", PromptID: "p1", Prompt: "fix the failing test"},
+		{ID: "3", Cmd: "npm install", Cwd: "/web", Hostname: "server", Exit: exit(0), StartMs: 30_000, Session: "s2", Executor: "claude-code", PromptID: "p1", Prompt: "fix the failing test"},
 	}
 }
 

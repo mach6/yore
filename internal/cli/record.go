@@ -25,7 +25,7 @@ func stateDir() string { return config.Dir() }
 // via flags. All it does is one fsync'd spool append plus a best-effort
 // daemon poke. Bad flags are swallowed by the cobra command (exit 0) before
 // this runs, keeping the shell unbreakable.
-func runRecord(exit int, durMs, startMs int64, session, cwd, tag string) {
+func runRecord(exit int, durMs, startMs int64, session, cwd, executor string) {
 	raw, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20)) // sanity cap: 1MiB of command text
 	if err != nil {
 		return
@@ -43,16 +43,15 @@ func runRecord(exit int, durMs, startMs int64, session, cwd, tag string) {
 			start -= durMs
 		}
 	}
-	tagVal := tag
-	if tagVal == "" {
-		tagVal = executorTag()
+	if executor == "" {
+		executor = detectExecutor()
 	}
 	r := rec.Record{
-		Session: session,
-		Cmd:     cmd,
-		Cwd:     cwd,
-		StartMs: start,
-		Tag:     tagVal,
+		Session:  session,
+		Cmd:      cmd,
+		Cwd:      cwd,
+		StartMs:  start,
+		Executor: executor,
 	}
 	if exit >= 0 {
 		r.Exit = rec.IntPtr(exit)

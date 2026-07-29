@@ -97,15 +97,24 @@ func (t *tagIndex) apply(r rec.Record) {
 	set[name] = true
 }
 
-// effective returns a row's resolved freeform tags: its executor auto-tag (if
-// any) ∪ command tags ∪ session tags, sorted and de-duplicated. nil when none.
+// effective returns a row's resolved freeform tags: command tags ∪ session tags
+// ∪ the matching auto_tags rules, sorted and de-duplicated. nil when none.
+//
+// The record's executor is deliberately not among them. It is an attribute of
+// the command — which agent ran it — not a label anyone put on it, and folding
+// the two together meant a user tag and "claude-code" arrived as one
+// indistinguishable list that no consumer could take apart again.
 func (t *tagIndex) effective(r rec.Record) []string {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
+	return t.effectiveLocked(r)
+}
+
+// effectiveLocked is effective's body, for callers that already hold the read
+// lock. It exists because list() resolves every row in one pass and a recursive
+// RLock can deadlock against a waiting writer.
+func (t *tagIndex) effectiveLocked(r rec.Record) []string {
 	set := map[string]bool{}
-	if r.Tag != "" {
-		set[normTag(r.Tag)] = true
-	}
 	for n := range t.cmdTags[r.ID] {
 		set[n] = true
 	}
@@ -128,14 +137,13 @@ func (t *tagIndex) effective(r rec.Record) []string {
 	return out
 }
 
-// has reports whether a row carries the given freeform tag (executor auto-tag
-// included), matched case-insensitively. An empty name matches everything.
+// has reports whether a row carries the given freeform tag, matched
+// case-insensitively. An empty name matches everything. Executors are not tags,
+// so `--tag claude-code` matches nothing; `--executor claude-code` is the filter
+// for that.
 func (t *tagIndex) has(r rec.Record, name string) bool {
 	name = normTag(name)
 	if name == "" {
-		return true
-	}
-	if normTag(r.Tag) == name {
 		return true
 	}
 	t.mu.RLock()
@@ -151,25 +159,35 @@ func (t *tagIndex) has(r rec.Record, name string) bool {
 	return false
 }
 
-// list returns every known tag with its association count and description,
-// name-sorted. The count is how many commands+sessions carry it.
-func (t *tagIndex) list() []proto.TagCount {
+// list returns every known tag with its description and how many of the given
+// rows carry it, name-sorted.
+//
+// The count is commands, not associations. Counting associations made a session
+// tag read "1" however many commands the session ran, which is the number nobody
+// wants: you tag a shell to find its work again, so the useful figure is how
+// much work is behind the label. That means resolving every row, which is why
+// the corpus is passed in rather than counted out of the index alone — and it is
+// also what puts auto_tags rules in the listing, since those exist only as a
+// match against a row's cwd.
+//
+// A name with no rows still lists at 0: a bare `tag create`, or an auto_tags
+// rule that currently matches nothing, is a tag you defined and should be able
+// to see.
+func (t *tagIndex) list(rows []rec.Record) []proto.TagCount {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	counts := map[string]int{}
-	for _, set := range t.cmdTags {
-		for n := range set {
-			counts[n]++
-		}
-	}
-	for _, set := range t.sessTags {
-		for n := range set {
+	for i := range rows {
+		for _, n := range t.effectiveLocked(rows[i]) {
 			counts[n]++
 		}
 	}
 	names := map[string]bool{}
 	for n := range t.desc {
 		names[n] = true
+	}
+	for _, n := range t.autoTags {
+		names[normTag(n)] = true
 	}
 	for n := range counts {
 		names[n] = true

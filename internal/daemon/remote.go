@@ -84,6 +84,46 @@ func (s *server) mintToken() (proto.TokenInfo, error) {
 	return proto.TokenInfo{Token: t.Token, ExpiresMs: t.ExpiresMs}, nil
 }
 
+// listTokens reports every enrollment token the server still records, and what
+// became of each. Hashes and outcomes only — the plaintexts are long gone.
+func (s *server) listTokens() (proto.TokensInfo, error) {
+	sy := s.remote.syncer()
+	if sy == nil {
+		return proto.TokensInfo{}, errSyncOff
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	toks, err := sy.Tokens(ctx)
+	if err != nil {
+		return proto.TokensInfo{}, err
+	}
+	out := make([]proto.EnrollToken, 0, len(toks))
+	for _, t := range toks {
+		out = append(out, proto.EnrollToken{
+			ID: t.ID, State: t.State,
+			CreatedMs: t.CreatedMs, ExpiresMs: t.ExpiresMs,
+			ClaimedMs: t.ClaimedMs, ClaimedBy: t.ClaimedBy, RevokedMs: t.RevokedMs,
+		})
+	}
+	return proto.TokensInfo{Tokens: out}, nil
+}
+
+// revokeToken cancels an unclaimed enrollment token. Nothing is rotated: the
+// token let no one in, so there is no key anyone could already have used it to
+// read (unlike revoking a device, which does rotate).
+func (s *server) revokeToken(id string) error {
+	sy := s.remote.syncer()
+	if sy == nil {
+		return errSyncOff
+	}
+	if id == "" {
+		return errors.New("empty token id")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return sy.RevokeToken(ctx, id)
+}
+
 // remoteCache holds other hosts' history, decrypted, in RAM ONLY — the
 // plaintext is never written to disk (a hard requirement). What IS written to
 // disk is the ciphertext it was decrypted from, in internal/rstore, which the

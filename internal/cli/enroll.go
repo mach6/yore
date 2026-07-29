@@ -14,7 +14,6 @@ import (
 	"yore/internal/config"
 	"yore/internal/cryptobox"
 	"yore/internal/daemon"
-	"yore/internal/proto"
 	"yore/internal/redact"
 	"yore/internal/secret"
 	"yore/internal/syncer"
@@ -215,7 +214,7 @@ func runSetup(server, token, name, integration string, pin, clearPin bool) int {
 			"Confirm this matches on the approving machine before",
 			"you approve — it proves no key was substituted.")
 		u.next("on a machine that is already enrolled:",
-			"yore devices approve "+sy.DeviceID())
+			"yore devices    (select this machine, press a)")
 		return 0
 	}
 
@@ -278,94 +277,9 @@ func seedRedact(dir string) {
 // needed). Device management goes THROUGH the daemon rather than opening the
 // store directly: the daemon owns the store, so a direct open would have to ask
 // it to shut down first, costing the user a warm daemon (and its RAM corpus)
-// every time they listed their devices.
+// every time they touched their devices.
 func devicesClient() (*daemon.Client, error) {
 	return daemon.EnsureRunning(stateDir())
-}
-
-// runDevicesList lists the enrolled devices (bare `yore devices`).
-func runDevicesList() int {
-	c, err := devicesClient()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "yore devices:", err)
-		return 1
-	}
-	defer func() { _ = c.Close() }()
-
-	info, err := c.Devices()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "yore devices:", err)
-		return 1
-	}
-	if len(info.Devices) == 0 {
-		fmt.Println("No devices enrolled. Run `yore setup`.")
-		return 0
-	}
-	fmt.Printf("%-28s %-10s %-16s %s\n", "ID", "STATUS", "NAME", "CODE (pending)")
-	for _, d := range info.Devices {
-		self := ""
-		if d.Self {
-			self = "  <- this machine"
-		}
-		fmt.Printf("%-28s %-10s %-16s %s%s\n", d.ID, d.Status, truncate(d.Name, 16), d.Code, self)
-	}
-	return 0
-}
-
-// runDevicesApprove approves a pending device by id (`yore devices approve`),
-// after showing its verification code for out-of-band confirmation.
-func runDevicesApprove(id string) int {
-	c, err := devicesClient()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "yore devices approve:", err)
-		return 1
-	}
-	defer func() { _ = c.Close() }()
-
-	info, err := c.Devices()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "yore devices approve:", err)
-		return 1
-	}
-	var target *proto.DeviceInfo
-	for i := range info.Devices {
-		if info.Devices[i].ID == id && info.Devices[i].Status == wire.DevicePending {
-			target = &info.Devices[i]
-			break
-		}
-	}
-	if target == nil {
-		fmt.Fprintf(os.Stderr, "yore devices approve: no pending device %q\n", id)
-		return 1
-	}
-	fmt.Printf("Approving %q\n  Verification code: %s\n", target.Name, target.Code)
-	if !confirm("Does this match the code shown on that machine? [y/N] ") {
-		fmt.Println("Aborted.")
-		return 1
-	}
-	if err := c.Approve(id); err != nil {
-		fmt.Fprintln(os.Stderr, "yore devices approve:", err)
-		return 1
-	}
-	fmt.Println("Approved. That machine will sync automatically.")
-	return 0
-}
-
-// runDevicesRevoke revokes a device by id and rotates keys (`yore devices revoke`).
-func runDevicesRevoke(id string) int {
-	c, err := devicesClient()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "yore devices revoke:", err)
-		return 1
-	}
-	defer func() { _ = c.Close() }()
-
-	if err := c.Revoke(id); err != nil {
-		fmt.Fprintln(os.Stderr, "yore devices revoke:", err)
-		return 1
-	}
-	fmt.Println("Revoked and rotated keys. The removed machine can no longer decrypt new history.")
-	return 0
 }
 
 // --- small tty helpers ---
@@ -376,11 +290,6 @@ func prompt(msg string) string {
 	return strings.TrimRight(line, "\r\n")
 }
 
-func confirm(msg string) bool {
-	ans := strings.ToLower(strings.TrimSpace(prompt(msg)))
-	return ans == "y" || ans == "yes"
-}
-
 func firstNonEmpty(vals ...string) string {
 	for _, v := range vals {
 		if v != "" {
@@ -388,13 +297,6 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n-1] + "…"
 }
 
 // runDevicesToken mints a single-use enrollment token for adding a machine.
@@ -528,7 +430,6 @@ func runRecover(server string) int {
 	u.step("enrolled "+strconv.Quote(name), "admitted on the recovery key's authority")
 	fmt.Fprintln(os.Stderr)
 	u.next("clean up the machines you lost:",
-		"yore devices",
-		"yore devices revoke <id>")
+		"yore devices    (select each one, press x)")
 	return 0
 }

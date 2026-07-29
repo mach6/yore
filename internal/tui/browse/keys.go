@@ -97,7 +97,8 @@ func (m Model) browseGroups() []keyhelp.Group {
 		{Title: "FIND", Rows: []keyhelp.Row{
 			row("/", "search", "/"),
 			row("A", m.agentToggleDesc(), "A"),
-			row("t", "filter by executor", "t"),
+			row("t", "filter by tag", "t"),
+			row("e", "filter by executor", "e"),
 			row("1-5", "time window", "1", "2", "3", "4", "5"),
 		}},
 		{Title: "ACT", Rows: act},
@@ -147,7 +148,7 @@ func (m Model) agentsGroups() []keyhelp.Group {
 	}
 }
 
-// devicesGroups is the devices pane, which owns its keys outright: the global
+// devicesGroups is the devices view, which owns its keys outright: the global
 // switch never runs here, so nothing from it may be advertised — and q goes back
 // rather than quitting, which is the one place the browser's q does not quit.
 func devicesGroups() []keyhelp.Group {
@@ -156,13 +157,21 @@ func devicesGroups() []keyhelp.Group {
 			row("↑/k", "up", "up", "k"),
 			row("↓/j", "down", "down", "j"),
 			row("g/G", "first/last", "g", "G"),
+			row("tab", "switch pane", "tab", "shift+tab"),
+			row("z", "zoom the pane", "z"),
 		}},
-		{Title: "ACT", Rows: []keyhelp.Row{
-			row("a", "approve a pending device", "a"),
-			row("x", "revoke (asks first)", "x"),
-			row("r", "refetch the list", "r"),
+		{Title: "MACHINES", Rows: []keyhelp.Row{
+			row("a", "approve a pending machine (asks first)", "a"),
+			row("x", "revoke it and rotate keys (asks first)", "x"),
+		}},
+		// x is one key doing the pane's version of "revoke", so it is described
+		// once per pane rather than once with a caveat.
+		{Title: "TOKENS", Rows: []keyhelp.Row{
+			row("n", "mint an enrollment token", "n"),
+			row("x", "cancel an unused token (asks first)", "x"),
 		}},
 		{Title: "GO", Rows: []keyhelp.Row{
+			row("r", "refetch both lists", "r"),
 			row("esc/q/D", "back to browsing", "esc", "q", "D"),
 			row("?", "these keys", "?"),
 			row("^c", "quit", "ctrl+c"),
@@ -210,7 +219,7 @@ func (m Model) footerRows() []keyhelp.Row {
 	case m.showHelp:
 		return m.helpOpenRows()
 	case m.view == viewDevices && m.devConfirm != "":
-		return confirmRevokeRows()
+		return confirmDeviceRows(m.devApproving)
 	}
 
 	switch m.view {
@@ -239,14 +248,22 @@ func (m Model) footerRows() []keyhelp.Row {
 		}
 		return append(rows, row("?", "keys", "?"), row("q", "quit", "q"))
 	case viewDevices:
-		return []keyhelp.Row{
-			row("a", "approve", "a"),
-			row("x", "revoke", "x"),
-			row("r", "refresh", "r"),
+		// The two panes offer different actions, so the hint follows focus rather
+		// than listing both and leaving the user to work out which applies here.
+		rows := []keyhelp.Row{row("↑↓", "move", "up", "down"), row("tab", "pane", "tab")}
+		if m.dpane == dpTokens {
+			rows = append(rows, row("n", "mint", "n"), row("x", "cancel", "x"))
+		} else {
+			rows = append(rows, row("a", "approve", "a"), row("x", "revoke", "x"))
+		}
+		if m.zoom {
+			rows = append(rows, row("z", "unzoom", "z"))
+		}
+		return append(rows,
 			row("esc", "back", "esc"),
 			row("?", "keys", "?"),
 			row("^c", "quit", "ctrl+c"),
-		}
+		)
 	}
 
 	// Browse: the first hints follow focus, because the same arrow keys mean
@@ -297,11 +314,16 @@ func confirmDeleteRows() []keyhelp.Row {
 	}
 }
 
-func confirmRevokeRows() []keyhelp.Row {
+func confirmDeviceRows(approving bool) []keyhelp.Row {
+	verb := "revoke"
+	if approving {
+		verb = "approve"
+	}
 	return []keyhelp.Row{
-		row("y", "revoke", "y", "Y"),
-		// Deliberately not a binding: anything that is not y cancels, which is the
-		// safe default for the one action here that rotates keys.
+		row("y", verb, "y", "Y"),
+		// Deliberately not a binding: anything that is not y cancels. Both actions
+		// here are ones you cannot take back quietly — approving admits a machine
+		// to the group, revoking rotates its keys.
 		{Keys: "any other key", Desc: "cancel"},
 	}
 }

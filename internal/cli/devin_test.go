@@ -34,7 +34,7 @@ func TestRunHookDevinCaptures(t *testing.T) {
 	assert.Equal(t, "cargo build", got.Cmd)
 	assert.Equal(t, "/repo", got.Cwd)
 	assert.Equal(t, "devin-d1", got.Session, "session must be namespaced")
-	assert.Equal(t, agentDevin, got.Tag)
+	assert.Equal(t, agentDevin, got.Executor)
 	require.NotNil(t, got.Exit, "success:false → a recorded failure")
 	assert.Equal(t, 1, *got.Exit, "success:false maps to exit 1")
 }

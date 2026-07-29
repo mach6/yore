@@ -125,10 +125,17 @@ docker stack deploy -c docker/swarm/stack.yml yore
 yore setup
 
 # each other machine needs a single-use token from one already enrolled:
-yore devices token                    # on an enrolled machine
+yore devices token                   # on an enrolled machine
 yore setup --token <token>           # on the new machine: registers PENDING
-yore devices approve <id>              # back on the enrolled one; confirm the code
+yore devices                         # back on the enrolled one: pick it, press
+                                     # a, and check the code matches
 ```
+
+`yore devices` also lists every enrollment token and what became of it — open,
+claimed (by which machine), expired, or revoked — so an outstanding invitation
+into your history is something you can see and cancel (`x`), not something you
+wait out. `n` mints one there; it is shown once and never again, because the
+server keeps only its hash.
 
 Lost every machine? `yore recover` asks for the recovery phrase and re-enrols
 this one. Client secrets (the device key) live in your **OS keyring**, falling
@@ -170,16 +177,20 @@ leaving everything else — including the agent's own auth — exactly as it was
   the wheel scrolls whatever the pointer is over. One **time window** (`1`-`5`:
   Today / 7d / 30d / 90d / All) drives every view, including the command table,
   with its tabs in the same top-right corner everywhere. `yore stats` and
-  `yore agents` open straight on those two screens. Tags column, `t` executor
-  filter, `Ctrl+T` tag a row, `S` sync-now; Enter recalls, `y` copies. (yore
+  `yore agents` open straight on those two screens. Separate `exec` and `tags`
+  columns, `e` filters by the row's executor and `t` by its tag, `Ctrl+T` tags a
+  row, `S` sync-now; Enter recalls, `y` copies. (yore
   leaves your own `h` alone.) Pane sizes you drag persist to
   `~/.config/yore/ui.toml` — kept out of your hand-edited `config.toml`.
 - **`hs` + scoped `hsa`/`hss`/`hsc`/`hsw`** search aliases; `yore search
   --headless` for scripts and pipes.
 - **Freeform tags** — label commands and sessions (`yore tag add refactor`,
-  filter `yore search --tag refactor`); a record can carry several, the executor
-  is just an auto-applied one, `auto_tags` tags by directory, and they sync E2E.
-- **AI-agent capture** — auto-tags what agents run (`--executor claude-code`);
+  filter `yore search --tag refactor`); a record can carry several, `auto_tags`
+  labels by directory, and they sync E2E. Tagging a session covers the work that
+  shell has already done and everything it does next. `yore tag list` counts
+  commands, not labellings. Which agent ran a command is a *separate* axis —
+  `--executor`, never `--tag`.
+- **AI-agent capture** — records which agent ran what (`--executor claude-code`);
   `yore init claude-code | cursor | opencode | codex | devin` installs each one's
   native hooks/plugin so even their non-interactive shells are captured,
   prompt-traced, with exit status and — via a PreToolUse start-stamp — real
@@ -231,10 +242,13 @@ in [architecture.md](docs/architecture.md)); all state lives under
 | Capture what Claude Code / Devin runs + let it query history (MCP) | `yore init claude-code` \| `yore init devin` (once) |
 | See only what an agent ran | `yore search --executor claude-code` |
 | Tag commands/sessions and filter by tag | `yore tag add refactor` · `yore search --tag refactor` |
+| See what your tags actually cover | `yore tag list` (counts commands; `--scope all` for every machine) |
 | Let an agent check a command's risk / history | it calls the `assess_risk` MCP tool |
 | Grep history in a script | `hs <query>` \| … or `yore search --headless <query>` |
 | Force a sync now | `yore sync` (or `S` in `hb`) |
-| Add another machine | `yore devices token`, then `yore setup --token …` there |
+| Add another machine | `n` in `yore devices` (or `yore devices token`), then `yore setup --token …` there, then approve it with `a` |
+| Approve or revoke a machine | `yore devices` — `a` approves, `x` revokes, both ask first |
+| See which enrollment tokens are outstanding | `yore devices`, tokens pane — open / claimed (by which machine) / expired / revoked; `x` cancels an open one |
 | Get back in after losing every machine | `yore recover` (needs the recovery phrase) |
 | Diagnose / status | `yore doctor` / `yore status` |
 | Stop the daemon / server | `yore stop` / `yore server stop` |
