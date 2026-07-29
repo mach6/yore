@@ -283,13 +283,6 @@ func bootstrapActive(t *testing.T, base *testClient, id string) *testClient {
 	return dc
 }
 
-// ---- New ----
-
-func TestNewRefusesEmptyToken(t *testing.T) {
-	_, err := New(Options{DBPath: filepath.Join(t.TempDir(), "x.db"), Token: ""})
-	require.Error(t, err, "expected error for empty token")
-}
-
 // ---- auth (bearer token; runs before signatures) ----
 
 func TestAuth(t *testing.T) {

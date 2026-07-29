@@ -788,9 +788,9 @@ signature verified.
 
 ## The sync server
 
-Multi-tenant and sharded. Each tenant is an isolated bbolt file owned solely by
-the server process; the identity that signed a request selects the tenant every
-handler operates on.
+Single-tenant or multi-tenant, never a mix. Each tenant is an isolated bbolt file
+owned solely by the server process; the identity that signed a request selects
+the tenant every handler operates on.
 
 - **Device → tenant.** The auth middleware finds the tenant holding the signing
   device's record (ids are globally-unique ULIDs, so at most one matches) and
@@ -800,12 +800,17 @@ handler operates on.
   how many tenants exist) and binds that tenant's db into the request context. No
   match → `401`. A request that somehow reaches a handler with no bound tenant
   fails `500` rather than touch another tenant's data (fail-closed; no shared db).
-- **Sharding.** The **default** tenant (the single `$YORE_TOKEN` / `--token` /
-  `$YORE_TOKEN_FILE`) uses the server's `--db` path unchanged — a single-token
-  server is exactly as before. Named tenants come from `$YORE_TOKENS_FILE` (a
-  JSON `{"name":"token", …}`) and live at `<dir(--db)>/tenants/<name>.db`; names
-  are restricted to `[A-Za-z0-9_-]+` and `default` is reserved. Duplicate tokens
-  are rejected at startup (two tenants sharing a token would be indistinguishable).
+- **Sharding — one mode or the other.** A server is configured **either** with a
+  single token (`--token` / `$YORE_TOKEN` / `$YORE_TOKEN_FILE`), hosting one
+  tenant whose db is `--db`, **or** with named tenants from `$YORE_TOKENS_FILE` (a
+  JSON `{"name":"token", …}`) at `<dir(--db)>/tenants/<name>.db`. In the second
+  mode nothing is created at `--db`; the path only roots `tenants/` and
+  `backups/`. Both together is refused, and so is neither: the tokens file is not
+  an addition to a mandatory "default" tenant that a multi-tenant operator never
+  asked for, and a server with no configured token has no way in at all. Tenant
+  names are `[A-Za-z0-9_-]+`; `default` is reserved because it names the backup
+  directory of a single-token server's tenant. Duplicate tokens are rejected at
+  startup (two tenants sharing a token would be indistinguishable).
 - **Storage** is ciphertext + device public keys only; the server can never
   decrypt. **The client and wire protocol are unchanged by multi-tenancy.**
 - **Per-tenant rolling backups.** With `$YORE_BACKUP_INTERVAL` > 0 (default 1h;
@@ -906,8 +911,8 @@ fields. String-backed durations/sizes are stored verbatim and parsed by typed
 accessors that fall back to the default on a malformed value.
 
 Server-side settings are env vars, not config.toml: `$YORE_TOKEN` /
-`$YORE_TOKEN_FILE`, `$YORE_TOKENS_FILE`, `$YORE_BACKUP_INTERVAL`,
-`$YORE_BACKUP_KEEP`.
+`$YORE_TOKEN_FILE` **or** `$YORE_TOKENS_FILE` (mutually exclusive — see the sync
+server above), `$YORE_BACKUP_INTERVAL`, `$YORE_BACKUP_KEEP`.
 
 ## Invariants (do not break)
 

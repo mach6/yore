@@ -286,11 +286,17 @@ tenant-specific; the server routes each request by the identity that signed it.
   token can never see another tenant's data. There is no shared fallback db — a
   request that reaches a handler without a resolved tenant fails `500` rather than
   touch another tenant's storage.
-- **Sharded files**: the **default** tenant (the single `$YORE_TOKEN` /
-  `$YORE_TOKEN_FILE` / `--token`) uses the server's `--db` path unchanged. Named
-  tenants (from `$YORE_TOKENS_FILE`, a JSON `{"name":"token", …}`) live at
-  `<dir(--db)>/tenants/<name>.db`; names are `[A-Za-z0-9_-]+` and `default` is
-  reserved. Duplicate tokens are refused at startup.
+- **One mode or the other**: a server is configured **either** with a single
+  token (`--token` / `$YORE_TOKEN` / `$YORE_TOKEN_FILE`) — one tenant, its db at
+  `--db` — **or** with named tenants (`$YORE_TOKENS_FILE`, a JSON
+  `{"name":"token", …}`) at `<dir(--db)>/tenants/<name>.db`, in which case
+  nothing is created at `--db` itself and it serves only to root `tenants/` and
+  `backups/`. Configuring both is refused at startup, as is configuring neither:
+  there is exactly one answer to which file a token's history lives in, and no
+  way to start a server with no way in.
+- **Names**: tenant names are `[A-Za-z0-9_-]+`; `default` is reserved (it is the
+  backup directory of a single-token server's tenant). Duplicate tokens are
+  refused at startup — two tenants sharing a token would be indistinguishable.
 
 ## Server storage (bbolt, ciphertext only)
 

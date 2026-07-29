@@ -16,17 +16,16 @@ import (
 	"yore/internal/wire"
 )
 
-// multiTenant builds a Server with the default tenant plus one named tenant
-// ("alice"), serves it over httptest, and returns a client for each tenant along
-// with the Server and its default DBPath.
-func multiTenant(t *testing.T) (def, alice *testClient, s *Server, dbPath string) {
+// multiTenant builds a Server with two named tenants ("alice", "bob") and no
+// single-token tenant, serves it over httptest, and returns a client for each
+// tenant along with the Server and the DBPath rooting tenants/ and backups/.
+func multiTenant(t *testing.T) (alice, bob *testClient, s *Server, dbPath string) {
 	t.Helper()
 	dbPath = filepath.Join(t.TempDir(), "sync.db")
 	var err error
 	s, err = New(Options{
 		DBPath:  dbPath,
-		Token:   "default-tok",
-		Tenants: map[string]string{"alice": "alice-tok"},
+		Tenants: map[string]string{"alice": "alice-tok", "bob": "bob-tok"},
 	})
 	require.NoError(t, err, "New multi-tenant")
 	srv := httptest.NewServer(s.Handler())
@@ -36,81 +35,120 @@ func multiTenant(t *testing.T) (def, alice *testClient, s *Server, dbPath string
 	})
 	// Each tenant gets a bootstrapped active device: routing is now by device
 	// record, so a tenant with no device has nothing to route by.
-	def = bootstrapActive(t, &testClient{t: t, base: srv.URL, token: "default-tok"}, "def-root")
 	alice = bootstrapActive(t, &testClient{t: t, base: srv.URL, token: "alice-tok"}, "alice-root")
-	return def, alice, s, dbPath
+	bob = bootstrapActive(t, &testClient{t: t, base: srv.URL, token: "bob-tok"}, "bob-root")
+	return alice, bob, s, dbPath
+}
+
+// TestNewTokenModes pins the either/or: a single token, or named tenants, never
+// both and never neither.
+func TestNewTokenModes(t *testing.T) {
+	t.Run("neither is refused", func(t *testing.T) {
+		_, err := New(Options{DBPath: filepath.Join(t.TempDir(), "sync.db")})
+		require.Error(t, err, "no token and no tenants must be refused")
+	})
+
+	t.Run("both is refused", func(t *testing.T) {
+		_, err := New(Options{
+			DBPath:  filepath.Join(t.TempDir(), "sync.db"),
+			Token:   "tok",
+			Tenants: map[string]string{"alice": "alice-tok"},
+		})
+		require.Error(t, err, "a token plus named tenants must be refused")
+	})
+
+	t.Run("named tenants create no db at DBPath", func(t *testing.T) {
+		dbPath := filepath.Join(t.TempDir(), "sync.db")
+		s, err := New(Options{DBPath: dbPath, Tenants: map[string]string{"alice": "alice-tok"}})
+		require.NoError(t, err, "New with named tenants only")
+		t.Cleanup(func() { _ = s.Close() })
+
+		_, err = os.Stat(dbPath)
+		require.Truef(t, os.IsNotExist(err), "nothing may be created at DBPath: %v", err)
+		_, err = os.Stat(filepath.Join(filepath.Dir(dbPath), "tenants", "alice.db"))
+		require.NoError(t, err, "alice's db must exist")
+	})
+
+	t.Run("single token creates the db at DBPath", func(t *testing.T) {
+		dbPath := filepath.Join(t.TempDir(), "sync.db")
+		s, err := New(Options{DBPath: dbPath, Token: "tok"})
+		require.NoError(t, err, "New with a single token")
+		t.Cleanup(func() { _ = s.Close() })
+
+		_, err = os.Stat(dbPath)
+		require.NoError(t, err, "the db must exist at DBPath")
+		_, err = os.Stat(filepath.Join(filepath.Dir(dbPath), "tenants"))
+		require.Truef(t, os.IsNotExist(err), "no tenants dir for a single-token server: %v", err)
+	})
 }
 
 // TestTenantIsolation is the security boundary: one tenant's data must never be
 // visible to another tenant's device, and each lives in its own file on disk.
 func TestTenantIsolation(t *testing.T) {
-	def, alice, _, dbPath := multiTenant(t)
+	alice, bob, _, dbPath := multiTenant(t)
 
-	// Bootstrap a device and push records under the DEFAULT tenant.
-	dev := def
-	status, body := dev.do("POST", "/v1/records", wire.PushReq{HostID: "hostD", Records: mkRecords(1, 3)})
-	require.Equalf(t, http.StatusOK, status, "default push: body %s", body)
+	// alice pushes records.
+	status, body := alice.do("POST", "/v1/records", wire.PushReq{HostID: "hostA", Records: mkRecords(1, 3)})
+	require.Equalf(t, http.StatusOK, status, "alice push: body %s", body)
 
-	// alice sees only her OWN device, and NO hosts, NO records — a separate db.
-	status, body = alice.do("GET", "/v1/devices", nil)
-	require.Equalf(t, http.StatusOK, status, "alice list devices: body %s", body)
-	aliceDevs := mustJSON[[]wire.Device](t, body)
-	for _, d := range aliceDevs {
-		require.NotEqual(t, dev.devID, d.ID, "alice must not see default's device")
+	// bob sees only his OWN device, and NO hosts, NO records — a separate db.
+	status, body = bob.do("GET", "/v1/devices", nil)
+	require.Equalf(t, http.StatusOK, status, "bob list devices: body %s", body)
+	for _, d := range mustJSON[[]wire.Device](t, body) {
+		require.NotEqual(t, alice.devID, d.ID, "bob must not see alice's device")
 	}
 
-	status, body = alice.do("GET", "/v1/hosts", nil)
-	require.Equalf(t, http.StatusOK, status, "alice hosts: body %s", body)
-	require.Empty(t, mustJSON[wire.HostsResp](t, body).Hosts, "alice must not see default's hosts")
+	status, body = bob.do("GET", "/v1/hosts", nil)
+	require.Equalf(t, http.StatusOK, status, "bob hosts: body %s", body)
+	require.Empty(t, mustJSON[wire.HostsResp](t, body).Hosts, "bob must not see alice's hosts")
 
-	status, body = alice.do("GET", "/v1/records?host_id=hostD", nil)
-	require.Equalf(t, http.StatusOK, status, "alice pull: body %s", body)
-	require.Empty(t, mustJSON[wire.PullResp](t, body).Records, "alice must not see default's records")
+	status, body = bob.do("GET", "/v1/records?host_id=hostA", nil)
+	require.Equalf(t, http.StatusOK, status, "bob pull: body %s", body)
+	require.Empty(t, mustJSON[wire.PullResp](t, body).Records, "bob must not see alice's records")
 
-	// The default tenant still sees its own device and records.
-	status, body = def.do("GET", "/v1/devices", nil)
-	require.Equalf(t, http.StatusOK, status, "default list devices: body %s", body)
-	require.Len(t, mustJSON[[]wire.Device](t, body), 1, "default sees its device")
-
-	status, body = def.do("GET", "/v1/records?host_id=hostD", nil)
-	require.Equalf(t, http.StatusOK, status, "default pull: body %s", body)
-	require.Len(t, mustJSON[wire.PullResp](t, body).Records, 3, "default sees its records")
-
-	// alice can independently bootstrap her OWN device — no collision with the
-	// default tenant's id space, since they are different files.
-	_ = alice
+	// alice still sees her own device and records.
 	status, body = alice.do("GET", "/v1/devices", nil)
-	require.Equalf(t, http.StatusOK, status, "alice list after own bootstrap: body %s", body)
+	require.Equalf(t, http.StatusOK, status, "alice list devices: body %s", body)
 	require.Len(t, mustJSON[[]wire.Device](t, body), 1, "alice sees only her own device")
-	_, body = def.do("GET", "/v1/devices", nil)
-	require.Len(t, mustJSON[[]wire.Device](t, body), 1, "default still sees only its own device")
 
-	// The two tenants are separate files on disk.
+	status, body = alice.do("GET", "/v1/records?host_id=hostA", nil)
+	require.Equalf(t, http.StatusOK, status, "alice pull: body %s", body)
+	require.Len(t, mustJSON[wire.PullResp](t, body).Records, 3, "alice sees her records")
+
+	// Each tenant bootstrapped its own device with no collision in the other's id
+	// space, since they are different files.
+	_, body = bob.do("GET", "/v1/devices", nil)
+	require.Len(t, mustJSON[[]wire.Device](t, body), 1, "bob sees only his own device")
+
+	// Both tenants are separate files under tenants/, and nothing was created at
+	// the --db path itself.
 	_, err := os.Stat(dbPath)
-	require.NoError(t, err, "default db file must exist")
+	require.Truef(t, os.IsNotExist(err), "no db at DBPath in multi-tenant mode: %v", err)
 	aliceDB := filepath.Join(filepath.Dir(dbPath), "tenants", "alice.db")
+	bobDB := filepath.Join(filepath.Dir(dbPath), "tenants", "bob.db")
 	_, err = os.Stat(aliceDB)
 	require.NoErrorf(t, err, "alice db file must exist at %s", aliceDB)
-	require.NotEqual(t, dbPath, aliceDB, "tenant files must differ")
+	_, err = os.Stat(bobDB)
+	require.NoErrorf(t, err, "bob db file must exist at %s", bobDB)
 }
 
 // TestTenantAuth checks device routing: an unknown or absent credential is
 // rejected, and each tenant's device authenticates to its own tenant only.
 func TestTenantAuth(t *testing.T) {
-	def, alice, _, _ := multiTenant(t)
+	alice, bob, _, _ := multiTenant(t)
 
-	bad := def.anon().withToken("garbage")
+	bad := alice.anon().withToken("garbage")
 	status, _ := bad.do("GET", "/v1/devices", nil)
 	require.Equal(t, http.StatusUnauthorized, status, "unknown caller => 401")
 
-	none := &testClient{t: t, base: def.base}
+	none := &testClient{t: t, base: alice.base}
 	status, _ = none.do("GET", "/v1/devices", nil)
 	require.Equal(t, http.StatusUnauthorized, status, "no credential => 401")
 
-	status, _ = def.do("GET", "/v1/devices", nil)
-	require.Equal(t, http.StatusOK, status, "the default tenant's device authenticates")
 	status, _ = alice.do("GET", "/v1/devices", nil)
 	require.Equal(t, http.StatusOK, status, "alice's device authenticates")
+	status, _ = bob.do("GET", "/v1/devices", nil)
+	require.Equal(t, http.StatusOK, status, "bob's device authenticates")
 
 	// Health stays open with no token even in multi-tenant mode.
 	status, _ = none.do("GET", "/v1/health", nil)
@@ -118,7 +156,7 @@ func TestTenantAuth(t *testing.T) {
 }
 
 // TestNewBadTenantName rejects tenant names that are unsafe as filenames or
-// collide with the reserved default tenant.
+// collide with the reserved single-tenant name.
 func TestNewBadTenantName(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -135,7 +173,6 @@ func TestNewBadTenantName(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := New(Options{
 				DBPath:  filepath.Join(t.TempDir(), "sync.db"),
-				Token:   "tok",
 				Tenants: tc.tenants,
 			})
 			require.Error(t, err, "expected error for tenant name")
@@ -146,11 +183,14 @@ func TestNewBadTenantName(t *testing.T) {
 // TestNewTenantTokenErrors rejects an empty or duplicate tenant token.
 func TestNewTenantTokenErrors(t *testing.T) {
 	dir := t.TempDir()
-	_, err := New(Options{DBPath: filepath.Join(dir, "a.db"), Token: "tok", Tenants: map[string]string{"alice": ""}})
+	_, err := New(Options{DBPath: filepath.Join(dir, "a.db"), Tenants: map[string]string{"alice": ""}})
 	require.Error(t, err, "empty tenant token must be rejected")
 
-	_, err = New(Options{DBPath: filepath.Join(dir, "b.db"), Token: "dup", Tenants: map[string]string{"alice": "dup"}})
-	require.Error(t, err, "a tenant reusing another's token must be rejected")
+	_, err = New(Options{
+		DBPath:  filepath.Join(dir, "b.db"),
+		Tenants: map[string]string{"alice": "dup", "bob": "dup"},
+	})
+	require.Error(t, err, "two tenants sharing a token must be rejected")
 }
 
 // TestMustDBMissingContext proves mustDB fails closed (500) when no tenant db is
@@ -177,12 +217,10 @@ func TestHandlerRefusesMissingTenantDB(t *testing.T) {
 // TestBackupPerTenant snapshots every tenant and confirms each snapshot is a
 // valid bbolt db containing only that tenant's data.
 func TestBackupPerTenant(t *testing.T) {
-	def, alice, s, dbPath := multiTenant(t)
+	alice, bob, s, dbPath := multiTenant(t)
 
-	devD := def
-	devD.do("POST", "/v1/records", wire.PushReq{HostID: "hd", Records: mkRecords(1, 2)})
-	devA := alice
-	devA.do("POST", "/v1/records", wire.PushReq{HostID: "ha", Records: mkRecords(1, 4)})
+	alice.do("POST", "/v1/records", wire.PushReq{HostID: "ha", Records: mkRecords(1, 2)})
+	bob.do("POST", "/v1/records", wire.PushReq{HostID: "hb", Records: mkRecords(1, 4)})
 
 	s.backupAll()
 
@@ -193,8 +231,8 @@ func TestBackupPerTenant(t *testing.T) {
 		ownN      int
 		otherHost string
 	}{
-		{"default", "records:hd", 2, "records:ha"},
-		{"alice", "records:ha", 4, "records:hd"},
+		{"alice", "records:ha", 2, "records:hb"},
+		{"bob", "records:hb", 4, "records:ha"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.tenant, func(t *testing.T) {
@@ -223,6 +261,27 @@ func TestBackupPerTenant(t *testing.T) {
 			require.NoError(t, bdb.Close(), "close snapshot")
 		})
 	}
+}
+
+// TestBackupSingleTenant covers the single-token server's backup path: its one
+// tenant snapshots under backups/default/.
+func TestBackupSingleTenant(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "sync.db")
+	s, err := New(Options{DBPath: dbPath, Token: "tok"})
+	require.NoError(t, err, "New single-token")
+	t.Cleanup(func() { _ = s.Close() })
+
+	s.backupAll()
+
+	entries, err := os.ReadDir(filepath.Join(filepath.Dir(dbPath), "backups", soleTenant))
+	require.NoError(t, err, "read backups/default")
+	found := false
+	for _, e := range entries {
+		if _, ok := backupTimestamp(e.Name()); ok {
+			found = true
+		}
+	}
+	require.True(t, found, "expected a snapshot under backups/default")
 }
 
 // TestPruneBackupsKeepsNewest confirms prune keeps the newest N and leaves
@@ -283,9 +342,9 @@ func TestBackupLoopRuns(t *testing.T) {
 		close(exited)
 	}()
 
-	defDir := filepath.Join(filepath.Dir(dbPath), "backups", "default")
+	aliceDir := filepath.Join(filepath.Dir(dbPath), "backups", "alice")
 	require.Eventually(t, func() bool {
-		entries, err := os.ReadDir(defDir)
+		entries, err := os.ReadDir(aliceDir)
 		if err != nil {
 			return false
 		}

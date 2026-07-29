@@ -33,6 +33,87 @@ func TestLoadTenants(t *testing.T) {
 	require.NoError(t, os.WriteFile(bad, []byte("{not json"), 0o600), "write bad")
 	_, err = loadTenants(bad)
 	require.Error(t, err, "invalid json")
+
+	// A well-formed but empty object => hard error, never a silent fallback to
+	// the single-token mode.
+	empty := filepath.Join(dir, "empty.json")
+	require.NoError(t, os.WriteFile(empty, []byte(`{}`), 0o600), "write empty")
+	_, err = loadTenants(empty)
+	require.Error(t, err, "empty tenants object")
+}
+
+func TestResolveServerToken(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "token")
+	require.NoError(t, os.WriteFile(file, []byte("from-file\n"), 0o600), "write token file")
+
+	t.Run("flag wins", func(t *testing.T) {
+		t.Setenv("YORE_TOKEN", "from-env")
+		t.Setenv("YORE_TOKEN_FILE", file)
+		tok, err := resolveServerToken("from-flag")
+		require.NoError(t, err)
+		require.Equal(t, "from-flag", tok)
+	})
+
+	t.Run("env beats file", func(t *testing.T) {
+		t.Setenv("YORE_TOKEN", "from-env")
+		t.Setenv("YORE_TOKEN_FILE", file)
+		tok, err := resolveServerToken("")
+		require.NoError(t, err)
+		require.Equal(t, "from-env", tok)
+	})
+
+	t.Run("file trailing newline trimmed", func(t *testing.T) {
+		t.Setenv("YORE_TOKEN", "")
+		t.Setenv("YORE_TOKEN_FILE", file)
+		tok, err := resolveServerToken("")
+		require.NoError(t, err)
+		require.Equal(t, "from-file", tok)
+	})
+
+	t.Run("unreadable file is an error", func(t *testing.T) {
+		t.Setenv("YORE_TOKEN", "")
+		t.Setenv("YORE_TOKEN_FILE", filepath.Join(dir, "nope"))
+		_, err := resolveServerToken("")
+		require.Error(t, err)
+	})
+
+	t.Run("nothing set is empty, not an error", func(t *testing.T) {
+		t.Setenv("YORE_TOKEN", "")
+		t.Setenv("YORE_TOKEN_FILE", "")
+		tok, err := resolveServerToken("")
+		require.NoError(t, err)
+		require.Empty(t, tok, "the caller decides whether an empty token is fatal")
+	})
+}
+
+// TestRunServerTokenModes pins the either/or at the CLI boundary: neither a
+// token nor a tokens file fails, and both together fails — without ever
+// reaching the point of opening a database.
+func TestRunServerTokenModes(t *testing.T) {
+	dir := t.TempDir()
+	tokens := filepath.Join(dir, "tokens.json")
+	require.NoError(t, os.WriteFile(tokens, []byte(`{"alice":"a-tok"}`), 0o600), "write tokens")
+
+	t.Run("neither", func(t *testing.T) {
+		t.Setenv("YORE_TOKEN", "")
+		t.Setenv("YORE_TOKEN_FILE", "")
+		t.Setenv("YORE_TOKENS_FILE", "")
+		require.Equal(t, 1, runServer(filepath.Join(dir, "a.db"), "127.0.0.1:0", "", ""), "no credential must fail")
+	})
+
+	t.Run("both", func(t *testing.T) {
+		t.Setenv("YORE_TOKEN", "tok")
+		t.Setenv("YORE_TOKEN_FILE", "")
+		t.Setenv("YORE_TOKENS_FILE", tokens)
+		require.Equal(t, 1, runServer(filepath.Join(dir, "b.db"), "127.0.0.1:0", "", ""), "both modes must fail")
+	})
+
+	// Neither case may leave a database behind.
+	for _, name := range []string{"a.db", "b.db"} {
+		_, err := os.Stat(filepath.Join(dir, name))
+		require.Truef(t, os.IsNotExist(err), "%s must not be created: %v", name, err)
+	}
 }
 
 func TestParseBackupInterval(t *testing.T) {

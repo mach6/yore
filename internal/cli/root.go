@@ -664,16 +664,20 @@ func newServerCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "server",
 		Short: "Run the sync server (normally in a container)",
-		Long: "server runs the sync server in the foreground. The bearer token comes from\n" +
-			"--token, $YORE_TOKEN, or $YORE_TOKEN_FILE. It shuts down gracefully on\n" +
-			"SIGINT/SIGTERM; `yore server stop` is a convenience for a local instance.",
+		Long: "server runs the sync server in the foreground. It hosts either ONE tenant,\n" +
+			"whose token comes from --token, $YORE_TOKEN, or $YORE_TOKEN_FILE and whose db\n" +
+			"is --db, or a set of NAMED tenants from $YORE_TOKENS_FILE (a JSON object\n" +
+			"{\"name\":\"token\", …}), each with its own db under <dir(--db)>/tenants/.\n" +
+			"The two are mutually exclusive — set one or the other, never both.\n\n" +
+			"It shuts down gracefully on SIGINT/SIGTERM; `yore server stop` is a\n" +
+			"convenience for a local instance.",
 		RunE: func(*cobra.Command, []string) error {
 			return code(runServer(db, listen, token, pidfile))
 		},
 	}
-	cmd.Flags().StringVar(&db, "db", "yore-server.db", "path to the server database")
+	cmd.Flags().StringVar(&db, "db", "yore-server.db", "server database (with $YORE_TOKENS_FILE: roots tenants/ and backups/)")
 	cmd.Flags().StringVar(&listen, "listen", ":8080", "listen address")
-	cmd.Flags().StringVar(&token, "token", "", "bearer token (else $YORE_TOKEN / $YORE_TOKEN_FILE)")
+	cmd.Flags().StringVar(&token, "token", "", "single tenant's bearer token (else $YORE_TOKEN / $YORE_TOKEN_FILE)")
 	cmd.Flags().StringVar(&pidfile, "pidfile", "", "write the server PID here (default <db>.pid; enables `yore server stop`)")
 
 	var stopDB, stopPidfile string

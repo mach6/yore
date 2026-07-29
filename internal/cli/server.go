@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -19,35 +20,34 @@ import (
 //	yore server stop [--pidfile F | --db P]           stop a running server
 //
 // The server also shuts down gracefully on SIGINT/SIGTERM (Ctrl-C, docker
-// stop), so `stop` is a convenience for a backgrounded local server. The default
-// tenant's bearer token comes from --token, $YORE_TOKEN, or $YORE_TOKEN_FILE.
-// Named tenants (each a separate sharded db) come from $YORE_TOKENS_FILE, a JSON
-// object {"name":"token", …}. Rolling per-tenant backups are controlled by
-// $YORE_BACKUP_INTERVAL (a duration, default 1h; "0" disables) and
-// $YORE_BACKUP_KEEP (int, default 3).
+// stop), so `stop` is a convenience for a backgrounded local server.
+//
+// It hosts either ONE tenant — its token from --token, $YORE_TOKEN, or
+// $YORE_TOKEN_FILE, its db at --db — or a set of NAMED tenants from
+// $YORE_TOKENS_FILE (a JSON object {"name":"token", …}), each its own db at
+// <dir(--db)>/tenants/<name>.db. The two are mutually exclusive: configuring
+// both is an error, not a merge, so there is exactly one answer to which db a
+// token's history lives in.
+//
+// Rolling per-tenant backups are controlled by $YORE_BACKUP_INTERVAL (a
+// duration, default 1h; "0" disables) and $YORE_BACKUP_KEEP (int, default 3).
 func runServer(db, listen, token, pidfile string) int {
-	tok := token
-	if tok == "" {
-		tok = os.Getenv("YORE_TOKEN")
-	}
-	if tok == "" {
-		if tf := os.Getenv("YORE_TOKEN_FILE"); tf != "" {
-			b, err := os.ReadFile(tf)
-			if err != nil {
-				fmt.Fprintln(os.Stderr, "yore server: reading token file:", err)
-				return 1
-			}
-			tok = string(trimNL(b))
-		}
-	}
-	if tok == "" {
-		fmt.Fprintln(os.Stderr, "yore server: no token set (use --token, $YORE_TOKEN, or $YORE_TOKEN_FILE)")
+	tok, err := resolveServerToken(token)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "yore server:", err)
 		return 1
 	}
-
 	tenants, err := loadTenants(os.Getenv("YORE_TOKENS_FILE"))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "yore server:", err)
+		return 1
+	}
+	switch {
+	case tok == "" && len(tenants) == 0:
+		fmt.Fprintln(os.Stderr, "yore server: no token set (one tenant: --token, $YORE_TOKEN, or $YORE_TOKEN_FILE; named tenants: $YORE_TOKENS_FILE)")
+		return 1
+	case tok != "" && len(tenants) != 0:
+		fmt.Fprintln(os.Stderr, "yore server: $YORE_TOKENS_FILE cannot be combined with --token/$YORE_TOKEN/$YORE_TOKEN_FILE; set one or the other")
 		return 1
 	}
 	backupInterval, err := parseBackupInterval(os.Getenv("YORE_BACKUP_INTERVAL"))
@@ -69,7 +69,12 @@ func runServer(db, listen, token, pidfile string) int {
 		defer func() { _ = os.Remove(pf) }()
 	}
 
-	fmt.Fprintf(os.Stderr, "yore server listening on %s (db %s, tenants %d)\n", listen, db, len(tenants))
+	if len(tenants) == 0 {
+		fmt.Fprintf(os.Stderr, "yore server listening on %s (db %s)\n", listen, db)
+	} else {
+		fmt.Fprintf(os.Stderr, "yore server listening on %s (%d tenants under %s)\n",
+			listen, len(tenants), filepath.Join(filepath.Dir(db), "tenants"))
+	}
 	opts := server.Options{
 		DBPath:         db,
 		Token:          tok,
@@ -84,10 +89,33 @@ func runServer(db, listen, token, pidfile string) int {
 	return 0
 }
 
+// resolveServerToken returns the single tenant's bearer token from the --token
+// flag, else $YORE_TOKEN, else the contents of $YORE_TOKEN_FILE. An empty result
+// means none was configured — which is an error only if no tokens file was given
+// either; the caller decides.
+func resolveServerToken(flag string) (string, error) {
+	if flag != "" {
+		return flag, nil
+	}
+	if tok := os.Getenv("YORE_TOKEN"); tok != "" {
+		return tok, nil
+	}
+	tf := os.Getenv("YORE_TOKEN_FILE")
+	if tf == "" {
+		return "", nil
+	}
+	b, err := os.ReadFile(tf)
+	if err != nil {
+		return "", fmt.Errorf("reading token file: %w", err)
+	}
+	return string(trimNL(b)), nil
+}
+
 // loadTenants reads named tenants from a JSON object {"name":"token", …} at
-// path. An empty path means no named tenants (single-tenant, fully back-compat).
-// An unreadable file or invalid JSON is a hard error so the server never
-// silently starts single-tenant when multi-tenancy was intended.
+// path. An empty path means no named tenants — the single-token server. An
+// unreadable file, invalid JSON, or an object with no tenants in it is a hard
+// error: the server must never silently fall back to some other mode when
+// multi-tenancy was intended.
 func loadTenants(path string) (map[string]string, error) {
 	if path == "" {
 		return nil, nil
@@ -99,6 +127,9 @@ func loadTenants(path string) (map[string]string, error) {
 	var tenants map[string]string
 	if err := json.Unmarshal(b, &tenants); err != nil {
 		return nil, fmt.Errorf("parsing tokens file %s: %w", path, err)
+	}
+	if len(tenants) == 0 {
+		return nil, fmt.Errorf("tokens file %s defines no tenants", path)
 	}
 	return tenants, nil
 }

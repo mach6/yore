@@ -14,7 +14,8 @@ import (
 )
 
 // backupDir returns the directory holding one tenant's rolling snapshots:
-// <dir(DBPath)>/backups/<tenant>/. The default tenant uses "default".
+// <dir(DBPath)>/backups/<tenant>/. A single-token server's one tenant uses
+// "default".
 func (s *Server) backupDir(tenant string) string {
 	return filepath.Join(filepath.Dir(s.dbPath), "backups", tenant)
 }

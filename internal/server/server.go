@@ -1,9 +1,10 @@
 // Package server is yore's sync server. It stores ONLY ciphertext (sealed
 // record blobs, HK wraps, DEK wraps) and device public keys; it can never
-// decrypt anything. It is multi-tenant: the bearer token selects a tenant, and
-// each tenant is an isolated bbolt file owned solely by this process (the
-// default tenant uses Options.DBPath; named tenants shard beside it), so tenants
-// never see each other's data. The HTTP API is defined by package internal/wire.
+// decrypt anything. A server hosts either exactly one tenant (Options.Token, its
+// db at Options.DBPath) or a set of named tenants (Options.Tenants, sharded
+// beside it) — never both. Each tenant is an isolated bbolt file owned solely by
+// this process, so tenants never see each other's data. The HTTP API is defined
+// by package internal/wire.
 package server
 
 import (
@@ -22,6 +23,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -57,9 +59,12 @@ const metaHKVersion = "hk_version"
 // maxBody caps every request body.
 const maxBody = 10 << 20 // 10 MiB
 
-// defaultTenant is the reserved name of the tenant backed by Options.DBPath. It
-// is also the subdirectory its rolling backups land in.
-const defaultTenant = "default"
+// soleTenant is the name of the one tenant a single-token server hosts, backed
+// by Options.DBPath. It is also the subdirectory its rolling backups land in,
+// which is why it stays reserved for named tenants too: a tenant called
+// "default" would drop its snapshots into backups/default/ beside those of a
+// different db, and a restore could then pick the wrong file.
+const soleTenant = "default"
 
 // defaultBackupKeep is used when backups are enabled but BackupKeep is unset.
 const defaultBackupKeep = 3
@@ -68,11 +73,14 @@ const defaultBackupKeep = 3
 // separators, dots, or other surprises are allowed.
 var tenantNameRE = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
-// Options configures a Server.
+// Options configures a Server. Exactly one of Token (one tenant, its db at
+// DBPath) or Tenants (named tenants, sharded beside it) must be set: neither is
+// a server with no way in, both is two answers to "where does this token's data
+// live" — so New refuses either way.
 type Options struct {
-	DBPath  string            // the default tenant's bbolt file
-	Token   string            // the default tenant's bearer token; empty = refuse to start
-	Tenants map[string]string // named tenant -> bearer token (sharded under dir(DBPath)/tenants/)
+	DBPath  string            // one tenant: its bbolt file. Named tenants: only roots tenants/ and backups/
+	Token   string            // the single tenant's bearer token; mutually exclusive with Tenants
+	Tenants map[string]string // named tenant -> bearer token, at dir(DBPath)/tenants/<name>.db
 
 	BackupInterval time.Duration // rolling per-tenant backups every interval; 0 disables
 	BackupKeep     int           // backups retained per tenant (default 3 when enabled)
@@ -185,7 +193,7 @@ func redeemToken(tx *bbolt.Tx, sum []byte, now time.Time, deviceID string) error
 // Server is an open sync server. Each tenant has its own bbolt file; the bearer
 // token on a request selects which one every handler operates on.
 type Server struct {
-	tenants        []*tenant     // all open tenants, default first
+	tenants        []*tenant     // all open tenants (one, or every named tenant in name order)
 	byToken        []tokenTenant // bootstrap token -> tenant (constant-time matched)
 	dbPath         string        // Options.DBPath; roots the backups/ and tenants/ dirs
 	backupInterval time.Duration
@@ -391,13 +399,13 @@ func (s *Server) requireSignature(w http.ResponseWriter, r *http.Request, db *bb
 }
 
 // validateTenantName rejects anything that would be unsafe as a filename or
-// collide with the reserved default tenant. Named tenants become
+// collide with the reserved single-tenant name. Named tenants become
 // dir(DBPath)/tenants/<name>.db, so only [A-Za-z0-9_-]+ is allowed.
 func validateTenantName(name string) error {
 	if name == "" {
 		return errors.New("server: empty tenant name")
 	}
-	if name == defaultTenant {
+	if name == soleTenant {
 		return fmt.Errorf("server: tenant name %q is reserved", name)
 	}
 	if !tenantNameRE.MatchString(name) {
@@ -428,36 +436,50 @@ func openTenantDB(path string) (*bbolt.DB, error) {
 }
 
 // New opens every tenant's database (creating and initialising each), and maps
-// each bearer token to its tenant. The default tenant is Options.DBPath keyed by
-// Options.Token; every entry of Options.Tenants is a named tenant sharded at
-// dir(DBPath)/tenants/<name>.db. An empty default token is refused so the server
-// is never accidentally open. Tenant dbs are opened eagerly (the count is small)
-// so the backup loop can cover every one and no request pays an open cost.
+// each bearer token to its tenant. With Options.Token set the server hosts one
+// tenant, its db at Options.DBPath. With Options.Tenants set each entry is a
+// named tenant sharded at dir(DBPath)/tenants/<name>.db and nothing is created at
+// DBPath itself. Setting both, or neither, is refused. Tenant dbs are opened
+// eagerly (the count is small) so the backup loop can cover every one and no
+// request pays an open cost.
 func New(opts Options) (*Server, error) {
-	if opts.Token == "" {
-		return nil, errors.New("server: empty token; refusing to start")
+	switch {
+	case opts.Token == "" && len(opts.Tenants) == 0:
+		return nil, errors.New("server: no token configured; refusing to start")
+	case opts.Token != "" && len(opts.Tenants) != 0:
+		return nil, errors.New("server: Token and Tenants are mutually exclusive; configure one token or a set of named tenants")
 	}
 
 	// Build the tenant table up front, validating names and rejecting duplicate
 	// tokens (two tenants sharing a token would be indistinguishable — a leak).
+	// Named tenants are ordered so startup, and any error it reports, does not
+	// depend on map iteration order.
 	type spec struct{ name, path, token string }
-	specs := []spec{{name: defaultTenant, path: opts.DBPath, token: opts.Token}}
-	seenTokens := map[string]bool{opts.Token: true}
+	var specs []spec
 	baseDir := filepath.Dir(opts.DBPath)
-	for name, token := range opts.Tenants {
-		if err := validateTenantName(name); err != nil {
-			return nil, err
+	if opts.Token != "" {
+		specs = append(specs, spec{name: soleTenant, path: opts.DBPath, token: opts.Token})
+	} else {
+		names := make([]string, 0, len(opts.Tenants))
+		for name := range opts.Tenants {
+			names = append(names, name)
 		}
-		if token == "" {
-			return nil, fmt.Errorf("server: tenant %q has an empty token", name)
+		sort.Strings(names)
+		tokenOwner := make(map[string]string, len(names))
+		for _, name := range names {
+			token := opts.Tenants[name]
+			if err := validateTenantName(name); err != nil {
+				return nil, err
+			}
+			if token == "" {
+				return nil, fmt.Errorf("server: tenant %q has an empty token", name)
+			}
+			if owner, dup := tokenOwner[token]; dup {
+				return nil, fmt.Errorf("server: tenants %q and %q share a token", owner, name)
+			}
+			tokenOwner[token] = name
+			specs = append(specs, spec{name: name, path: filepath.Join(baseDir, "tenants", name+".db"), token: token})
 		}
-		if seenTokens[token] {
-			return nil, fmt.Errorf("server: tenant %q reuses another tenant's token", name)
-		}
-		seenTokens[token] = true
-		specs = append(specs, spec{name: name, path: filepath.Join(baseDir, "tenants", name+".db"), token: token})
-	}
-	if len(opts.Tenants) > 0 {
 		if err := os.MkdirAll(filepath.Join(baseDir, "tenants"), 0o700); err != nil {
 			return nil, err
 		}
