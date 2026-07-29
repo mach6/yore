@@ -45,6 +45,10 @@ const (
 	RemoteUnavailable = "unavailable" // configured but unreachable
 	RemoteSyncing     = "syncing"     // fetch in progress
 	RemoteOK          = "ok"          // cache warm
+	// RemoteRevoked: the server refused this device because its membership was
+	// revoked. Terminal until the device is enrolled again — unlike
+	// RemoteUnavailable, retrying cannot fix it, so nothing should keep polling.
+	RemoteRevoked = "revoked"
 )
 
 type Request struct {
@@ -71,9 +75,12 @@ type QueryReq struct {
 	Tag       string `json:"tag,omitempty"`   // freeform user-tag filter (matches any effective tag); "" = any
 	Sort      string `json:"sort,omitempty"`  // "" = recency (newest first); "frecency" = frequency×recency
 	Fuzzy     bool   `json:"fuzzy,omitempty"` // subsequence (fzf-style) matching instead of substring
-	Limit     int    `json:"limit,omitempty"` // 0 = server default (200)
-	Offset    int    `json:"offset,omitempty"`
-	Dedupe    bool   `json:"dedupe,omitempty"` // collapse identical commands, newest wins
+	// Limit windows the matched rows: 0 = the server default (200), LimitAll =
+	// every match. The daemon already holds the whole corpus in RAM and sorts
+	// all matches before windowing, so LimitAll costs serialization, not work.
+	Limit  int  `json:"limit,omitempty"`
+	Offset int  `json:"offset,omitempty"`
+	Dedupe bool `json:"dedupe,omitempty"` // collapse identical commands, newest wins
 
 	// WantPrompts asks for the prompt records behind the window as well, in
 	// QueryResp.Prompts. The agent explorer needs them because a prompt that
@@ -88,6 +95,11 @@ const (
 	SortRecency  = ""         // newest first
 	SortFrecency = "frecency" // frequency × recency, same-dir boost (implies dedupe)
 )
+
+// LimitAll asks for every matching row rather than a window of them. It is for
+// callers that browse the archive itself — a history explorer that stops short
+// of your history is broken — as opposed to callers that want the top N.
+const LimitAll = -1
 
 type QueryResp struct {
 	Rows  []rec.Record `json:"rows"`

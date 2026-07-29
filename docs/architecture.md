@@ -69,7 +69,9 @@ Concise map by role. Leaf-contract packages import nothing else in the tree.
 - **store** — local bbolt (`data.db`). Holds only this host's stream. Single-owner
   (an exclusive file lock; a competing opener gets `ErrLocked`). Idempotent
   appends keyed by record id; assigns per-stream `seq`; tombstones for deletes;
-  `BackupTo` is a hot online snapshot.
+  `BackupTo` is a hot online snapshot. The `meta` bucket carries this host's
+  identity (`host_id`, `hostname`), the sync watermark (`last_uploaded_seq`), the
+  revocation record (`revoked_by_server`), and the layout version (`schema`).
 
 **Runtime & search:**
 - **daemon** — the only process that opens the store; see below.
@@ -100,6 +102,11 @@ Concise map by role. Leaf-contract packages import nothing else in the tree.
 - **shell** — the embedded zsh/bash hook scripts (+ vendored bash-preexec),
   rendered per integration mode via `text/template`.
 - **importer** — zsh (extended-history, unmetafy, multiline) and bash parsers.
+  Bash history is only timestamped when the writing shell had `HISTTIMEFORMAT`
+  set (it emits a `#<epoch>` line per command); otherwise the file is bare
+  command lines and every record lands with `StartMs == 0`, meaning *no known
+  time*. `yore import` warns once per such file, and the TUI renders a zero
+  timestamp as `—` (`theme.Unknown`) rather than as the Unix epoch.
 - **cli** — the cobra command tree; each subcommand is a `runXxx` returning a
   process exit code; ships shell completions.
 
@@ -176,7 +183,11 @@ skipped for fuzzy. Scopes:
 Sort is **recency** (descending `start_ms`, ties by descending `seq`) or
 **frecency** (frequency × bucketed-recency weight with a same-cwd ×2 boost, which
 inherently collapses to one row per command). Recency sort can also `dedupe`
-(newest wins). The default window is 200 rows.
+(newest wins). The default window is 200 rows; `limit: 0` takes that default and
+`limit: -1` (`proto.LimitAll`) asks for **every** match. The daemon already holds
+the corpus in RAM and sorts all matches before windowing, so `LimitAll` costs
+serialization, not work — it is what a browser of the archive should ask for, and
+what the top-N callers (Ctrl-R, MCP, headless search) deliberately do not.
 
 ## The browser (`internal/tui/browse`)
 
@@ -300,9 +311,10 @@ All) drives every screen, with its tabs pinned to the same top-right corner
 everywhere. "Today" is the **calendar** day in local time, not a rolling 24
 hours — the tab says today, and a rolling window would fold yesterday evening
 into this morning's hour-of-day buckets. The daemon's query protocol carries no
-time field, so the browse table filters the rows it got back; that is the right
-semantics for this view, which shows the newest `queryLimit` commands and lets
-the period narrow *that*. The status bar names the window and how much it hides.
+time field, so the browse table filters the rows it got back — and it got back
+every row matching the query (`proto.LimitAll`), so the period narrows the whole
+timeline rather than a slice of it. The status bar names the window and how much
+it hides.
 
 **The agent explorer** groups agent commands by the prompt that caused them (see
 "Recording & redaction" below for how that trace is captured). Picking an
@@ -385,11 +397,14 @@ A command's outcome gets a distinct **glyph** per state (`·` unknown, `✓` ok,
 differed by color alone, which put the distinction out of reach of anyone who
 cannot separate dim grey from green, and out of reach of a screenshot.
 
-**Sample honesty.** The stats and agent screens aggregate the newest `statsLimit`
-(5000) rows, not the whole archive. When that ceiling is hit, the header says so
-and how far back the sample actually reaches — without it, every window wider
-than the sample's reach shows identical numbers and the period tabs read as
-broken when they are working exactly as intended.
+**Sample honesty.** The stats and agent screens aggregate the whole archive, so
+the header normally reads "all history". It derives that from the response
+itself — `Total > len(Rows)` means the daemon returned less than it matched — not
+from a compiled-in ceiling, so the claim stays true whatever any caller asks for.
+If a sample ever does arrive short, the header says so and how far back it
+actually reaches: without that, every window wider than the sample's reach shows
+identical numbers and the period tabs read as broken when they are working
+exactly as intended.
 
 ## Recording & redaction
 
@@ -687,6 +702,43 @@ treated as tampering — the only way that file can hold records we cannot open 
 if it outlived the group it belongs to, and it is derived data, so it is thrown
 away and re-pulled rather than wedging sync on a stale cache.
 
+**Schema version.** `data.db`'s `meta` bucket carries a `schema` key
+(`store.SchemaVersion`, currently 1). There is **no upgrade path yet** — that is
+its own piece of work — so the version does exactly one thing today: a build that
+finds a version it does not know refuses to open the database (`ErrSchemaNewer`)
+instead of misreading the one copy of this machine's history. A store written
+before the key existed is stamped rather than refused: the layout never changed,
+so an unversioned store *is* version 1. Recording it now is what makes a
+migration possible later; without it a future one would have to infer the format
+from structure. A refused open still releases the lock, and `yore record` never
+opens the store at all, so commands keep spooling durably meanwhile.
+
+**Being revoked** is its own state (`remote: revoked`), separate from
+"unreachable" because retrying cannot fix it. On the first `device_revoked`
+response the daemon records the fact, detaches and **deletes** `remote.db`, drops
+the pull cursors, and stops syncing for the rest of the process; `yore sync` and
+`yore status` say so instead of reporting success. Remote history already
+decrypted into RAM is left for the rest of that session — the user is looking at
+it, and it is gone at the next start, which finds an empty cache and can obtain
+no key.
+
+The record lives in **`data.db`'s meta bucket** (`revoked_by_server`), not a file
+of its own: the daemon holds that database under its write lock, so the fact is
+not a loose marker in the state directory inviting deletion. It makes the purge
+survive a process killed mid-way, a restored backup, or a machine that comes back
+up offline and can never be told again — a start that reads it deletes the cache
+before opening anything.
+
+It is a record of the last thing the server said, **not a permanent verdict**. A
+revoked start is therefore not latched: it gets exactly one attempt, because
+nothing in the enrollment path can reach into `data.db` (the daemon owns the
+lock), so the only evidence that can retire a revocation is the server serving
+this device again. Enroll the machine afresh and the next cycle clears it;
+a still-revoked one is simply refused again and stops. Re-pointing at a different
+server clears it too — that revocation described the old group. See
+docs/protocol.md for why the server only reveals revocation to a caller whose
+signature verified.
+
 ## The sync server
 
 Multi-tenant and sharded. Each tenant is an isolated bbolt file owned solely by
@@ -746,7 +798,7 @@ forces everything back into the directory. The files:
 | `config.toml` | settings (0600) |
 | `ui.toml` | pane-divider positions the browser remembers (0600) — deliberately **not** `config.toml`, which is the hand-edited settings file a TUI has no business rewriting every time a pane is dragged |
 | `redact.yml` | editable, seeded secret-redaction rules (0600) |
-| `data.db` | local bbolt store — this host's history only |
+| `data.db` | local bbolt store — this host's history only, plus a `meta` bucket for facts only the lock-holder may write (`host_id`, `hostname`, `last_uploaded_seq`, `revoked_by_server`, `schema`) |
 | `device.key` | device X25519+Ed25519 identity — kept in the **OS keyring** when one is usable, else this file (0600; refused if group/other-readable) |
 | `spool/<pid>.jsonl` | crash-safe capture handoff, drained by the daemon |
 | `daemon.sock` | daemon control socket (0600) |

@@ -196,7 +196,12 @@ leaving everything else — including the agent's own auth — exactly as it was
   — so you keep the history and the marker says which rule took the value. It
   gates agent prompts as well as commands. (Two things still drop a record
   outright, because you asked for it: `ignore_dirs` and `ignore_patterns`.)
-- **Import** your existing history idempotently (`yore import auto`).
+- **Import** your existing history idempotently (`yore import auto`). Zsh's
+  extended history carries a timestamp per entry; **bash only does when
+  `HISTTIMEFORMAT` is set** in the shell that wrote the file, so a default
+  `~/.bash_history` imports with no times at all (shown as `—`, not as 1970).
+  `yore import` says so when it happens. The dates are not recoverable after the
+  fact — set `HISTTIMEFORMAT` to get them on future entries.
 - **Shell completions** (bash / zsh / fish); `vim` or `emacs` TUI keymaps.
 - **Diagnostics**: `yore doctor`, `yore status`.
 

@@ -86,6 +86,8 @@ func runImport(format string, rest []string) int {
 			continue
 		}
 
+		warnUntimed(src, recs)
+
 		// Mask credentials before they ever reach the store — years of shell
 		// history is full of them, and the first sync would otherwise ship the
 		// lot. The commands themselves are kept: that history is the whole point
@@ -117,6 +119,33 @@ func runImport(format string, rest []string) int {
 		fmt.Printf("%-40s %6d entries, %6d new, %5d secrets redacted\n", src.Path, len(recs), added, redacted)
 	}
 	return 0
+}
+
+// histTimeFormatHint is the line a user can paste to make bash start writing
+// "#<epoch>" markers. It is a var rather than a const so vet does not constant-
+// fold it into the Fprintln below and read strftime's %F/%T as Printf verbs.
+var histTimeFormatHint = `echo "export HISTTIMEFORMAT='%F %T '" >> ~/.bashrc`
+
+// warnUntimed reports a bash history file that carries no timestamps at all.
+// Bash writes a "#<epoch>" line before each command only when HISTTIMEFORMAT
+// was set in the shell that flushed the file; by default it stores bare command
+// lines, so every entry imports with no time. The information is not recoverable
+// after the fact, and a silent import leaves a screen of untimed rows that reads
+// like yore lost the dates — so say it once, at the moment it becomes true, with
+// the fix for future entries. A partly-timestamped file (HISTTIMEFORMAT set at
+// some point) is normal and says nothing.
+func warnUntimed(src importer.Source, recs []rec.Record) {
+	if src.Format != "bash" || len(recs) == 0 {
+		return
+	}
+	for _, r := range recs {
+		if r.StartMs != 0 {
+			return
+		}
+	}
+	fmt.Fprintf(os.Stderr, "yore: %s: no timestamps — bash records them only when HISTTIMEFORMAT is set,\n", src.Path)
+	fmt.Fprintln(os.Stderr, "      so these entries import with an unknown time (existing entries cannot be dated).")
+	fmt.Fprintln(os.Stderr, "      To timestamp future entries: "+histTimeFormatHint)
 }
 
 // openStoreExclusive opens the store, asking a running daemon to step aside

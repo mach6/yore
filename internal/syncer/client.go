@@ -43,10 +43,12 @@ const requestTimeout = 30 * time.Second
 const connectTimeout = 5 * time.Second
 
 // APIError is a non-2xx response from the sync server. It carries the HTTP
-// status and the server's ErrorResp.Error text.
+// status, the server's ErrorResp.Error text, and its machine-readable Code
+// (empty for the errors a client only reports).
 type APIError struct {
 	Status int
 	Msg    string
+	Code   string
 }
 
 func (e *APIError) Error() string {
@@ -54,6 +56,15 @@ func (e *APIError) Error() string {
 		return fmt.Sprintf("yore server: http %d", e.Status)
 	}
 	return fmt.Sprintf("yore server: http %d: %s", e.Status, e.Msg)
+}
+
+// ErrRevoked reports whether err is the server telling this device that its
+// membership was revoked. The server only says so to a caller whose signature
+// verified, so it is a trustworthy instruction to stop syncing and drop the
+// group's ciphertext — not something a network attacker can induce.
+func ErrRevoked(err error) bool {
+	var ae *APIError
+	return errors.As(err, &ae) && ae.Code == wire.CodeDeviceRevoked
 }
 
 // HTTPClient is a thin transport over the sync server's HTTP JSON API.
@@ -194,7 +205,8 @@ func (c *HTTPClient) do(ctx context.Context, method, path string, query url.Valu
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &APIError{Status: resp.StatusCode, Msg: parseServerError(data)}
+		msg, code := parseServerError(data)
+		return &APIError{Status: resp.StatusCode, Msg: msg, Code: code}
 	}
 	if out != nil {
 		if err := json.Unmarshal(data, out); err != nil {
@@ -206,12 +218,12 @@ func (c *HTTPClient) do(ctx context.Context, method, path string, query url.Valu
 
 // parseServerError pulls ErrorResp.Error from a response body, falling back to
 // the raw (trimmed) body when it is not the expected JSON shape.
-func parseServerError(data []byte) string {
+func parseServerError(data []byte) (msg, code string) {
 	var er wire.ErrorResp
 	if err := json.Unmarshal(data, &er); err == nil && er.Error != "" {
-		return er.Error
+		return er.Error, er.Code
 	}
-	return string(bytes.TrimSpace(data))
+	return string(bytes.TrimSpace(data)), ""
 }
 
 // Health checks server liveness. It sends no auth token (the endpoint is open).

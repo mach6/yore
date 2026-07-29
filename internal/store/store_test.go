@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.etcd.io/bbolt"
 
 	"yore/internal/config"
 	"yore/internal/rec"
@@ -325,4 +327,79 @@ func TestIsCommand(t *testing.T) {
 			require.Equal(t, tt.want, IsCommand(tt.r))
 		})
 	}
+}
+
+// TestSchemaStamped covers the two states every store in existence is in: a new
+// one gets the current version, and one predating versioning is stamped rather
+// than refused — the layout did not change, so an unversioned store IS v1.
+func TestSchemaStamped(t *testing.T) {
+	dir := t.TempDir()
+
+	s, err := Open(dir)
+	require.NoError(t, err, "Open")
+	require.Equal(t, SchemaVersion, s.Schema(), "a new store carries the current version")
+	v, err := s.Meta(metaSchema)
+	require.NoError(t, err)
+	require.Equal(t, "1", v, "the version must be persisted, not just in memory")
+	require.NoError(t, s.Close())
+
+	// A store from before versioning: same layout, no version key.
+	require.NoError(t, setRawMeta(dir, metaSchema, nil))
+	s2, err := Open(dir)
+	require.NoError(t, err, "an unversioned store must open, not be refused")
+	require.Equal(t, SchemaVersion, s2.Schema())
+	require.NoError(t, s2.Close())
+}
+
+// TestSchemaNewerRefused is the whole point of stamping a version before there
+// is anything to migrate: an older build must refuse a database it cannot read
+// rather than misread the one copy of this machine's history.
+func TestSchemaNewerRefused(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		wantErr error
+	}{
+		{"a newer layout", "2", ErrSchemaNewer},
+		{"a much newer layout", "99", ErrSchemaNewer},
+		{"not a number", "banana", ErrSchemaBad},
+		{"zero", "0", ErrSchemaBad},
+		{"negative", "-1", ErrSchemaBad},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			s, err := Open(dir)
+			require.NoError(t, err)
+			require.NoError(t, s.Close())
+			require.NoError(t, setRawMeta(dir, metaSchema, []byte(tc.raw)))
+
+			s2, err := Open(dir)
+			require.ErrorIs(t, err, tc.wantErr)
+			require.Nil(t, s2, "a refused store must not hand back a usable handle")
+
+			// The lock is released, so the next build along can still open it.
+			require.NoError(t, setRawMeta(dir, metaSchema, []byte("1")))
+			s3, err := Open(dir)
+			require.NoError(t, err, "a refused Open must not leave the file locked")
+			require.NoError(t, s3.Close())
+		})
+	}
+}
+
+// setRawMeta writes (or, with nil, deletes) a meta key directly, standing in for
+// a database written by another build.
+func setRawMeta(dir, key string, val []byte) error {
+	db, err := bbolt.Open(config.DBPath(dir), 0o600, &bbolt.Options{Timeout: time.Second})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = db.Close() }()
+	return db.Update(func(tx *bbolt.Tx) error {
+		mb := tx.Bucket(bucketMeta)
+		if val == nil {
+			return mb.Delete([]byte(key))
+		}
+		return mb.Put([]byte(key), val)
+	})
 }

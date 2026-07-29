@@ -21,6 +21,10 @@ import (
 // errSyncOff is returned by device operations when sync isn't configured.
 var errSyncOff = errors.New("sync not configured (run `yore setup`)")
 
+// errRevoked is returned once the server has refused this device as revoked.
+// Retrying cannot fix it: the device has to be enrolled again.
+var errRevoked = errors.New("this device has been revoked (re-enroll it with `yore enroll`)")
+
 // listDevices returns the enrolled devices with per-device verification codes
 // for pending ones (computed here so proto stays independent of wire/cryptobox).
 func (s *server) listDevices() (proto.DevicesInfo, error) {
@@ -111,6 +115,17 @@ type remoteCache struct {
 	rs *rstore.Store
 	// keep caps retained records per remote host (0 = unlimited).
 	keep int
+	// dir is the state directory, needed to delete the ciphertext cache.
+	dir string
+	// st is the local store, whose meta bucket persists the revocation (see
+	// metaRevoked). It lives in data.db rather than a file of its own so the
+	// record is not a standalone thing to notice and delete.
+	st *store.Store
+	// revokedLatch stops THIS process retrying once the server has refused it as
+	// revoked. It is deliberately not set by a revoked start: the persisted flag
+	// records the last thing the server said, and a device re-enrolled since then
+	// has to be able to find out, which costs exactly one refused request.
+	revokedLatch bool
 	// hydrated records whether the cached ciphertext has been decrypted into RAM
 	// yet; that happens once per daemon lifetime, on the first sync that has keys.
 	hydrated bool
@@ -176,6 +191,16 @@ func newSyncer(dir string, st *store.Store, sc syncConf) *syncer.Syncer {
 // The on-disk ciphertext cache is opened best-effort: it is derived data, so a
 // cache that cannot be opened (locked, corrupt) costs a full re-pull and must
 // never stop the daemon starting.
+//
+// A device revoked in an earlier run starts here. onRevoked already deleted the
+// cache when the server said so; this is the backstop for when it could not —
+// the process died between recording and deleting, or the file was restored from
+// a backup. It runs BEFORE the cache is opened, so the ciphertext leaves the disk
+// even on a machine that comes back up offline and can never be told again.
+//
+// The state starts as revoked because that is the last thing the server said,
+// but the cycle is NOT latched: a device enrolled again since then learns so on
+// its first attempt, and a still-revoked one is simply refused again.
 func newRemote(dir string, st *store.Store, sc syncConf, tags *tagIndex, prompts *promptIndex) *remoteCache {
 	rc := &remoteCache{
 		state:   proto.RemoteOff,
@@ -183,15 +208,116 @@ func newRemote(dir string, st *store.Store, sc syncConf, tags *tagIndex, prompts
 		tags:    tags,
 		prompts: prompts,
 		keep:    sc.keep,
+		dir:     dir,
+		st:      st,
 	}
 	if sy := newSyncer(dir, st, sc); sy != nil {
 		rc.sy = sy
 		rc.state = proto.RemoteUnavailable // until the first successful sync
+		if wasRevoked(st) {
+			rc.state = proto.RemoteRevoked
+			_ = rstore.Remove(dir)
+		}
 		if rs, err := rstore.Open(dir); err == nil {
 			rc.rs = rs
 		}
 	}
 	return rc
+}
+
+// metaRevoked is the local store's meta key recording that the sync server
+// refused this device as revoked. It has to outlive the process that learned it
+// — the response arrives while the daemon runs, but the cache is dropped at the
+// next start too, which may be days later and offline with no server to ask.
+//
+// It lives in data.db's meta bucket, not a file of its own: the daemon holds
+// that database under its write lock, so the record is not a loose file sitting
+// in the state directory inviting deletion.
+const metaRevoked = "revoked_by_server"
+
+// wasRevoked reports whether a previous run recorded a revocation.
+func wasRevoked(st *store.Store) bool {
+	if st == nil {
+		return false
+	}
+	v, err := st.Meta(metaRevoked)
+	return err == nil && v != ""
+}
+
+// setRevokedMeta records or clears the revocation. Best-effort in both
+// directions: a store that will not take the write must not turn a revocation
+// into a crash, and the live cycle has already stopped syncing either way.
+func setRevokedMeta(st *store.Store, revoked bool) {
+	if st == nil {
+		return
+	}
+	v := ""
+	if revoked {
+		v = "1"
+	}
+	_ = st.SetMeta(metaRevoked, v)
+}
+
+// onRevoked reacts to the server refusing this device as revoked. Retrying can
+// never succeed, so the cycle stops for good and the group's ciphertext leaves
+// this disk NOW: the cache is detached before the file is deleted, so nothing
+// can write it back, and the cursors go with it (they describe streams this
+// device may no longer read).
+//
+// The decrypted history already in RAM is left alone deliberately — it is what
+// the user is looking at, and yanking it mid-session buys nothing that ending
+// the session does not. It is gone at the next start, which finds no cache to
+// hydrate from and no key to open one with.
+//
+// The meta record is written first and is the durable half: if this process dies
+// between the two, the next start still knows to finish the job.
+func (rc *remoteCache) onRevoked() {
+	setRevokedMeta(rc.st, true)
+
+	rc.mu.Lock()
+	rs := rc.rs
+	rc.rs = nil // detach before deleting: no later cycle may write it back
+	rc.cursors = map[string]uint64{}
+	rc.state = proto.RemoteRevoked
+	rc.revokedLatch = true
+	rc.mu.Unlock()
+
+	if rs != nil {
+		_ = rs.Close()
+	}
+	_ = rstore.Remove(rc.dir)
+}
+
+// onAccepted clears a recorded revocation once the server has served this device
+// again — the only evidence that can retire it, and what lets a re-enrolled
+// machine come back without anyone deleting anything by hand. Caller holds no
+// lock; the store write is outside it.
+func (rc *remoteCache) onAccepted() {
+	if !wasRevoked(rc.st) {
+		return
+	}
+	setRevokedMeta(rc.st, false)
+}
+
+// revoked reports whether this device is currently believed revoked.
+func (rc *remoteCache) revoked() bool {
+	if rc == nil {
+		return false
+	}
+	rc.mu.RLock()
+	defer rc.mu.RUnlock()
+	return rc.state == proto.RemoteRevoked
+}
+
+// latched reports whether the server has refused this process as revoked, in
+// which case no further cycle may run.
+func (rc *remoteCache) latched() bool {
+	if rc == nil {
+		return false
+	}
+	rc.mu.RLock()
+	defer rc.mu.RUnlock()
+	return rc.revokedLatch
 }
 
 // close releases the on-disk ciphertext cache.
@@ -239,6 +365,11 @@ func (rc *remoteCache) online() bool {
 // history and pull cursors are dropped — in RAM and on disk both: they belong
 // to the previous server, whose key hierarchy has nothing to do with the new
 // one's, and must never be mixed with it.
+//
+// A revocation is forgotten here, marker and all: it was this device's standing
+// in the OLD group, and the new configuration points somewhere else. Keeping it
+// would leave a device that has legitimately moved servers deleting its cache on
+// every start.
 func (rc *remoteCache) attach(sy *syncer.Syncer, keep int) {
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
@@ -252,10 +383,19 @@ func (rc *remoteCache) attach(sy *syncer.Syncer, keep int) {
 	if rc.rs != nil {
 		_ = rc.rs.Reset()
 	}
+	rc.revokedLatch = false
+	setRevokedMeta(rc.st, false)
 	if sy == nil {
 		rc.state = proto.RemoteOff
-	} else {
-		rc.state = proto.RemoteUnavailable
+		return
+	}
+	rc.state = proto.RemoteUnavailable
+	// A revoked start left the cache deleted and detached; the new configuration
+	// gets a working one back rather than re-pulling everything on every start.
+	if rc.rs == nil {
+		if rs, err := rstore.Open(rc.dir); err == nil {
+			rc.rs = rs
+		}
 	}
 }
 
@@ -285,14 +425,26 @@ func (rc *remoteCache) syncOnce(ctx context.Context, nowMs int64) error {
 	if sy == nil {
 		return errSyncOff
 	}
-	rc.setState(proto.RemoteSyncing)
-	if _, err := sy.Push(ctx); err != nil {
+	if rc.latched() {
+		return errRevoked
+	}
+	// fail routes a cycle error: being revoked is terminal and gets its own
+	// state, anything else is a transient the next cycle can retry.
+	fail := func(err error) error {
+		if syncer.ErrRevoked(err) {
+			rc.onRevoked()
+			return errRevoked
+		}
 		rc.setState(proto.RemoteUnavailable)
 		return err
 	}
+
+	rc.setState(proto.RemoteSyncing)
+	if _, err := sy.Push(ctx); err != nil {
+		return fail(err)
+	}
 	if err := rc.hydrate(ctx, sy); err != nil {
-		rc.setState(proto.RemoteUnavailable)
-		return err
+		return fail(err)
 	}
 
 	rc.mu.RLock()
@@ -301,8 +453,7 @@ func (rc *remoteCache) syncOnce(ctx context.Context, nowMs int64) error {
 
 	byHost, next, err := sy.PullCiphertext(ctx, cursors)
 	if err != nil {
-		rc.setState(proto.RemoteUnavailable)
-		return err
+		return fail(err)
 	}
 
 	var fresh []rec.Record
@@ -312,8 +463,7 @@ func (rc *remoteCache) syncOnce(ctx context.Context, nowMs int64) error {
 		rc.cacheCiphertext(hostID, prs, next[hostID])
 		opened, oerr := sy.OpenRecords(ctx, hostID, prs)
 		if oerr != nil {
-			rc.setState(proto.RemoteUnavailable)
-			return oerr
+			return fail(oerr)
 		}
 		fresh = append(fresh, opened...)
 	}
@@ -325,6 +475,9 @@ func (rc *remoteCache) syncOnce(ctx context.Context, nowMs int64) error {
 	rc.state = proto.RemoteOK
 	rc.lastMs = nowMs
 	rc.mu.Unlock()
+	// The server served us, so any revocation we had recorded is history: this is
+	// how a re-enrolled machine retires it without anyone editing state by hand.
+	rc.onAccepted()
 	return nil
 }
 
@@ -608,13 +761,13 @@ func (s *server) syncLoop() {
 			return
 		case <-first.C:
 			reload()
-			s.doSync()
+			_ = s.doSync() // logged inside; the loop retries on the next tick
 		case <-tick.C:
 			reload()
-			s.doSync()
+			_ = s.doSync() // logged inside; the loop retries on the next tick
 		case <-s.syncWake:
 			reload()
-			s.doSync()
+			_ = s.doSync() // logged inside; the loop retries on the next tick
 		case <-s.pushWake:
 			// Coalesce a burst of new records into one push after pushDebounce.
 			// Arm only when enabled and not already pending — the timer is idle
@@ -625,7 +778,7 @@ func (s *server) syncLoop() {
 			}
 		case <-pushTimer.C:
 			pushPending = false
-			s.doSync()
+			_ = s.doSync() // logged inside; the loop retries on the next tick
 		}
 	}
 }
@@ -650,12 +803,19 @@ func syncTick(enabled bool, interval time.Duration) time.Duration {
 	return unconfiguredPoll
 }
 
-// doSync runs one sync cycle. It is serialized by syncMu so the periodic loop
-// and an explicit OpSync never overlap (which would double-push or race the
-// pull cursors). It is a no-op when sync is not configured.
-func (s *server) doSync() {
+// doSync runs one sync cycle and RETURNS its outcome. It is serialized by syncMu
+// so the periodic loop and an explicit OpSync never overlap (which would
+// double-push or race the pull cursors). It is a no-op when sync is not
+// configured. The periodic loop ignores the error (it logs and retries); an
+// explicit `yore sync` reports it, which is the whole point of asking.
+func (s *server) doSync() error {
 	if !s.remote.enabled() {
-		return
+		return nil
+	}
+	// Once refused, the periodic loop must not log it on every tick for the rest
+	// of the daemon's life. Whoever asked still gets the error.
+	if s.remote.latched() {
+		return errRevoked
 	}
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
@@ -663,8 +823,9 @@ func (s *server) doSync() {
 	defer cancel()
 	if err := s.remote.syncOnce(ctx, time.Now().UnixMilli()); err != nil {
 		s.logf("sync error: %v", err)
-		return
+		return err
 	}
 	info := s.remote.info()
 	s.logf("sync ok: remote hosts=%d", info.Hosts)
+	return nil
 }

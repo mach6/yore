@@ -150,7 +150,20 @@ type HostsResp struct {
 	Hosts []HostInfo `json:"hosts"`
 }
 
-// ErrorResp is the body of any non-2xx response.
+// ErrorResp is the body of any non-2xx response. Code is set only where the
+// client is expected to act on the reason rather than just report it; Error
+// stays the human-readable text.
 type ErrorResp struct {
 	Error string `json:"error"`
+	Code  string `json:"code,omitempty"`
 }
+
+// Error codes for ErrorResp.Code.
+const (
+	// CodeDeviceRevoked tells a device that its own membership was revoked, so
+	// it can stop syncing and drop the group's ciphertext from its disk. It is
+	// returned ONLY after the request's signature verified, i.e. only to the
+	// holder of that device's private key — otherwise it would let anyone who
+	// knows a device id probe the group's membership.
+	CodeDeviceRevoked = "device_revoked"
+)

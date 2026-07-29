@@ -59,5 +59,12 @@ func runStatus() int {
 		st.PID, (time.Duration(st.UptimeSec) * time.Second).String(), st.Version)
 	fmt.Printf("history   : %d local entries\n", st.LocalRows)
 	fmt.Printf("remote    : %s\n", st.Remote.State)
+	if st.Remote.State == proto.RemoteRevoked {
+		// "revoked" alone reads like a transient. It is not: this device is out
+		// of the group, its cached copy of everyone else's history has been
+		// deleted, and only re-enrolling changes that.
+		fmt.Println("            this device was revoked — its cached remote history has been deleted")
+		fmt.Println("            re-enroll it with `yore enroll` to sync again")
+	}
 	return 0
 }

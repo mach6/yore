@@ -321,13 +321,18 @@ func TestRevokeRotation(t *testing.T) {
 			require.Equal(t, wire.DeviceRevoked, d.Status, "B should be revoked")
 		}
 	}
-	// A revoked device cannot authenticate at all any more: its key is the only
-	// credential and the server no longer honours it. (It also has no HK wrap,
-	// but it can no longer get far enough to learn that.)
+	// A revoked device is refused everything — but it is TOLD why, so it can stop
+	// syncing and drop the group's ciphertext from its disk instead of quietly
+	// serving a cache it may no longer read. The signature still has to verify
+	// first (403, not 401: authenticated, not authorized), so only the holder of
+	// B's private key learns B's standing; anyone else guessing the id gets the
+	// same opaque 401 an unknown device gets.
 	_, _, err = b.http.GetHKWrap(ctx, b.DeviceID())
 	var revokedErr *APIError
 	require.ErrorAs(t, err, &revokedErr, "B GetHKWrap after revoke: want APIError")
-	require.Equal(t, http.StatusUnauthorized, revokedErr.Status, "a revoked device must be refused")
+	require.Equal(t, http.StatusForbidden, revokedErr.Status, "a revoked device must be refused")
+	require.Equal(t, wire.CodeDeviceRevoked, revokedErr.Code, "…and told that it was revoked")
+	require.True(t, ErrRevoked(err), "ErrRevoked must recognise it")
 
 	// A is now on HK version 2.
 	_, verA, err := a.resolveHK(ctx)

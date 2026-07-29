@@ -222,6 +222,14 @@ func TestQuerySemantics(t *testing.T) {
 	assert.Equal(t, 4, resp.Total, "windowed Total")
 	assert.Equal(t, []string{"r3", "r2"}, ids(resp.Rows), "window")
 
+	// LimitAll returns every match — the browse TUI's contract. Offset still
+	// applies, so "all from here on" works too.
+	resp, _ = c.Query(proto.QueryReq{Q: "git", Limit: proto.LimitAll})
+	assert.Equal(t, 4, resp.Total, "LimitAll Total")
+	assert.Equal(t, []string{"r5", "r3", "r2", "r1"}, ids(resp.Rows), "LimitAll rows")
+	resp, _ = c.Query(proto.QueryReq{Q: "git", Limit: proto.LimitAll, Offset: 2})
+	assert.Equal(t, []string{"r2", "r1"}, ids(resp.Rows), "LimitAll with offset")
+
 	// "all"/"host" behave like local but report Remote off.
 	resp, _ = c.Query(proto.QueryReq{Q: "git", Scope: proto.ScopeAll})
 	assert.Equal(t, 4, resp.Total, "scope all Total")

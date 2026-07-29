@@ -166,11 +166,13 @@ type statsData struct {
 	// the right. Period-independent, spanning maxHeatWeeks.
 	heat [7][maxHeatWeeks]int
 
-	// The aggregation runs over the newest statsLimit rows, not the whole
-	// archive. capped records that the sample hit that ceiling and sampleFrom is
-	// the oldest row in it — without both, a window wider than the sample's reach
-	// looks identical to every other wide window and the tabs read as broken.
+	// The aggregation asks for the whole archive, so normally the sample IS the
+	// archive. capped says the daemon returned fewer rows than it matched anyway
+	// (a caller passed a row budget), sampleN is how many arrived, and sampleFrom
+	// is the oldest of them — without those, a window wider than the sample's
+	// reach looks identical to every other wide window and the tabs read as broken.
 	capped     bool
+	sampleN    int
 	sampleFrom int64
 
 	periodLabel string
@@ -195,11 +197,16 @@ func foldHeat(heat *[7][maxHeatWeeks]int, nowMs, startMs int64) {
 	heat[int(d.Weekday())][col]++
 }
 
-// computeStats aggregates a broad row sample into the stats screen's data,
-// restricted to the last periodDays days (0 = all history). It reads only
-// fields every record already carries — no schema dependency.
-func computeStats(rows []rec.Record, now int64, periodDays int) *statsData {
-	s := &statsData{spark: make([]int, maxSparkDays), capped: len(rows) >= statsLimit}
+// computeStats aggregates a row sample into the stats screen's data, restricted
+// to the last periodDays days (0 = all history). It reads only fields every
+// record already carries — no schema dependency. total is what the daemon said
+// it matched, which is how the sample knows whether it is the whole story.
+func computeStats(rows []rec.Record, total int, now int64, periodDays int) *statsData {
+	s := &statsData{
+		spark:   make([]int, maxSparkDays),
+		sampleN: len(rows),
+		capped:  total > len(rows),
+	}
 	s.periodLabel = periodLabel(periodDays)
 	cutoff := periodCutoff(now, periodDays)
 
@@ -360,18 +367,19 @@ func (m Model) statsTitle(w int) string {
 	return m.titleWithTabs(left, w)
 }
 
-// sampleNote says what the aggregation actually covers. When the newest
-// statsLimit rows do not reach back as far as the selected window, every wider
-// tab shows the same numbers — so say so rather than let the tabs look inert.
+// sampleNote says what the aggregation actually covers. The explorer asks for
+// every row, so this normally reads "all history". If a sample ever does arrive
+// short and does not reach back as far as the selected window, every wider tab
+// shows the same numbers — so say so rather than let the tabs look inert.
 func (m Model) sampleNote(s *statsData) string {
 	if !s.capped || s.sampleFrom == 0 {
 		return "all history"
 	}
 	reach := theme.RelTime(m.now(), s.sampleFrom)
 	if d := m.periodDays(); d == 0 || int64(d)*86_400_000 > m.now()-s.sampleFrom {
-		return fmt.Sprintf("newest %d commands only — reaches back %s", statsLimit, reach)
+		return fmt.Sprintf("newest %d commands only — reaches back %s", s.sampleN, reach)
 	}
-	return fmt.Sprintf("newest %d commands · reaches back %s", statsLimit, reach)
+	return fmt.Sprintf("newest %d commands · reaches back %s", s.sampleN, reach)
 }
 
 // minColumnsH is the shortest ranked-column block worth drawing: a heading plus

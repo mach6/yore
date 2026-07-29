@@ -156,8 +156,13 @@ func (s *server) runQuery(f *match.Filter, q proto.QueryReq) proto.QueryResp {
 
 	total := len(rows) // matches after scope+dedupe, before windowing
 
+	// A negative limit (proto.LimitAll) means "no window": return every match.
+	// Zero is "unset" and takes the default; only an explicit ask gets the lot.
 	limit := q.Limit
-	if limit <= 0 {
+	switch {
+	case limit < 0:
+		limit = total
+	case limit == 0:
 		limit = defaultLimit
 	}
 	lo := q.Offset

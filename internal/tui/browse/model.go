@@ -71,11 +71,16 @@ const (
 )
 
 // Tunables.
+//
+// Neither the table nor the aggregation caps how much history it asks for: this
+// is the screen you open to look through your archive, and a row budget makes
+// the oldest of it unreachable by scrolling. The daemon sorts every match before
+// windowing regardless, so asking for all of them buys the whole timeline for
+// the cost of serializing it — and a non-empty query is narrowed server-side, so
+// the full corpus only crosses the socket when you asked to see the full corpus.
 const (
-	queryLimit = 1000 // rows requested for the browse table
-	statsLimit = 5000 // rows requested for the stats aggregation
-	leftWidth  = 24   // host-sidebar outer width (incl. border)
-	flashMs    = 1500 // how long the copied/deleted flash lingers
+	leftWidth = 24   // host-sidebar outer width (incl. border)
+	flashMs   = 1500 // how long the copied/deleted flash lingers
 )
 
 // focus identifies which of the three browse panes owns navigation keys.
@@ -189,6 +194,7 @@ type Model struct {
 	agentFilter string       // executor the sidebar is filtering to; "" = all
 	apane       agentPane    // which of the explorer's four panes holds focus
 	statsRows   []rec.Record // the full sample; re-aggregated when the period changes
+	statsTotal  int          // matches the daemon reported for that sample (see statsData.capped)
 	promptRows  []rec.Record // prompt records covering the sample, incl. ones that ran nothing
 
 	// The explorer's per-list text filters (the / key). Each list keeps its own
@@ -500,6 +506,7 @@ func (m Model) applyStats(msg statsResultMsg) (tea.Model, tea.Cmd) {
 	}
 	m.statsErr = nil
 	m.statsRows = msg.resp.Rows
+	m.statsTotal = msg.resp.Total
 	m.promptRows = msg.resp.Prompts
 	m.recomputeStats()
 	return m, nil
@@ -567,7 +574,7 @@ func (m Model) statsCmd(seq uint64) tea.Cmd {
 		// WantPrompts: the agent explorer aggregates prompts from the commands
 		// they caused, so a prompt that caused none has no row to be found in.
 		// These carry them alongside.
-		resp, err := b.Query(proto.QueryReq{Scope: proto.ScopeAll, Limit: statsLimit, WantPrompts: true})
+		resp, err := b.Query(proto.QueryReq{Scope: proto.ScopeAll, Limit: proto.LimitAll, WantPrompts: true})
 		return statsResultMsg{seq: seq, resp: resp, err: err}
 	}
 }
@@ -579,7 +586,7 @@ func (m Model) buildReq() proto.QueryReq {
 		Scope:    it.scope,
 		Host:     it.host,
 		Executor: m.executorFilter,
-		Limit:    queryLimit,
+		Limit:    proto.LimitAll,
 		Dedupe:   false, // browse shows the real timeline, newest first
 		// Asking for one executor is asking for agent commands, so the two
 		// filters cannot both apply — t wins over A while it is set.
@@ -879,9 +886,8 @@ func (m Model) helpMaxTop() int {
 
 // applyPeriodFilter narrows the queried rows to the selected period. The daemon's
 // query protocol carries no time window, so the browse table filters the rows it
-// got back — which is exactly the right semantics for this view: it shows the
-// newest queryLimit commands, and the period narrows that view of them. The
-// "All" tab is a straight pass-through, so the default behaviour is unchanged.
+// got back — every row matching the query, so the period narrows the whole
+// timeline rather than a slice of it. The "All" tab is a straight pass-through.
 func (m *Model) applyPeriodFilter() {
 	cutoff := periodCutoff(m.now(), m.periodDays())
 	if cutoff == 0 {
@@ -997,7 +1003,7 @@ func (m *Model) recomputeStats() {
 		return
 	}
 	days := m.periodDays()
-	m.stats = computeStats(m.statsRows, m.now(), days)
+	m.stats = computeStats(m.statsRows, m.statsTotal, m.now(), days)
 	m.agents = computeAgents(m.statsRows, m.now(), days)
 	m.agentSel = 0
 	for i, a := range m.agents.agents {
@@ -1594,6 +1600,9 @@ func (m Model) onHostsTick() (tea.Model, tea.Cmd) {
 	case m.remote.State == proto.RemoteOff:
 		m.ticking = false
 		return m, nil // remote disabled: nothing to warm
+	case m.remote.State == proto.RemoteRevoked:
+		m.ticking = false
+		return m, nil // revoked: no amount of waiting brings the remote back
 	case m.hostsTicks >= hostsTickMax:
 		m.ticking = false
 		return m, nil // hard cap: give up rather than poll forever
@@ -1773,7 +1782,6 @@ func (m *Model) applyLayout() {
 func (m *Model) applyGeometry(w, mid int) {
 	if m.zoom {
 		g := noDividers()
-		g.n = 1
 		full := rect{x: 0, y: 1, w: w, h: mid}
 		switch m.view {
 		case viewAgents:

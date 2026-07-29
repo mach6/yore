@@ -241,6 +241,8 @@ func pubKey() []byte { return make([]byte, 32) }
 
 // registerDevice enrolls a new device into an existing group: it mints a token
 // with base (an active device) and registers id against it.
+//
+//nolint:unparam // id is a parameter for clarity at the call sites, not because it varies today
 func registerDevice(t *testing.T, base *testClient, id string) *testClient {
 	t.Helper()
 	return registerWithToken(t, base, id, mintToken(t, base))
@@ -619,6 +621,47 @@ func TestRevokeSignature(t *testing.T) {
 	status, _ = dcA.do("POST", "/v1/devices/B/revoke", nil)
 	require.Equal(t, http.StatusOK, status, "signed revoke")
 	_ = dcB
+}
+
+// TestRevokedDeviceIsToldSo pins how a revoked device learns its standing: it is
+// refused everything, but with a code it can act on — that is what lets it stop
+// syncing and drop the group's ciphertext instead of silently serving a cache it
+// may no longer read. The distinction is only ever revealed to a caller whose
+// signature verified, so it cannot be used to probe who is in the group.
+func TestRevokedDeviceIsToldSo(t *testing.T) {
+	c := setup(t)
+	dcA := bootstrapActive(t, c, "A")
+	dcB := registerDevice(t, dcA, "B")
+	activateDevice(t, dcA, "B")
+
+	status, _ := dcA.do("POST", "/v1/devices/B/revoke", nil)
+	require.Equal(t, http.StatusOK, status, "revoke B")
+
+	// Reads and writes alike: 403 + device_revoked, on B's own valid signature.
+	for _, tc := range []struct{ method, path string }{
+		{"GET", "/v1/hosts"},
+		{"GET", "/v1/records?host_id=x&after=0"},
+		{"GET", "/v1/keys/hk?device_id=B"},
+		{"POST", "/v1/records"},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			status, body := dcB.do(tc.method, tc.path, nil)
+			require.Equal(t, http.StatusForbidden, status, "revoked device must be refused")
+			var er wire.ErrorResp
+			require.NoError(t, json.Unmarshal(body, &er))
+			require.Equal(t, wire.CodeDeviceRevoked, er.Code, "…and told why")
+		})
+	}
+
+	// A caller who knows B's id but not its key learns nothing: same opaque 401
+	// an unknown device gets. Membership is not probeable.
+	_, wrongPriv, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err)
+	status, body := c.withKey("B", wrongPriv).do("GET", "/v1/hosts", nil)
+	require.Equal(t, http.StatusUnauthorized, status, "a forged signature must not reveal revocation")
+	var er wire.ErrorResp
+	require.NoError(t, json.Unmarshal(body, &er))
+	require.Empty(t, er.Code, "an unverified caller must get no code to read")
 }
 
 // ---- DEK ----

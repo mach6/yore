@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
@@ -560,7 +559,7 @@ func (m *Model) syncDetail() {
 	if len(r.Tags) > 0 {
 		meta("Tags", strings.Join(r.Tags, ", "))
 	}
-	meta("Time", time.UnixMilli(r.StartMs).Local().Format("2006-01-02 15:04:05"))
+	meta("Time", theme.AbsTime(r.StartMs))
 	dur := "—"
 	if r.DurMs != nil {
 		dur = theme.Duration(*r.DurMs)

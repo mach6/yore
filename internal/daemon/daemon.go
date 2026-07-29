@@ -435,9 +435,14 @@ func (s *server) dispatch(req *proto.Request, f *match.Filter) (proto.Response, 
 
 	case proto.OpSync:
 		// Explicit sync is synchronous: run a full cycle and respond after it
-		// finishes, so `yore sync` reflects the real outcome.
+		// finishes, so `yore sync` reflects the real outcome — including the
+		// failures. Reporting OK for a cycle that could not reach the server (or
+		// was refused outright) is how a revoked device looked like it was
+		// syncing.
 		if s.remote.enabled() {
-			s.doSync()
+			if err := s.doSync(); err != nil {
+				return proto.Response{Err: err.Error()}, false
+			}
 		}
 		return proto.Response{OK: true}, false
 

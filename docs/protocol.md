@@ -83,6 +83,22 @@ captured one — and there is no token for it to steal in the first place.
 `GET /v1/recovery/salt`. Reads are exactly as privileged as writes: a *pending*
 or *revoked* device can do nothing at all.
 
+**Standing is checked after the signature, not before.** A caller whose signature
+does not verify — including one that merely guesses a device id — gets the same
+opaque `401 unauthorized` whether that id is unknown, pending, or revoked, so
+membership cannot be probed. A caller whose signature *does* verify is the holder
+of that device's private key, and a revoked one is told exactly that:
+
+```json
+403 {"error": "device revoked", "code": "device_revoked"}
+```
+
+That is the only way a revoked machine can find out it should stop syncing and
+delete its cached copy of the group's ciphertext; without it, it sits on that
+cache indefinitely and its sync failures are indistinguishable from the server
+being down. `ErrorResp.Code` is set only where the client is expected to *act* on
+the reason rather than report it.
+
 ## Sync algorithm (how a client uses these)
 
 **Push** (own stream): read the persisted watermark `last_uploaded_seq`, then
@@ -196,8 +212,9 @@ Sets the device `revoked` and deletes its HK wrap. → `200 {"status":"revoked"}
 Errors: `404` (unknown). Follow with `POST /v1/keys/rotate`.
 
 ### `GET /v1/keys/hk?device_id=X` — this device's wrapped History Key
-→ `200 wire.HKWrap`. `404` if none (pending / revoked / never wrapped) — the
-client treats 404 as "not activated or revoked".
+→ `200 wire.HKWrap`. `404` if none (pending / never wrapped) — the client treats
+404 as "not activated". A *revoked* caller never reaches the handler: the
+signature check refuses it first with `403 device_revoked` (see above).
 
 ### `GET /v1/keys/dek?cursor=K&limit=M` — list wrapped epoch data keys
 Ordered by `key_id` (ULIDs = time-ordered), strictly **after** `cursor`
@@ -389,6 +406,28 @@ an error, never silently skipped.
   re-encrypted**), and wrap the new HK for every still-active device. Rotation is
   refused if no active device would survive. Unwrapped DEK plaintexts stay valid
   across rotation; only the HK-wrap cache is invalidated client-side.
+- **What the revoked machine does.** Rotation stops it reading anything *new*, but
+  it still holds the ciphertext it already pulled and, while its daemon runs, the
+  keys it already unwrapped. So the client acts on its own revocation: the first
+  `device_revoked` response records the fact in `data.db`'s meta bucket
+  (`revoked_by_server` — not a loose file in the state directory, which would be
+  one `rm` away) and **deletes `remote.db` immediately**: cache detached first so
+  no later cycle writes it back, pull cursors dropped with it. Sync then stops for
+  the rest of that process rather than retrying something that cannot succeed.
+  Remote history already decrypted into RAM is deliberately left for the rest of
+  the session; it is gone at the next start, which finds an empty cache and can
+  obtain no key. The persisted record is the durable half: a start that reads it
+  deletes the cache again before opening anything, covering a process killed
+  mid-purge, a restored backup, or a machine that comes back up offline and can
+  never be told.
+- **The way back.** That record is the last thing the server said, not a permanent
+  verdict — so a revoked *start* is not latched and gets exactly one attempt.
+  Nothing in the enrollment path can clear it directly (the daemon holds the
+  `data.db` write lock), so the only evidence that retires a revocation is the
+  server serving this device again: enroll the machine afresh and the next
+  successful cycle clears it, while a still-revoked one is refused again and
+  stops. Re-pointing at a different server clears it too, since the revocation
+  described the old group.
 
 - **Recover** (no device survives): the recovery passphrase is stretched with
   **Argon2id** (t=3, m=128 MiB, p=4, 16-byte salt) into an X25519 keypair (a

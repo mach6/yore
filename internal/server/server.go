@@ -311,21 +311,23 @@ func (s *Server) requireSignature(w http.ResponseWriter, r *http.Request, db *bb
 		return false
 	}
 	pub := selfKey
+	var dev wire.Device
+	known := false
 	if pub == nil {
-		var dev wire.Device
-		found := false
 		if err := db.View(func(tx *bbolt.Tx) error {
 			raw := tx.Bucket(bucketDevices).Get([]byte(deviceID))
 			if raw == nil {
 				return nil
 			}
-			found = true
+			known = true
 			return json.Unmarshal(raw, &dev)
 		}); err != nil {
 			writeErr(w, http.StatusInternalServerError, "internal error")
 			return false
 		}
-		if !found || dev.Status != wire.DeviceActive {
+		// An unknown device is refused without a hint: there is no key to check a
+		// signature against, and saying which ids exist would enumerate the group.
+		if !known {
 			s.denySig(w, r, errInactiveSigner)
 			return false
 		}
@@ -337,6 +339,21 @@ func (s *Server) requireSignature(w http.ResponseWriter, r *http.Request, db *bb
 	}
 	if !s.nonces.checkAndRecord(deviceID, reqsign.Nonce(r.Header), time.Now()) {
 		s.denySig(w, r, errReplay)
+		return false
+	}
+	// Status is checked AFTER the signature, so only the holder of this device's
+	// private key learns its standing — and a revoked one is told exactly that,
+	// which is the only way it can find out it should stop syncing and drop the
+	// group's ciphertext. A device awaiting approval is refused without the
+	// distinction: "pending" is a state it already knows it is in.
+	if known && dev.Status != wire.DeviceActive {
+		if dev.Status == wire.DeviceRevoked {
+			log.Printf("revoked device refused: tenant=%q %s %s device=%q",
+				tenantFromContext(r), r.Method, r.URL.Path, deviceID)
+			writeCodedErr(w, http.StatusForbidden, wire.CodeDeviceRevoked, "device revoked")
+			return false
+		}
+		s.denySig(w, r, errInactiveSigner)
 		return false
 	}
 	return true
@@ -734,6 +751,11 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, wire.ErrorResp{Error: msg})
+}
+
+// writeCodedErr is writeErr with a machine-readable code the client acts on.
+func writeCodedErr(w http.ResponseWriter, status int, code, msg string) {
+	writeJSON(w, status, wire.ErrorResp{Error: msg, Code: code})
 }
 
 // writeAPIErr maps an error out of a transaction to its status, or 500.

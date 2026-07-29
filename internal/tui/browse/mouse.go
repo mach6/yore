@@ -129,9 +129,11 @@ func (m Model) focusAt(x, y int) (tea.Model, tea.Cmd) {
 }
 
 // paneAt returns the index (into the active view's focus order) of the pane
-// containing the pointer.
+// containing the pointer. It sweeps every slot: a view that lays out fewer panes
+// leaves the rest zero, and a zoomed layout parks its one full-frame rect at the
+// zoomed pane's own index — which is not necessarily the first.
 func (m Model) paneAt(x, y int) (int, bool) {
-	for i := 0; i < m.geo.n; i++ {
+	for i := range m.geo.p {
 		if m.geo.p[i].contains(x, y) {
 			return i, true
 		}

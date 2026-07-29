@@ -437,7 +437,7 @@ func TestResizeStaysWithinWidth(t *testing.T) {
 			for _, mode := range []viewMode{viewBrowse, viewStats} {
 				m.view = mode
 				if mode == viewStats {
-					m.stats = computeStats(f.resp.Rows, now, 0)
+					m.stats = computeStats(f.resp.Rows, f.resp.Total, now, 0)
 				}
 				for _, line := range strings.Split(m.View(), "\n") {
 					got := lipgloss.Width(line)
@@ -461,7 +461,7 @@ func TestFrameFillsExactHeight(t *testing.T) {
 	}
 	m := ready(t, f, 100, 30)
 	m, _ = step(t, m, queryResultMsg{seq: 1, resp: f.resp})
-	m.stats = computeStats(f.resp.Rows, now, 0)
+	m.stats = computeStats(f.resp.Rows, f.resp.Total, now, 0)
 
 	for _, wh := range [][2]int{{200, 50}, {120, 40}, {80, 24}, {60, 20}, {40, 15}} {
 		m, _ = step(t, m, tea.WindowSizeMsg{Width: wh[0], Height: wh[1]})
@@ -1155,6 +1155,44 @@ func TestMouseClickAndWheel(t *testing.T) {
 	require.Equal(t, 0, m.promptSel, "the wheel did not scroll back up")
 }
 
+// TestZoomedPaneKeepsMouse proves the wheel still scrolls a zoomed pane. A
+// zoomed layout parks its one full-frame rect at the zoomed pane's OWN index, so
+// a hit test bounded by a pane count matched nothing unless that index happened
+// to be 0 — and neither view zooms to pane 0 by default.
+func TestZoomedPaneKeepsMouse(t *testing.T) {
+	// Browse: zoom the results table (index 1) and scroll it.
+	f := &fakeBackend{
+		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 4}}},
+		resp:  mkResp(mkRows("cargo add tower", "cargo build", "cargo test", "cargo fmt")),
+	}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: f.resp})
+	m, _ = step(t, m, press("z"))
+	require.True(t, m.zoom)
+	require.NotEqual(t, focus(0), m.focus, "this test is only meaningful off index 0")
+	require.Equal(t, 0, m.sel)
+
+	m, _ = step(t, m, wheelAt(10, 5, tea.MouseButtonWheelDown))
+	require.Positivef(t, m.sel, "the wheel must still scroll a zoomed browse pane")
+	down := m.sel
+	m, _ = step(t, m, wheelAt(10, 5, tea.MouseButtonWheelUp))
+	require.Lessf(t, m.sel, down, "the wheel must still scroll a zoomed browse pane back up")
+
+	// A click inside the zoomed pane is hit-tested too, and keeps focus on it.
+	m, _ = step(t, m, click(10, 5))
+	require.Equal(t, focusTable, m.focus)
+	require.True(t, m.zoom, "clicking inside a zoomed pane must not drop the zoom")
+
+	// Agents: the same, on the zoomed prompt pane (also not index 0).
+	am := agentModel(t, 140, 40)
+	am, _ = step(t, am, press("z"))
+	require.True(t, am.zoom)
+	require.NotEqual(t, agentPane(0), am.apane, "this test is only meaningful off index 0")
+	require.Equal(t, 0, am.promptSel)
+	am, _ = step(t, am, wheelAt(10, 5, tea.MouseButtonWheelDown))
+	require.Positivef(t, am.promptSel, "the wheel must still scroll a zoomed agent pane")
+}
+
 // TestAgentsDurColumnAdapts keeps the adaptive DUR column honest across the
 // prompt and command panes.
 func TestAgentsDurColumnAdapts(t *testing.T) {
@@ -1631,36 +1669,61 @@ func TestHourOfDayOnPartialDay(t *testing.T) {
 	require.Containsf(t, strip(m.View()), "By hour of day · ", "the hourly title should carry its count")
 }
 
-// TestSampleNoteExplainsFlatTabs proves the capped aggregation says so. Without
-// this, every window wider than the sample's reach shows identical numbers and
-// the period tabs read as broken.
+// TestSampleNoteExplainsFlatTabs proves a short aggregation says so. The
+// explorer asks for every row, so this should never fire in practice — but if a
+// sample ever does arrive windowed, every period wider than its reach shows
+// identical numbers and the tabs read as broken unless the header owns up to it.
 func TestSampleNoteExplainsFlatTabs(t *testing.T) {
-	// A sample that hits the ceiling, reaching back only a couple of days.
-	rows := make([]rec.Record, statsLimit)
+	// A sample the daemon windowed: 300 rows out of a matched 9000, reaching
+	// back only a couple of hours.
+	const sample = 300
+	rows := make([]rec.Record, sample)
 	for i := range rows {
 		rows[i] = rec.Record{
 			ID: strconv.Itoa(i), Cmd: "ls", Cwd: "/w", Hostname: "boxA",
 			StartMs: now - int64(i)*30_000, Exit: rec.IntPtr(0),
 		}
 	}
+	resp := mkResp(rows)
+	resp.Total = 9000 // matched far more than it returned
 	f := &fakeBackend{
-		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: len(rows)}}},
-		resp:  mkResp(rows),
+		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: resp.Total}}},
+		resp:  resp,
 	}
 	m := ready(t, f, 160, 40)
 	m, cmd := step(t, m, press("s"))
 	m, _ = step(t, m, cmd().(statsResultMsg))
 
-	require.True(t, m.stats.capped, "a full sample must know it is capped")
+	require.True(t, m.stats.capped, "a windowed sample must know it is short")
+	require.Equal(t, sample, m.stats.sampleN)
 	require.Positive(t, m.stats.sampleFrom)
 	out := strip(m.View())
-	require.Containsf(t, out, "newest 5000 commands", "the header must own up to the cap:\n%s", out)
+	require.Containsf(t, out, "newest 300 commands", "the header must own up to the window:\n%s", out)
 	require.Containsf(t, out, "reaches back", "…and say how far back it actually goes:\n%s", out)
 
-	// A sample under the ceiling makes no such claim.
+	// A complete sample makes no such claim.
 	small := statsModel(t, 160)
 	require.False(t, small.stats.capped)
 	require.Contains(t, strip(small.View()), "all history")
+}
+
+// TestBrowseAsksForEveryRow pins the contract that makes the explorer an
+// explorer: both the table and the aggregation ask the daemon for all matches,
+// not a page of them. A row budget here is invisible in the UI and silently puts
+// the oldest history out of scrolling reach.
+func TestBrowseAsksForEveryRow(t *testing.T) {
+	f := &fakeBackend{
+		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 3}}},
+		resp:  mkResp(mkRows("go build", "go test", "ls -la")),
+	}
+	m := ready(t, f, 120, 40)
+
+	require.Equal(t, proto.LimitAll, m.buildReq().Limit, "the browse table must not window its query")
+
+	// The stats/agents sample comes from statsCmd; run it and read what it asked.
+	_ = m.statsCmd(1)()
+	require.Equal(t, proto.LimitAll, f.lastReq().Limit, "the aggregation must not window its query")
+	require.True(t, f.lastReq().WantPrompts)
 }
 
 // TestStartViewOpensDirectly proves Options.Start lands on a full-screen view

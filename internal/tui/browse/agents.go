@@ -5,7 +5,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/lipgloss"
 
@@ -437,7 +436,7 @@ func (m Model) cmdInfoLines(r rec.Record, w int) []string {
 		{"Host", dashIfEmpty(r.Hostname)},
 		{"Session", shortSession(r.Session)},
 		{"Executor", dashIfEmpty(r.Tag)},
-		{"Time", time.UnixMilli(r.StartMs).Local().Format("2006-01-02 15:04:05")},
+		{"Time", theme.AbsTime(r.StartMs)},
 		{"Duration", dur},
 		{"Exit", exitWord(r)},
 	} {

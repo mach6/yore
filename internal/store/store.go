@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"time"
 
 	"go.etcd.io/bbolt"
@@ -23,6 +24,15 @@ import (
 // ErrLocked is returned by Open when another process already holds the store.
 var ErrLocked = errors.New("store: locked by another process")
 
+// ErrSchemaNewer is returned by Open when data.db carries a schema version this
+// build does not know. Refusing is the point: an older binary that guessed at a
+// newer layout would misread records or write ones the newer build cannot, and
+// this is the local history — the one copy of it on this machine.
+var ErrSchemaNewer = errors.New("store: data.db was written by a newer version of yore")
+
+// ErrSchemaBad is returned when the recorded schema version is not a number.
+var ErrSchemaBad = errors.New("store: data.db has a malformed schema version")
+
 var (
 	bucketHistory = []byte("history") // seq (8-byte BE) -> rec.Record JSON
 	bucketIDs     = []byte("ids")     // record ID -> seq (8-byte BE)
@@ -32,7 +42,21 @@ var (
 const (
 	metaHostID   = "host_id"
 	metaHostname = "hostname"
+	metaSchema   = "schema"
 )
+
+// SchemaVersion is the on-disk layout this build reads and writes.
+//
+// It exists to be READ, not yet to be migrated: there is no upgrade path, so the
+// only thing a version does today is let a build refuse a database it cannot
+// safely touch instead of misreading it. Stamping it now is what makes an
+// upgrade path possible later — a store with no version at all leaves a future
+// migration guessing from structure.
+//
+// A store predating this constant carries no version key. That is not an unknown
+// format, it IS version 1: the layout has not changed, so Open stamps it rather
+// than refusing every database that already exists.
+const SchemaVersion = 1
 
 // Store is an open handle to the local history database.
 type Store struct {
@@ -40,6 +64,29 @@ type Store struct {
 	dir      string
 	hostID   string // opaque ULID for this machine; set once, cached
 	hostname string // OS hostname, refreshed each Open, cached
+	schema   int    // on-disk layout version (see SchemaVersion)
+}
+
+// checkSchema reads the recorded layout version, stamping SchemaVersion when
+// there is none (a new store, or one predating versioning — both are the current
+// layout). A version this build does not know is refused, never guessed at.
+// Caller holds a write transaction.
+func checkSchema(mb *bbolt.Bucket) (int, error) {
+	raw := mb.Get([]byte(metaSchema))
+	if raw == nil {
+		return SchemaVersion, mb.Put([]byte(metaSchema), []byte(strconv.Itoa(SchemaVersion)))
+	}
+	v, err := strconv.Atoi(string(raw))
+	if err != nil || v < 1 {
+		return 0, fmt.Errorf("%w: %q", ErrSchemaBad, raw)
+	}
+	if v > SchemaVersion {
+		return 0, fmt.Errorf("%w (schema %d; this build understands %d) — upgrade yore",
+			ErrSchemaNewer, v, SchemaVersion)
+	}
+	// v < SchemaVersion is where a migration would run. There is none yet, and
+	// there is only one version, so this is unreachable until the layout changes.
+	return v, nil
 }
 
 // Open opens (creating if needed) the store under the state dir. It creates
@@ -66,6 +113,11 @@ func Open(dir string) (*Store, error) {
 			}
 		}
 		mb := tx.Bucket(bucketMeta)
+		schema, serr := checkSchema(mb)
+		if serr != nil {
+			return serr
+		}
+		s.schema = schema
 		if mb.Get([]byte(metaHostID)) == nil {
 			if err := mb.Put([]byte(metaHostID), []byte(rec.NewID())); err != nil {
 				return err
@@ -107,6 +159,9 @@ func (s *Store) BackupTo(w io.Writer) (int64, error) {
 
 // Dir returns the state directory backing this store.
 func (s *Store) Dir() string { return s.dir }
+
+// Schema returns the on-disk layout version this database carries.
+func (s *Store) Schema() int { return s.schema }
 
 // HostID returns this machine's stable opaque id.
 func (s *Store) HostID() string { return s.hostID }

@@ -18,13 +18,16 @@ func (r rect) contains(x, y int) bool {
 const maxPanes = 4
 
 // layout is the active view's pane geometry, recomputed by applyLayout. Panes are
-// stored in the view's own focus order so a focus value indexes straight into p.
-// vDiv/hDiv are the draggable seams; -1 means this view has no such seam (or the
-// layout is zoomed to a single pane). hDivFrom is where the horizontal seam
-// starts — the browse view splits only its right-hand column.
+// stored in the view's own focus order so a focus value indexes straight into p;
+// an entry a view does not lay out is left zero, which contains() rejects, so a
+// hit test sweeps all of p rather than tracking how many entries are live. (It
+// used to carry a count, and zooming — which parks one full-frame rect at the
+// focused pane's own index — set it to 1, so the wheel stopped hit-testing every
+// pane but the first.) vDiv/hDiv are the draggable seams; -1 means this view has
+// no such seam (or the layout is zoomed to a single pane). hDivFrom is where the
+// horizontal seam starts — the browse view splits only its right-hand column.
 type layout struct {
 	p        [maxPanes]rect
-	n        int
 	vDiv     int
 	hDiv     int
 	hDivFrom int
@@ -152,7 +155,6 @@ func browseGeom(w, mid, leftW, tableH int) layout {
 			{x: leftW, y: 1, w: right, h: tableH},
 			{x: leftW, y: 1 + tableH, w: right, h: mid - tableH},
 		},
-		n:        3,
 		vDiv:     leftW,
 		hDiv:     1 + tableH,
 		hDivFrom: leftW,
@@ -171,7 +173,6 @@ func agentGeom(w, mid, leftW, topH int) layout {
 			{x: leftW, y: 1 + topH, w: right, h: mid - topH},
 			{x: 0, y: 1 + topH, w: leftW, h: mid - topH},
 		},
-		n:        4,
 		vDiv:     leftW,
 		hDiv:     1 + topH,
 		hDivFrom: 0,

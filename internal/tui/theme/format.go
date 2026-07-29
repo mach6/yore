@@ -5,11 +5,21 @@ import (
 	"time"
 )
 
+// Unknown is the placeholder for a value the record never carried. A record
+// whose timestamp is zero has no known time — bare bash history files hold no
+// "#<epoch>" lines, so everything imported from one arrives untimed. Rendering
+// that as 1970-01-01 reads like a bug rather than like missing data.
+const Unknown = "—"
+
 // RelTime renders a compact, width-stable (<= 8 columns) relative time for a
 // row, given the current and event times in Unix milliseconds. It returns
 // "now", "42s", "5m", "3h", "2d", "3w" for recent times, "Jan 5" for older
-// times within the current year, and "Jan 2023" for anything earlier.
+// times within the current year, and "Jan 2023" for anything earlier. A zero
+// thenMs means "no timestamp" and renders as Unknown.
 func RelTime(nowMs, thenMs int64) string {
+	if thenMs <= 0 {
+		return Unknown
+	}
 	diff := nowMs - thenMs
 	if diff < 0 {
 		diff = 0
@@ -34,6 +44,15 @@ func RelTime(nowMs, thenMs int64) string {
 		return then.Format("Jan 2")
 	}
 	return then.Format("Jan 2006")
+}
+
+// AbsTime renders an absolute local wall-clock time for a details pane, or
+// Unknown when ms is zero (see Unknown).
+func AbsTime(ms int64) string {
+	if ms <= 0 {
+		return Unknown
+	}
+	return time.UnixMilli(ms).Local().Format("2006-01-02 15:04:05")
 }
 
 // Duration renders a command's run time compactly: "412ms", "2.1s",

@@ -80,6 +80,8 @@ func TestRelTime(t *testing.T) {
 		then int64
 		want string
 	}{
+		{"no timestamp", 0, Unknown},
+		{"negative timestamp", -1, Unknown},
 		{"future clamps to now", nowMs + 5000, "now"},
 		{"sub-second", ms(500 * time.Millisecond), "now"},
 		{"seconds", ms(42 * time.Second), "42s"},
@@ -98,6 +100,16 @@ func TestRelTime(t *testing.T) {
 			require.LessOrEqualf(t, utf8.RuneCountInString(got), 8, "RelTime = %q exceeds 8 columns", got)
 		})
 	}
+}
+
+// TestAbsTime pins the untimed case: a record imported from a bare bash history
+// has StartMs == 0 and must not render as 1970-01-01.
+func TestAbsTime(t *testing.T) {
+	require.Equal(t, Unknown, AbsTime(0))
+	require.Equal(t, Unknown, AbsTime(-1))
+
+	ms := time.Date(2026, 3, 5, 14, 9, 7, 0, time.Local).UnixMilli()
+	require.Equal(t, "2026-03-05 14:09:07", AbsTime(ms))
 }
 
 func TestDuration(t *testing.T) {
