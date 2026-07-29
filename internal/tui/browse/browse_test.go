@@ -450,6 +450,35 @@ func TestResizeStaysWithinWidth(t *testing.T) {
 	}
 }
 
+// TestFrameFillsExactHeight pins the whole frame to the terminal height in every
+// view. The panes compose their own borders (titledBox) to seat each pane name in
+// its top rule, so a one-row arithmetic slip would not look like a bug — it would
+// scroll the alt-screen by a line.
+func TestFrameFillsExactHeight(t *testing.T) {
+	f := &fakeBackend{
+		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 3}}},
+		resp:  mkResp(mkRows("go build", "go test", "ls -la")),
+	}
+	m := ready(t, f, 100, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: f.resp})
+	m.stats = computeStats(f.resp.Rows, now, 0)
+
+	for _, wh := range [][2]int{{200, 50}, {120, 40}, {80, 24}, {60, 20}, {40, 15}} {
+		m, _ = step(t, m, tea.WindowSizeMsg{Width: wh[0], Height: wh[1]})
+		for _, mode := range []viewMode{viewBrowse, viewStats, viewAgents} {
+			// Each view lays its panes out differently, so the geometry has to be
+			// resolved for the view being measured — exactly as switching to it does.
+			m.view = mode
+			m.applyLayout()
+			got := lipgloss.Height(m.View())
+			require.Equalf(t, wh[1], got, "%dx%d mode=%d: frame is %d rows, want %d",
+				wh[0], wh[1], mode, got, wh[1])
+		}
+		m.view = viewBrowse
+		m.applyLayout()
+	}
+}
+
 func TestFocusCyclesAndRemoteHint(t *testing.T) {
 	f := &fakeBackend{resp: func() proto.QueryResp {
 		r := mkResp(mkRows("ls"))
@@ -1141,7 +1170,7 @@ func TestAgentsDurColumnAdapts(t *testing.T) {
 	}
 	m := openAgents(t, ready(t, f, 140, 40))
 	require.False(t, m.prompts.hasDur, "no command has a duration")
-	require.NotContainsf(t, strip(m.View()), "DUR", "DUR should be hidden when nothing is timed")
+	require.NotContainsf(t, strip(m.View()), " dur ", "the dur column should be hidden when nothing is timed")
 
 	// A duration on any one command brings the column back (e.g. a Cursor
 	// command mixed into the same view).
@@ -1151,8 +1180,8 @@ func TestAgentsDurColumnAdapts(t *testing.T) {
 	// widest window is already selected, so asking for it again is a no-op.
 	m, _ = step(t, m, press("1"))
 	m, _ = step(t, m, press("5"))
-	require.True(t, m.prompts.hasDur, "a timed command should light the DUR column")
-	require.Containsf(t, strip(m.View()), "DUR", "DUR should return once a command is timed")
+	require.True(t, m.prompts.hasDur, "a timed command should light the dur column")
+	require.Containsf(t, strip(m.View()), " dur ", "the dur column should return once a command is timed")
 }
 
 // TestAgentsHorizontalScroll proves ←/→ reveal a prompt truncated with an
@@ -1319,8 +1348,15 @@ func TestSplitsPersistAndRestore(t *testing.T) {
 	require.Equal(t, defaultAgentLeftRatio, m3.splits.AgentLeft)
 }
 
-// statsModel renders the stats screen over a year-plus of daily activity.
+// statsModel renders the stats screen over a year-plus of daily activity, on a
+// terminal tall enough for every chart.
 func statsModel(t *testing.T, w int) Model {
+	t.Helper()
+	return statsModelWH(t, w, 40)
+}
+
+// statsModelWH is statsModel at an explicit terminal size, for the fitting rules.
+func statsModelWH(t *testing.T, w, h int) Model {
 	t.Helper()
 	var rows []rec.Record
 	for i := 0; i < 800; i++ {
@@ -1333,13 +1369,43 @@ func statsModel(t *testing.T, w int) Model {
 		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: len(rows)}}},
 		resp:  mkResp(rows),
 	}
-	m := ready(t, f, w, 40)
+	m := ready(t, f, w, h)
 	m, cmd := step(t, m, press("s"))
 	require.NotNil(t, cmd)
 	sr, ok := cmd().(statsResultMsg)
 	require.True(t, ok)
 	m, _ = step(t, m, sr)
 	return m
+}
+
+// TestStatsHeatmapSurvivesShortTerminal: the activity graph is the one view that
+// shows years at a glance, and it used to be gated on a pane 26 rows tall — so on
+// a stock 80×24 terminal it never appeared at all. It must compress instead.
+func TestStatsHeatmapSurvivesShortTerminal(t *testing.T) {
+	full := strip(statsModelWH(t, 100, 40).View())
+	require.Contains(t, full, "peak", "a tall terminal gets a heatmap")
+	require.Contains(t, full, "Sun", "and the full form carries weekday rows")
+
+	short := strip(statsModelWH(t, 100, 24).View())
+	require.Contains(t, short, "Activity (last", "24 rows must still show the activity arc")
+	require.NotContains(t, short, "Sun", "at 24 rows it is the compact, folded form")
+}
+
+// TestStatsChartsFitWholeOrNotAtAll: a chart that cannot fit yields its rows
+// instead of being drawn and then sliced, which used to lop the axis off the
+// hourly histogram on a short terminal.
+func TestStatsChartsFitWholeOrNotAtAll(t *testing.T) {
+	for h := 10; h <= 40; h++ {
+		out := strip(statsModelWH(t, 100, h).View())
+		if strings.Contains(out, "By hour of day") {
+			require.Containsf(t, out, "00 ", "hourly chart drawn without its axis at h=%d:\n%s", h, out)
+		}
+		if strings.Contains(out, "Commands per day") {
+			require.Containsf(t, out, "peak", "daily chart drawn without its caption at h=%d", h)
+		}
+		// Whatever was dropped, the ranked columns keep their heading and rows.
+		require.Containsf(t, out, "Top programs", "the ranked columns were starved at h=%d", h)
+	}
 }
 
 // statLineWidth returns the display width of the first rendered line whose
@@ -1396,7 +1462,7 @@ func TestStatsGraphsIgnorePeriod(t *testing.T) {
 	m, _ = step(t, m, press("1")) // Today
 	today := strip(m.View())
 	require.Contains(t, today, "Activity (last", "the heatmap must survive a narrow period")
-	require.Containsf(t, today, string(heatShades[4]), "the heatmap must still show history:\n%s", today)
+	require.Containsf(t, today, string(heatFill), "the heatmap must still show history:\n%s", today)
 	// The KPI line, by contrast, does narrow to the period.
 	require.NotEqual(t, wide, today, "the period must still change something")
 }
@@ -1429,8 +1495,13 @@ func TestHourAxisAlignsToBuckets(t *testing.T) {
 func TestHeatmapDropsWhenTooNarrow(t *testing.T) {
 	require.Less(t, heatWeeks(minHeatWks*heatCellW+heatLabelW-1), minHeatWks)
 	m := statsModel(t, 100)
-	require.Nil(t, m.renderHeatmap(m.stats, 16), "a 16-column heatmap is not worth its rows")
-	require.NotEmpty(t, m.renderHeatmap(m.stats, 100))
+	for _, compact := range []bool{false, true} {
+		require.Nilf(t, m.heatmapChart(m.stats, 16, compact),
+			"a 16-column heatmap is not worth its rows (compact=%v)", compact)
+	}
+	require.NotEmpty(t, m.heatmapChart(m.stats, 100, false))
+	require.Less(t, len(m.heatmapChart(m.stats, 100, true)),
+		len(m.heatmapChart(m.stats, 100, false)), "the compact form must be shorter")
 }
 
 // --- the shared period filter ---------------------------------------------

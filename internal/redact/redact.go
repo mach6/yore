@@ -1,13 +1,26 @@
-// Package redact is yore's recording security gate. It decides whether a
-// captured shell command carries a secret (and so must NEVER be spooled,
-// stored, or synced) or was run under a directory the user asked to ignore.
+// Package redact is yore's recording security gate. It finds the secrets in
+// captured text — shell commands, and the agent prompts yore records alongside
+// them, which is why the rule table covers both assignment syntax and the prose
+// an English sentence would use.
+//
+// A match REDACTS rather than rejects: Redact replaces the credential with a
+// Mark naming the rule that caught it and keeps everything else. The command
+// stays in your history, searchable and readable, minus the one span that must
+// never be persisted or synced. Dropping the whole record was the older,
+// blunter behaviour, and it was wrong in practice — the commands most worth
+// remembering are often exactly the ones with a token somewhere in them, and an
+// entry that silently vanished is indistinguishable from one you never ran.
+//
+// Two things still drop a record outright, because both are the user asking for
+// it rather than the gate guessing: a cwd under an ignore_dirs prefix (SkipDir)
+// and a match against one of the user's own ignore_patterns (Ignored).
 //
 // Two failure modes matter and pull in opposite directions:
 //
-//   - A false negative leaks a secret: the command is recorded and later
-//     synced to a server (encrypted, but still a persisted copy of a live
-//     credential).
-//   - A false positive silently drops history the user wanted to keep.
+//   - A false negative leaks a secret: the credential is recorded and later
+//     synced to a server (encrypted, but still a persisted copy of a live one).
+//   - A false positive corrupts history the user wanted, blanking a span that
+//     was never a secret.
 //
 // So every built-in rule anchors on the *shape* of a secret value or on an
 // unambiguous assignment/flag context — never on a bare keyword. "password"
@@ -28,6 +41,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -40,11 +54,18 @@ import (
 // re to have any chance of matching. When hints is empty the rule always runs
 // its regex (used for user patterns, whose shape we can't predict). fold makes
 // the hint scan ASCII-case-insensitive (hints must then be lowercase).
+//
+// secret is the index of the pattern's `(?P<secret>…)` capture group, or 0 when
+// it has none. It is what lets Redact mask the credential and keep the rest of
+// the line: most rules match a context far wider than the secret itself
+// (`mysql -u root -p<pw>` matches from the program name), so replacing the
+// whole match would throw away the command along with the password.
 type rule struct {
-	name  string
-	re    *regexp.Regexp
-	hints []string
-	fold  bool
+	name   string
+	re     *regexp.Regexp
+	hints  []string
+	fold   bool
+	secret int
 }
 
 // builtins is the ordered built-in rule table, compiled once at init and
@@ -60,6 +81,13 @@ type rule struct {
 //	aws-secret           an AWS secret access key value in assignment context
 //	github-token         a GitHub PAT / OAuth / app token (ghp_ … / github_pat_)
 //	slack-token          a Slack API token (xoxb-/xoxa-/xoxp-/xoxr-/xoxs-)
+//	google-api-key       a Google / Firebase API key (AIza…)
+//	stripe-key           a Stripe secret or restricted key (sk_live_/rk_test_…)
+//	llm-api-key          an OpenAI / Anthropic style key (sk-…, sk-ant-…)
+//	huggingface-token    a Hugging Face access token (hf_…)
+//	npm-token            an npm automation/access token (npm_…)
+//	pypi-token           a PyPI API token (pypi-…)
+//	sendgrid-key         a SendGrid API key (SG.<id>.<secret>)
 //	url-userinfo         a password embedded in a URL (scheme://user:pass@host)
 //	openssl-passin       an inline passphrase to openssl (-passin pass:…)
 //	gpg-passphrase       an inline passphrase to gpg (--passphrase …)
@@ -70,6 +98,7 @@ type rule struct {
 //	curl-userpass        curl -u user:pass / --user user:pass
 //	wget-password        wget --password=<pw> (and --http-/--ftp-/--proxy-)
 //	generic-token-assign token/secret/password/api-key/auth = <value> anywhere
+//	secret-prose-assign  the same stated in prose ("the api key is <value>")
 //	env-secret-export    a leading VAR=<value> whose name embeds a secret word
 var builtins = compile(defaultSpecs)
 
@@ -81,27 +110,47 @@ var defaultSpecs = []Spec{
 	{"jwt", `eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.`, []string{"eyJ"}, false},
 
 	{"aws-access-key", `(AKIA|ASIA)[0-9A-Z]{16}`, []string{"AKIA", "ASIA"}, false},
-	{"aws-secret", `(?i)aws_secret_access_key["']?\s*[=: ]+\s*["']?[A-Za-z0-9/+]{40}`, []string{"aws_secret"}, true},
+	{"aws-secret", `(?i)aws_secret_access_key["']?\s*[=: ]+\s*["']?(?P<secret>[A-Za-z0-9/+]{40})`, []string{"aws_secret"}, true},
 
 	{"github-token", `gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}`,
 		[]string{"ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_"}, false},
 	{"slack-token", `xox[baprs]-[A-Za-z0-9-]{10,}`, []string{"xox"}, false},
 
-	{"url-userinfo", `[a-z][a-z0-9+.-]*://[^/@:\s]*:[^/@\s]+@`, []string{"://"}, false},
+	{"google-api-key", `AIza[0-9A-Za-z_\-]{35}`, []string{"AIza"}, false},
+	{"stripe-key", `[sr]k_(live|test)_[0-9A-Za-z]{16,}`,
+		[]string{"sk_live", "sk_test", "rk_live", "rk_test"}, false},
+	// OpenAI / Anthropic style. The length floor is what keeps a branch or
+	// package named "sk-something-or-other" out of it.
+	{"llm-api-key", `sk-[A-Za-z0-9_\-]{32,}`, []string{"sk-"}, false},
+	{"huggingface-token", `hf_[A-Za-z0-9]{30,}`, []string{"hf_"}, false},
+	{"npm-token", `npm_[A-Za-z0-9]{30,}`, []string{"npm_"}, false},
+	{"pypi-token", `pypi-[A-Za-z0-9_\-]{32,}`, []string{"pypi-"}, false},
+	{"sendgrid-key", `SG\.[A-Za-z0-9_\-]{16,}\.[A-Za-z0-9_\-]{16,}`, []string{"SG."}, false},
 
-	{"openssl-passin", `(?i:openssl)\b.*\s-(passin|passout|pass)[ =]pass:\S`, []string{"openssl"}, true},
-	{"gpg-passphrase", `(?i:gpg)\b.*--passphrase[ =]\S`, []string{"gpg"}, true},
+	{"url-userinfo", `[a-z][a-z0-9+.-]*://[^/@:\s]*:(?P<secret>[^/@\s]+)@`, []string{"://"}, false},
 
-	{"sshpass-password", `(?i:sshpass)\b.*\s-p\s*\S`, []string{"sshpass"}, true},
-	{"mysql-password", `^\s*(?i:mysql|mariadb|mysqldump)\b.*\s(-p\S|--password=\S)`, []string{"mysql", "mariadb", "mysqldump"}, true},
-	{"mongo-password", `^\s*(?i:mongosh|mongo)\b.*(\s-p\s*\S|--password[ =]\S)`, []string{"mongo"}, true},
-	{"smbclient-password", `^\s*(?i:smbclient)\b.*(-U\s*\S+%\S|--password[ =]\S)`, []string{"smbclient"}, true},
-	{"curl-userpass", `(?i:curl)\b.*\s(-u\s*|--user[ =])[^\s:]+:\S`, []string{"curl"}, true},
-	{"wget-password", `(?i:wget)\b.*--(http-|ftp-|proxy-)?passw(or)?d[= ]\S`, []string{"wget"}, true},
+	{"openssl-passin", `(?i:openssl)\b.*\s-(?:passin|passout|pass)[ =]pass:(?P<secret>\S+)`, []string{"openssl"}, true},
+	{"gpg-passphrase", `(?i:gpg)\b.*--passphrase[ =](?P<secret>\S+)`, []string{"gpg"}, true},
 
-	{"generic-token-assign", `(?i)(token|secret|passw(or)?d|api[_-]?key|auth)[=:]\S{6,}`,
+	{"sshpass-password", `(?i:sshpass)\b.*\s-p\s*(?P<secret>\S+)`, []string{"sshpass"}, true},
+	{"mysql-password", `^\s*(?i:mysql|mariadb|mysqldump)\b.*\s(?:-p|--password=)(?P<secret>\S+)`, []string{"mysql", "mariadb", "mysqldump"}, true},
+	{"mongo-password", `^\s*(?i:mongosh|mongo)\b.*(?:\s-p\s*|--password[ =])(?P<secret>\S+)`, []string{"mongo"}, true},
+	{"smbclient-password", `^\s*(?i:smbclient)\b.*(?:-U\s*[^\s%]+%|--password[ =])(?P<secret>\S+)`, []string{"smbclient"}, true},
+	{"curl-userpass", `(?i:curl)\b.*\s(?:-u\s*|--user[ =])[^\s:]+:(?P<secret>\S+)`, []string{"curl"}, true},
+	{"wget-password", `(?i:wget)\b.*--(?:http-|ftp-|proxy-)?passw(?:or)?d[= ](?P<secret>\S+)`, []string{"wget"}, true},
+
+	{"generic-token-assign", `(?i)(?:token|secret|passw(?:or)?d|api[_-]?key|auth)[=:](?P<secret>\S{6,})`,
 		[]string{"token", "secret", "passw", "apikey", "api_key", "api-key", "auth"}, true},
-	{"env-secret-export", `(?i)^\s*(export\s+)?[a-z0-9_]*(secret|token|password|passwd|apikey|api_key|credentials)[a-z0-9_]*=\S+`,
+	// The prose form of the same thing: "the api key is <value>", "password: <value>".
+	// It exists because this gate now guards agent PROMPTS as well as commands,
+	// and a prompt states a secret in a sentence where a command would assign it.
+	// The separator must be followed by whitespace (the no-space form is already
+	// covered above) and the value must look like a key — 16+ characters of key
+	// alphabet — so "password is required" and "see the token: ticket" pass.
+	{"secret-prose-assign",
+		`(?i)\b(?:api[ _-]?key|secret|token|password|passphrase|credential)s?\b\s*(?:is|are|=|:)\s+["']?(?P<secret>[A-Za-z0-9_\-+/=]{16,})`,
+		[]string{"key", "secret", "token", "password", "passphrase", "credential"}, true},
+	{"env-secret-export", `(?i)^\s*(?:export\s+)?[a-z0-9_]*(?:secret|token|password|passwd|apikey|api_key|credentials)[a-z0-9_]*=(?P<secret>\S+)`,
 		[]string{"secret", "token", "password", "passwd", "apikey", "api_key", "credential"}, true},
 }
 
@@ -134,9 +183,25 @@ func DefaultSpecs() []Spec {
 func compile(specs []Spec) []rule {
 	rules := make([]rule, len(specs))
 	for i, s := range specs {
-		rules[i] = rule{name: s.Name, re: regexp.MustCompile(s.Pattern), hints: s.Hints, fold: s.Fold}
+		rules[i] = newRule(s.Name, regexp.MustCompile(s.Pattern), s.Hints, s.Fold)
 	}
 	return rules
+}
+
+// secretGroup is the capture-group name a rule uses to mark the credential
+// inside a wider match. See rule.secret.
+const secretGroup = "secret"
+
+// newRule assembles a rule, resolving the index of its `secret` capture group.
+func newRule(name string, re *regexp.Regexp, hints []string, fold bool) rule {
+	idx := 0
+	for i, n := range re.SubexpNames() {
+		if n == secretGroup {
+			idx = i
+			break
+		}
+	}
+	return rule{name: name, re: re, hints: hints, fold: fold, secret: idx}
 }
 
 // Filter is a compiled set of built-in and user rules plus a set of ignored
@@ -145,6 +210,10 @@ func compile(specs []Spec) []rule {
 type Filter struct {
 	rules []rule   // built-ins followed by user patterns
 	dirs  []string // filepath.Clean'd ignore-dir prefixes
+	// nuser is how many trailing entries of rules came from the user's
+	// ignore_patterns. Those mean "do not record this at all"; the built-in
+	// secret rules mean "record it, without the secret". See Redact / Ignored.
+	nuser int
 }
 
 // New compiles a Filter from the in-memory built-in table plus userPatterns.
@@ -212,6 +281,39 @@ func loadBaseRules(dir string) (rules []rule, errs []error) {
 	return rules, errs
 }
 
+// MissingBuiltins returns the names of built-in rules that <dir>/redact.yml
+// does not define. Seeding never overwrites an existing file, so a user who
+// seeded before a rule shipped keeps a table without it — silently, since a
+// missing detector looks exactly like a clean history. `yore doctor` reports
+// this; nothing acts on it automatically, because a rule may be absent because
+// the user deliberately deleted it.
+//
+// It returns nil when the file is absent or unusable: those already fall back
+// to the full built-in table, so nothing is missing.
+func MissingBuiltins(dir string) []string {
+	b, err := os.ReadFile(config.RedactPath(dir))
+	if err != nil {
+		return nil
+	}
+	var file struct {
+		Patterns []Spec `yaml:"patterns"`
+	}
+	if yaml.Unmarshal(b, &file) != nil || len(file.Patterns) == 0 {
+		return nil
+	}
+	have := make(map[string]bool, len(file.Patterns))
+	for _, s := range file.Patterns {
+		have[s.Name] = true
+	}
+	var missing []string
+	for _, s := range defaultSpecs {
+		if !have[s.Name] {
+			missing = append(missing, s.Name)
+		}
+	}
+	return missing
+}
+
 // builtinRules returns a fresh copy of the compiled built-in rule table so the
 // caller can append to it without touching the shared slice.
 func builtinRules() []rule {
@@ -238,7 +340,7 @@ func compileSpecs(specs []Spec) (rules []rule, errs []error) {
 		if name == "" {
 			name = "unnamed"
 		}
-		rules = append(rules, rule{name: name, re: re, hints: s.Hints, fold: s.Fold})
+		rules = append(rules, newRule(name, re, s.Hints, s.Fold))
 	}
 	return rules, errs
 }
@@ -248,6 +350,7 @@ func compileSpecs(specs []Spec) (rules []rule, errs []error) {
 // accumulates any prior (base-load) warnings plus per-user-pattern ones.
 func assemble(base []rule, userPatterns, ignoreDirs []string, errs []error) (*Filter, []error) {
 	rules := base
+	nuser := 0
 	for _, p := range userPatterns {
 		if strings.TrimSpace(p) == "" {
 			continue
@@ -258,7 +361,8 @@ func assemble(base []rule, userPatterns, ignoreDirs []string, errs []error) (*Fi
 			continue
 		}
 		// No hints: a user pattern's shape is unknown, so it always runs.
-		rules = append(rules, rule{name: "user:" + p, re: re})
+		rules = append(rules, newRule("user:"+p, re, nil, false))
+		nuser++
 	}
 
 	dirs := make([]string, 0, len(ignoreDirs))
@@ -269,7 +373,7 @@ func assemble(base []rule, userPatterns, ignoreDirs []string, errs []error) (*Fi
 		dirs = append(dirs, filepath.Clean(d))
 	}
 
-	return &Filter{rules: rules, dirs: dirs}, errs
+	return &Filter{rules: rules, dirs: dirs, nuser: nuser}, errs
 }
 
 // Seed writes the built-in rules to <dir>/redact.yml so the user can see and
@@ -340,6 +444,153 @@ func marshalSpecs(specs []Spec) ([]byte, error) {
 // Sensitive reports whether cmd matches any built-in or user rule. It is the
 // hot path and does not allocate for a command that trips no rule's hints.
 func (f *Filter) Sensitive(cmd string) bool { return f.match(cmd) >= 0 }
+
+// Mark is the placeholder Redact leaves where a credential was. It names the
+// rule that fired, so the history says WHY a span is missing instead of just
+// showing a hole — and it is deliberately not valid shell, so a redacted
+// command recalled into the prompt fails loudly rather than running wrong.
+func Mark(rule string) string { return markPrefix + rule + markSuffix }
+
+// The delimiters of a Mark. They are deliberately outside the character set any
+// shell or credential uses, so isMark below cannot be fooled by real text.
+const (
+	markPrefix = "⟪redacted:"
+	markSuffix = "⟫"
+)
+
+// isMark reports whether s is already a redaction marker. Skipping those makes
+// Redact idempotent: `PASSWORD=⟪redacted:…⟫` still matches the assignment rules
+// that produced it, and without this a second pass — on import, or on a record
+// that crossed the gate twice — would redact the marker and report a fresh hit
+// for text that has no secret left in it.
+func isMark(s string) bool {
+	return strings.HasPrefix(s, markPrefix) && strings.HasSuffix(s, markSuffix)
+}
+
+// Redact returns text with every secret-rule match replaced by Mark, along with
+// the names of the rules that fired (nil, and text unchanged, when clean).
+//
+// This is what the recording gate does with a secret now: the command is KEPT,
+// minus the credential. Dropping the whole record was the safe default but a
+// bad one in practice — the commands most worth remembering are often the ones
+// with a token in them, and a silently missing entry is indistinguishable from
+// one that was never run.
+//
+// Only the credential goes. Rules mark it with a `secret` capture group, so
+// `mysql -u root -pHUNTER2 app` keeps everything but HUNTER2; a rule with no
+// such group (a whole-value shape like an AWS key, or a user pattern) has its
+// entire match replaced.
+//
+// User ignore_patterns are NOT applied here: those mean "don't record this",
+// which is Ignored's job.
+func (f *Filter) Redact(text string) (redacted string, rules []string) {
+	if text == "" {
+		return text, nil
+	}
+	spans := f.spans(text)
+	if len(spans) == 0 {
+		return text, nil
+	}
+
+	var fired []string
+	seen := map[string]bool{}
+	out := text
+	// Splice right-to-left so each replacement leaves the offsets of the spans
+	// still to come untouched.
+	for i := len(spans) - 1; i >= 0; i-- {
+		s := spans[i]
+		out = out[:s.start] + Mark(s.rule) + out[s.end:]
+	}
+	for _, s := range spans {
+		if !seen[s.rule] {
+			seen[s.rule] = true
+			fired = append(fired, s.rule)
+		}
+	}
+	return out, fired
+}
+
+// span is one range of text to blank out, and the rule that claimed it.
+type span struct {
+	start, end int
+	rule       string
+}
+
+// spans finds every range to redact, as non-overlapping ranges in ascending
+// order.
+//
+// Every rule is matched against the ORIGINAL text, never against the partially
+// redacted result. Rules genuinely overlap — `export DB_PASSWORD=hunter2` is
+// caught by both generic-token-assign and env-secret-export — and redacting
+// them one after another would let the second rule match the marker the first
+// just inserted, nesting markers and misattributing the span. Overlapping
+// ranges are merged instead, keeping the name of the first rule in table order
+// that claimed the range (the table is ordered specific-before-general, so that
+// is the more informative name).
+func (f *Filter) spans(text string) []span {
+	var found []span
+	secrets := f.secretRules()
+	for i := range secrets {
+		r := &secrets[i]
+		if !hintsPresent(text, r.hints, r.fold) {
+			continue
+		}
+		for _, loc := range r.re.FindAllStringSubmatchIndex(text, -1) {
+			start, end := r.span(loc)
+			if start < 0 || end <= start {
+				continue // an optional group that did not participate
+			}
+			if isMark(text[start:end]) {
+				continue // already redacted; see isMark
+			}
+			found = append(found, span{start: start, end: end, rule: r.name})
+		}
+	}
+	if len(found) == 0 {
+		return nil
+	}
+	// Ascending by start; on a tie the earlier rule (already in table order) wins,
+	// so a stable sort preserves attribution.
+	sort.SliceStable(found, func(i, j int) bool { return found[i].start < found[j].start })
+
+	merged := found[:1]
+	for _, s := range found[1:] {
+		last := &merged[len(merged)-1]
+		if s.start <= last.end {
+			if s.end > last.end {
+				last.end = s.end
+			}
+			continue
+		}
+		merged = append(merged, s)
+	}
+	return merged
+}
+
+// span picks the byte range to blank out for one match: the `secret` capture
+// group when the rule defines one, else the whole match.
+func (r *rule) span(loc []int) (start, end int) {
+	if r.secret > 0 && 2*r.secret+1 < len(loc) {
+		return loc[2*r.secret], loc[2*r.secret+1]
+	}
+	return loc[0], loc[1]
+}
+
+// secretRules is the built-in (and redact.yml) portion of the rule set — every
+// rule except the user's ignore_patterns, which live at the tail.
+func (f *Filter) secretRules() []rule { return f.rules[:len(f.rules)-f.nuser] }
+
+// Ignored reports whether text matches one of the user's ignore_patterns. Those
+// are an instruction to not record the command at all, unlike a secret rule,
+// which only costs the command its credential.
+func (f *Filter) Ignored(text string) bool {
+	for i := len(f.rules) - f.nuser; i < len(f.rules); i++ {
+		if f.rules[i].re.MatchString(text) {
+			return true
+		}
+	}
+	return false
+}
 
 // NumRules is the count of compiled rules (loaded/built-in plus valid user
 // patterns) backing this Filter. Intended for `yore doctor` reporting.

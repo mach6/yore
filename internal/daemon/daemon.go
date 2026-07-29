@@ -84,6 +84,10 @@ type server struct {
 	// pull); read at query time to resolve each row's effective tags.
 	tags *tagIndex
 
+	// prompts resolves PromptID -> prompt text (fed by both local ingest and
+	// remote pull); read at query time to hydrate each row's Prompt.
+	prompts *promptIndex
+
 	// Live connections, so shutdown can unblock handlers parked in ReadMsg.
 	conns   map[net.Conn]struct{}
 	closing bool
@@ -129,6 +133,7 @@ func Run(dir string, opts Options) error {
 	sc := loadSyncConf(dir)
 	tags := newTagIndex()
 	tags.setAutoTags(cfg.AutoTags)
+	prompts := newPromptIndex()
 	s := &server{
 		dir:         dir,
 		opts:        opts,
@@ -139,7 +144,8 @@ func Run(dir string, opts Options) error {
 		idleTimeout: idle,
 		startTime:   time.Now(),
 		tags:        tags,
-		remote:      newRemote(dir, st, sc, tags),
+		prompts:     prompts,
+		remote:      newRemote(dir, st, sc, tags, prompts),
 		syncConf:    sc,
 		conns:       make(map[net.Conn]struct{}),
 		wake:        make(chan struct{}, 1),
@@ -201,6 +207,17 @@ func Run(dir string, opts Options) error {
 		}
 		if len(trecs) > 0 {
 			s.logf("seeded tag index from %d tag records", len(trecs))
+		}
+	}
+	// Seed the prompt index the same way, and for the same reason.
+	if precs, perr := st.PromptRecords(); perr != nil {
+		s.logf("prompt seed error: %v", perr)
+	} else {
+		for i := range precs {
+			s.prompts.apply(precs[i])
+		}
+		if len(precs) > 0 {
+			s.logf("seeded prompt index from %d prompt records", len(precs))
 		}
 	}
 	s.logf("started pid=%d corpus=%d idle=%s", os.Getpid(), len(s.corpus), idle)
@@ -283,6 +300,7 @@ func (s *server) shutdown() {
 		if s.socketLive() {
 			_ = os.Remove(config.SocketPath(s.dir))
 		}
+		s.remote.close()
 		_ = s.store.Close()
 		s.logf("stopped pid=%d", os.Getpid())
 		if s.logFile != nil {
@@ -526,13 +544,17 @@ func (s *server) foldRows(rows []rec.Record) {
 			}
 			deleted[rows[i].TargetID] = struct{}{}
 		}
-		if rows[i].Type == rec.TypeTag {
-			s.tags.apply(rows[i]) // fold user tags into the index, not the corpus
+		// Tag and prompt records feed their own indexes, not the command corpus.
+		switch rows[i].Type {
+		case rec.TypeTag:
+			s.tags.apply(rows[i])
+		case rec.TypePrompt:
+			s.prompts.apply(rows[i])
 		}
 	}
 	for i := range rows {
 		r := rows[i]
-		if r.Type == rec.TypeDelete || r.Type == rec.TypeTag || r.DeletedMs != 0 {
+		if !store.IsCommand(r) {
 			continue
 		}
 		if _, gone := deleted[r.ID]; gone {
@@ -543,6 +565,7 @@ func (s *server) foldRows(rows []rec.Record) {
 	}
 	if len(deleted) > 0 {
 		s.dropFromCorpus(deleted)
+		s.prompts.drop(deleted)
 	}
 }
 
@@ -714,6 +737,7 @@ func (s *server) deleteRecord(id string) error {
 		s.lastSeq = ls
 	}
 	s.dropFromCorpus(map[string]struct{}{id: {}})
+	s.prompts.drop(map[string]struct{}{id: {}})
 	return nil
 }
 

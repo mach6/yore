@@ -115,9 +115,23 @@ local bbolt store and the authority for all search.
   `store.All()` cold load. The corpus is append-only and guarded by an RWMutex;
   readers snapshot the slice header under RLock and scan lock-free. A snapshot is
   re-written every 5 min and once more on shutdown, so restarts paint instantly.
-- **RAM-only remote cache.** Other hosts' history is pulled as ciphertext,
-  decrypted, and held in RAM **only** — never written to disk — and re-pulled
-  from empty cursors each daemon lifetime.
+- **RAM-only remote plaintext, cached ciphertext.** Other hosts' history is
+  decrypted into RAM **only** — plaintext is never written to disk. The
+  *ciphertext* it was decrypted from is cached in `remote.db`
+  (`internal/rstore`), alongside the per-host pull cursor. That is what the
+  server already holds and this machine cannot read without its keys, so the
+  invariant is untouched — and it is what makes startup incremental: cursors
+  used to be RAM-only, so every daemon lifetime re-downloaded and re-decrypted
+  every other machine's entire archive from seq 0, several times a day once the
+  30-minute idle timeout recycled the process. `remote_keep` (default 50 000)
+  caps how much of each host's tail is retained, in the cache and in RAM both,
+  so neither grows without bound as years of history accumulate. The cache is
+  derived: deleting it costs one full re-pull and nothing else, and it is reset
+  whenever the configured server changes.
+- **Prompt index.** Agent prompt text is stored once, on its own record (see
+  below), so the daemon keeps a `promptID → prompt` index — fed by the local
+  store scan at startup, local ingest, and remote pull — and rejoins each query
+  row with its prompt text on the way out.
 - **Debounced ingest.** A spool "wake" starts a 75 ms straggler window, then one
   fsync'd `IngestSpool` drain folds new rows into the corpus.
 - **Concurrency.** One goroutine per socket connection (serves that connection's
@@ -197,6 +211,90 @@ position, and `Tab` cycles focus within the active view.
   the pointer. The zero value means "never dragged", so browse keeps its
   long-standing default layout until a seam is actually moved.
 
+**Keys are described once** (`internal/tui/keyhelp`, driven by each UI's
+`keys.go`). One table of bindings feeds two renderings: the one-line footer that
+is always on screen, and the full grouped panel behind `?`. They cannot drift
+from each other, and a test holds them both to the dispatcher — it parses the key
+handlers' case clauses out of the package's own source and fails if a key is
+handled but described nowhere, or described but no longer handled. That check is
+the reason the panel can be trusted as the answer to "what can I press here".
+
+The two renderings answer different questions, so they are sized differently:
+
+- **The footer is terse and contextual.** It names a handful of keys for the
+  state the UI is *actually* in — the browse table's arrows move a selection, the
+  detail pane's scroll, the sidebar's pick a host, so the hint that names them
+  follows focus. A modal (delete confirmation, the tag prompt, the filter box)
+  swallows nearly all input, so its footer lists what is left rather than keys
+  that would not fire. While the filter box has focus the footer does not offer
+  `?` at all, because there `?` is a character being typed.
+- **The panel is exhaustive for one view.** It lists every binding that does
+  something *there*, grouped, in as many columns as the terminal affords. The
+  devices pane handles its keys before the global ones ever run, so it advertises
+  none of them — and it is the one screen where `q` means "back" rather than
+  "quit". Mouse gestures are listed too: nothing else on screen says the panes
+  are draggable. On a short terminal the list scrolls and says so, rather than
+  being silently cut off — a truncated list of keys is a wrong one.
+
+The panel is a modal: it covers the view it describes, so keys that would act on
+rows the user can no longer see do not fire through it. The footer occupies
+exactly one row in every state, which is what lets `applyLayout` budget for it
+without re-measuring.
+
+The `Ctrl-R` panel (`internal/tui/search`) carries the same two renderings, with
+one difference forced by what it is: a filter box cannot spend `?` on help,
+because a history search for `?` has to work. Its key list is on `⌥/` — which
+sits with the panel's other alt-modified toggles — and on `?` in vim's normal
+sub-mode, where nothing is being typed. Its hints are the last pieces on the
+status line and are dropped whole when the terminal is too narrow, so a warning
+like "daemon unreachable" always outranks them.
+
+**Agent commands are hidden from both interactive search UIs by default**
+(`hide_agent_commands`; `A` in the browser, `⌥a` in the Ctrl-R panel, per
+session). One agent prompt can produce forty tool invocations, which bury a
+morning of the user's own work in a table whose whole promise is "what happened
+here, newest first" and crowd out the handful of commands worth recalling. That
+history is not lost — the agent explorer is where it belongs, grouped under the
+prompt that caused it rather than interleaved with commands nobody typed.
+
+The filter is `QueryReq.HumanOnly`, applied **server-side**. Filtering after
+`Limit` would spend the row budget on rows the UI is about to drop, so a machine
+where an agent ran all morning would answer a full request with a handful of
+rows.
+
+Hiding a whole category of history is only acceptable if the UI says it is doing
+it, so the daemon returns `QueryResp.HiddenAgents` — how many rows matched
+everything else and were dropped by the filter. Both UIs spend it the same way:
+
+- the count is on screen (`3 agent commands hidden`) whenever the filter is
+  holding something back — the browser's status bar, the panel's status line;
+- the **empty state names it**, which is the case this design exists for: a
+  search whose only matches are an agent's must not answer "no matches", because
+  that is a lie about the user's own history. It reads
+  `3 agent commands hidden — A shows them` (`⌥a` in the panel), which matters
+  most in Ctrl-R, whose entire job is recall;
+- the key that undoes it is advertised **exactly when something is hidden** —
+  precisely when someone might be wondering where a command they remember
+  running went. In the browser it joins the footer; in the panel it takes the
+  scope hint's slot, because the hints shed from the end on a narrow terminal
+  and this is the one that matters then.
+
+The two UIs differ in one place. The browse table also has the period tabs, and
+with a period selected the count is **dropped, not adjusted**: it is counted
+across everything the query matched, and the period narrows further,
+client-side, over rows the daemon has already dropped — so the note states the
+filter without quoting a number it cannot stand behind. The panel has no period,
+so its count is always exact.
+
+Asking for one executor is asking for agent commands, so the two filters never
+both apply: `t` wins in the browser, and an explicit `--executor` both opens the
+panel unfiltered and makes `⌥a` a no-op. Neither key writes config — a keystroke
+that rewrote the setting would make an experiment permanent.
+
+**`--headless` never hides anything.** It feeds scripts, which want the whole
+archive and have no status line to be told what was withheld. The rule is that a
+UI may filter only if it can disclose; the scripted path cannot, so it does not.
+
 **The time window.** One period (`1`–`5`: Today / 7d / 30d / 90d / All, default
 All) drives every screen, with its tabs pinned to the same top-right corner
 everywhere. "Today" is the **calendar** day in local time, not a rolling 24
@@ -213,7 +311,34 @@ command, and details panes to its work; the filter is held by executor *name*,
 not row index, so an agent that drops out of the period releases the filter
 rather than silently handing it to whoever inherits its row. The details pane
 follows focus — prompt metadata while the prompt pane is active, the selected
-command's path/time/duration/exit once the command pane is.
+command's path/time/duration/exit once the command pane is. The command pane's
+exit column is the same 4 wide as the browse table's, so the same value is the
+same width in both.
+
+**Filtering the explorer.** `/` filters the focused pane's list — prompts by
+their text, commands by the command — matching with the same `internal/match`
+query the browse view and `Ctrl-R` use, highlights included. The two lists keep
+**separate** queries: tabbing between panes must not silently re-point one
+pane's filter at another pane's rows, so each `/` opens on its own query (ready
+to edit rather than retype). The sidebar and the details pane have no list of
+their own, so `/` there aims at the prompts.
+
+- **What is filtered is the view, not the aggregate.** A command filter narrows
+  the command pane only; the prompt's counts, duration and modal path still
+  describe the prompt. Rewriting those to match a search would make the details
+  pane and the prompt list disagree about the same prompt.
+- **A filtered count is marked as one.** The pane's border reads
+  `PROMPTS  1/1  /tower`: without the marker a narrowed list is
+  indistinguishable from a quiet period, and the query is the only thing on
+  screen that accounts for the missing rows. Filtered to nothing, the pane says
+  which query found nothing rather than rendering as empty.
+- **Esc backs out one visible thing at a time** — the zoom, then the focused
+  list's filter, then the view. Each level is on screen, so each gets its own
+  Esc, and the footer names whichever one is next.
+
+The filter is orthogonal to the period tabs and the executor sidebar: all three
+narrow independently, and re-aggregating for a new window or executor re-applies
+the text filter rather than dropping it.
 
 **The stats graphs** — the activity heatmap, the daily trend, and the hour-of-day
 histogram — all span the full width, and a wider terminal buys *more history*
@@ -228,6 +353,37 @@ bars on screen. The hour-of-day histogram does respect the period, widens its
 fixed 24 buckets to fill (the remainder going to the leftmost, so the row ends
 flush), and on Today leaves the hours that have not happened yet **blank** rather
 than drawing them as zero — "it isn't 11pm yet" is not "nothing ran at 11pm".
+
+Vertically the screen fits charts **whole or not at all**: each is offered the
+rows it needs and declines if taking them would starve the ranked columns, so a
+short terminal loses a chart cleanly instead of showing one with its axis sliced
+off. The heatmap has a compact form — the week folded into a single row of
+per-week totals — which it falls back to before dropping, because the full graph
+needs ten rows and a stock 80×24 terminal has never had them: the one view that
+shows years at a glance would otherwise be invisible at the default size.
+
+**What the colors mean.** Chart ink is its own ramp (one hue, four intensity
+steps) and is deliberately *not* the UI accent: every bar, gauge and heat cell
+used to render in accent blue, which on the stats screen meant everything with
+ink was the color of everything selectable, so the accent distinguished nothing.
+Intensity rides on lightness as well as on glyph height, and the heatmap draws a
+solid block rather than a `░▒▓` density ramp — those are the least portable
+glyphs in the box-drawing set, and a font that renders `▒` and `▓` alike
+silently collapses two of the four levels. A day with no activity keeps its own
+dim `·`, so "none" and "a little" never look the same.
+
+Headings come in exactly three ranks, because a terminal has very few levers for
+hierarchy and a rank that shares one is a rank the eye cannot find: accent+bold
+for a pane's name (in its border), bold for a heading inside a pane, dim for the
+chrome below both (column headers, field labels). Column headers are lowercase
+and pane names uppercase throughout, and the two details panes — the browse one
+and the explorer's, a keystroke apart over the same record — use one set of field
+names in one label column.
+
+A command's outcome gets a distinct **glyph** per state (`·` unknown, `✓` ok,
+`✗N` failed), not a shared glyph in three colors: success and unknown once
+differed by color alone, which put the distinction out of reach of anyone who
+cannot separate dim grey from green, and out of reach of a screenshot.
 
 **Sample honesty.** The stats and agent screens aggregate the newest `statsLimit`
 (5000) rows, not the whole archive. When that ceiling is hit, the header says so
@@ -244,21 +400,55 @@ the same ordered gate before anything is persisted:
    or tab is skipped, unless `record_space_prefixed` is true.
 2. **Ignore-dirs**: if the command's cwd is at or under a configured
    `ignore_dirs` prefix (segment-aware) it is skipped.
-3. **Secret rules** (`internal/redact`): rules load from the editable, seeded
+3. **User ignore-patterns**: a command matching one of the user's own
+   `ignore_patterns` regexes is skipped. Like `ignore_dirs`, this is the user
+   saying "never record this", so the record is dropped, not masked.
+4. **Secret rules** (`internal/redact`): rules load from the editable, seeded
    `~/.config/yore/redact.yml`; each rule is a name + Go regexp + optional cheap
    literal `hints` (a hot-path pre-filter — the regex only runs if a hint is
    present) + optional case-`fold`. Built-ins anchor on the *shape* of a secret
-   (AWS AKIA/ASIA + secret-key, GitHub `ghp_`/`github_pat_`, Slack `xox*`, PEM,
-   JWT, URL userinfo, tool password flags for openssl/gpg/sshpass/mysql/mongo/
-   smbclient/curl/wget, and generic `token=`/`secret=`/`password=` assignments)
-   plus any user `ignore_patterns`.
+   (AWS AKIA/ASIA + secret-key, GitHub `ghp_`/`github_pat_`, Slack `xox*`,
+   Google `AIza`, Stripe `sk_live_`, OpenAI/Anthropic `sk-`, Hugging Face,
+   npm, PyPI, SendGrid, PEM, JWT, URL userinfo, tool password flags for
+   openssl/gpg/sshpass/mysql/mongo/smbclient/curl/wget, generic
+   `token=`/`secret=`/`password=` assignments, and the prose form of the same
+   — `the api key is …` — because this gate covers agent **prompts** as well as
+   commands, and a prompt states a secret in a sentence).
 
-A rejected command is dropped silently (never spooled) — the gate never explains
-why, since that would itself leak that a secret was typed. Redaction is
-**fail-safe**: a missing, unreadable, unparseable, or empty `redact.yml` falls
-back to the compiled-in built-ins (never "redact nothing"); an individual invalid
-regex is skipped with a warning while the rest stay active. `yore setup` seeds
-`redact.yml` from the built-ins without ever clobbering edits.
+**A secret rule redacts; it does not reject.** The credential is replaced with a
+marker naming the rule that caught it and everything else is kept:
+
+```
+export DB_PASSWORD=⟪redacted:generic-token-assign⟫
+mysql -uroot -p⟪redacted:mysql-password⟫ appdb
+```
+
+Dropping the whole record was the older behaviour and it was wrong in practice:
+the commands most worth remembering are often exactly the ones with a token in
+them, and an entry that silently vanished is indistinguishable from one that was
+never run. The marker is deliberately not valid shell, so a redacted command
+recalled into the prompt fails loudly rather than running wrong.
+
+Only the credential goes. Rules mark it with a `(?P<secret>…)` capture group, so
+a rule that matches a wide context (`mysql -u root -p<pw>` matches from the
+program name) still only blanks the password; a rule with no such group — a
+whole-value shape like an AWS key — has its entire match replaced. Spans from
+all rules are collected against the *original* text and overlaps merged, so
+markers never nest and never get re-matched; redaction is idempotent, which
+matters because records cross the gate more than once (capture, then import).
+
+One path is still all-or-nothing: `yore filter`, the gate for the *shell's own*
+history, can only accept or reject — zsh gives `zshaddhistory` no way to rewrite
+the line — so a command yore would redact is dropped from the shell's history
+entirely. yore's own copy, redacted, is still there to search.
+
+Redaction is **fail-safe**: a missing, unreadable, unparseable, or empty
+`redact.yml` falls back to the compiled-in built-ins (never "redact nothing"); an
+individual invalid regex is skipped with a warning while the rest stay active.
+`yore setup` seeds `redact.yml` from the built-ins without ever clobbering edits
+— which means a file seeded before a rule shipped keeps missing it, silently, so
+`yore doctor` reports any built-in the file lacks rather than re-adding it (a
+rule may be absent because it was deliberately deleted).
 
 **Executor tagging.** Each record carries an executor `tag` naming what ran it:
 an explicit `--executor`, else `$YORE_TAG`, else auto-detection from agent env
@@ -291,13 +481,29 @@ event decides (PostToolUse → 0, PostToolUseFailure → nonzero) — and its
 present, otherwise the delta from the PreToolUse start-stamp (Claude Code's own
 payload carries no tool timing — this is how agent commands get real durations at
 all). So agent commands carry the same outcome data as shell ones (success rates,
-`what_failed`, risk of failed commands all work). The prompt hook writes the
-session's current prompt to a per-session state file; the command hooks read it
-and stamp `prompt_id` + `prompt` onto the record, so every command is traced to
-the prompt that triggered it. The start-stamp is keyed by session+command under
-`agent-cmd-starts/` and consumed once. That `prompt_id` is what the browser's
-agent explorer groups on (see "The browser" above). All hooks go through the same
-redaction gate as the shell path (a secret-bearing command or prompt is dropped).
+`what_failed`, risk of failed commands all work).
+
+**Prompts are records.** The prompt hook spools one `Type == "prompt"` record
+holding the text, and writes only that record's **id** to a per-session state
+file; the command hooks read the id and stamp `prompt_id` onto each command they
+record. A stored command row therefore holds the id and nothing else, and the
+daemon rejoins the two at query time from its prompt index, so consumers just
+read `prompt` on a command row and never see the join.
+
+Storing the text on its own record rather than on every command that quotes it
+is what keeps prompt tracing cheap: one prompt drives ~16 commands in practice,
+so the inlined alternative pays 16× the bytes on disk, on the wire, and in the
+daemon's heap — for a field the search path never indexes. It also makes a
+prompt that triggered **no** commands representable at all; as a field on its
+commands, a prompt that caused none would have nowhere to live.
+`sync_prompts = false` keeps prompt records on the machine that recorded them
+while their commands still sync (the `prompt_id` then resolves to no text
+elsewhere).
+
+The start-stamp is keyed by session+command under `agent-cmd-starts/` and
+consumed once. That `prompt_id` is what the browser's agent explorer groups on
+(see "The browser" above). All hooks go through the same redaction gate as the
+shell path — a secret in a *prompt* is masked exactly like one in a command.
 `yore init claude-code` writes ~/.claude/settings.json (or, with --project,
 ./.claude/settings.json), merging without disturbing other settings.
 
@@ -454,13 +660,32 @@ The daemon's sync loop (started only when a server is configured) is driven by:
   firing an eager push that would only fail.
 
 `yore sync` (and `S` in the TUIs) runs a **synchronous** cycle via `OpSync` and
-reports the real outcome. Every cycle is `Push` then `PullOthers`, serialized by
-a mutex so the periodic loop and an explicit sync never overlap. **Push** uploads
-local records above a persisted watermark (`last_uploaded_seq`) in ascending
-batches of ≤1000, advancing the watermark per acked batch (a failed batch is
-retried, never skipped). **Pull** walks each other host's stream from an
-in-RAM per-host cursor, decrypting into the remote cache; cursors are RAM-only,
-so a fresh daemon re-pulls from `after=0`. Remote plaintext exists only in RAM.
+reports the real outcome. Every cycle is `Push` then pull, serialized by a mutex
+so the periodic loop and an explicit sync never overlap.
+
+**Push** uploads local records above a persisted watermark (`last_uploaded_seq`)
+in ascending batches bounded by **both** ≤1000 records **and** ≤8 MiB of encoded
+body, advancing the watermark by exactly what the server acked (a failed batch is
+retried, never skipped). Size is a bound because size is what the server actually
+limits: a thousand records carrying long prompts or heredocs is megabytes, and a
+body over the server's 10 MiB cap fails *every* retry — the watermark never
+advances and sync wedges permanently. If the server rejects a batch anyway (413,
+or the 400 a truncated body decodes as), the client halves it and retries; the
+halving terminates at a single record, so a genuinely bad request surfaces as an
+error instead of looping forever. The server now answers an oversized body with a
+real **413** rather than a generic 400.
+
+**Pull** is split in two so the ciphertext can be banked before anything is spent
+on crypto: `PullCiphertext` walks each other host's stream from its persisted
+cursor and `OpenRecords` decrypts. Each cycle writes the new sealed records and
+the advanced cursor to `remote.db` *first*, so a process that dies mid-cycle
+resumes rather than re-downloading. On the first cycle of a daemon's life the
+cache is decrypted into RAM (that needs the server, to unwrap the keys — so a
+cold start still has no remote history while offline). A decryption failure
+during a live pull is fatal, as always; one while decrypting the *cache* is not
+treated as tampering — the only way that file can hold records we cannot open is
+if it outlived the group it belongs to, and it is derived data, so it is thrown
+away and re-pulled rather than wedging sync on a stale cache.
 
 ## The sync server
 
@@ -526,6 +751,8 @@ forces everything back into the directory. The files:
 | `spool/<pid>.jsonl` | crash-safe capture handoff, drained by the daemon |
 | `daemon.sock` | daemon control socket (0600) |
 | `corpus.snap` | warm-start corpus gob snapshot (derived) |
+| `remote.db` | other hosts' history as **ciphertext**, plus their pull cursors (derived; delete it and the next sync re-pulls) |
+| `agent-prompts/` | one file per agent session holding the current prompt's **id** — the handoff between an agent's prompt hook and its tool hooks, which are separate processes |
 | `daemon.log` | bounded daemon log (+ rotated segments) |
 | `backups/` | rolling local `data.db` snapshots |
 
@@ -553,11 +780,14 @@ be a poor neighbour. Same directory, same 0600, different concern.
 | `daemon_idle` | `30m` | daemon idle timeout before exit |
 | `sync_interval` | `5m` | periodic push/pull tick |
 | `push_debounce` | off | **EXPERIMENTAL** coalesced push-on-record delay; empty/`0`/invalid = disabled |
+| `sync_prompts` | `true` | upload agent prompt records; `false` keeps prompt text on the machine that recorded it (their commands still sync). Not retroactive — prompts already pushed stay on the server |
+| `remote_keep` | `50000` | records cached and held in RAM per *other* host, newest first; a negative value means unlimited |
 | `auto_deepen` | `true` | let deep reads nudge a background sync |
 | `enter_executes` | `true` | Ctrl-R Enter runs the result (vs. insert for review) |
 | `bind_up_arrow` | `false` | also bind Up to the search TUI |
+| `hide_agent_commands` | `true` | keep agent-run commands out of the interactive search UIs (`A` in the browser, `⌥a` in the Ctrl-R panel, per session; both always say how many rows they are holding). `--headless` never hides anything |
 | `keymap` | `emacs` | `emacs` \| `vim` TUI key style |
-| `ignore_patterns` | — | extra user secret regexes (never recorded) |
+| `ignore_patterns` | — | user regexes whose matching commands are **dropped** (not redacted — this is "never record this", unlike a secret rule, which only costs the command its credential) |
 | `ignore_dirs` | — | cwd prefixes whose commands are never recorded |
 | `record_space_prefixed` | `false` | record leading-space commands too |
 | `auto_tags` | — | cwd-prefix → tag rules (`/work=refactor,…`); tags matching commands at query time |
@@ -571,7 +801,7 @@ be a poor neighbour. Same directory, same 0600, different concern.
 Defaults are applied the plain-Go way: `config.Load` starts from `config.Defaults()`
 and decodes the TOML file over it, so an omitted key keeps its default and an
 explicit value — including `false` or `0` — overrides it. Booleans that default to
-`true` (`auto_deepen`, `enter_executes`, `log_silent`) are written without
+`true` (`auto_deepen`, `enter_executes`, `log_silent`, `hide_agent_commands`) are written without
 `omitempty` so an explicit `false` round-trips; there are no `*bool` "was it set?"
 fields. String-backed durations/sizes are stored verbatim and parsed by typed
 accessors that fall back to the default on a malformed value.
@@ -584,11 +814,18 @@ Server-side settings are env vars, not config.toml: `$YORE_TOKEN` /
 
 - The prompt path never does DB, network, or crypto work; recording survives the
   daemon being down (the spool is drained at next start).
-- The local DB holds only this host's history. Remote history is decrypted into
-  daemon RAM only, re-pulled per daemon lifetime, never written to disk.
+- `data.db` holds only this host's history. Other hosts' **plaintext** exists
+  only in daemon RAM and is never written to disk; the ciphertext it came from
+  is cached in `remote.db`, which is exactly what the server holds and is
+  unreadable without this device's keys.
 - Streams are append-only, per-host, client-sequenced; merge is a ULID set union;
   deletes are tombstones — eventually consistent, conflict-free.
-- Every hot path (search, decrypt, enroll, revoke) is **O(1) in history age**.
+- Every hot path (search, decrypt, enroll, revoke) is **O(1) in history age** —
+  including daemon startup, which resumes from a persisted pull cursor rather
+  than re-fetching every machine's archive, and is bounded by `remote_keep`
+  rather than by how much history the group has ever accumulated.
+- Prompt text is stored once, on its own record. Nothing copies it onto the
+  commands a prompt caused; the daemon rejoins them at query time.
 - The server only ever holds ciphertext, wrapped keys, and device public keys;
   mutating requests are per-device signed; tenants never share a db.
 - All client state lives under `~/.config/yore/`; uninstall is one `rm -rf`.

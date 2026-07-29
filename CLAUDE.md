@@ -14,7 +14,7 @@ yore's own secret material — device private keys (`~/.config/yore/device.key`)
 
 Core design invariants (do not break):
 - **Prompt latency is sacred.** The shell hook does one O_APPEND spool write + a best-effort daemon poke — no db, network, or crypto on the prompt path.
-- **The local bbolt store holds ONLY this host's history.** Other hosts' plaintext lives only in the daemon's RAM (fetched + decrypted on demand), never on disk.
+- **`data.db` holds ONLY this host's history, and no plaintext but this host's is ever written to disk.** Other hosts' history is decrypted into the daemon's RAM and stays there. The *ciphertext* it was decrypted from is cached in `remote.db` (`internal/rstore`) alongside the per-host pull cursor — byte-for-byte what the server already holds, unreadable without this device's keys — because a RAM-only cursor made every daemon start re-pull every machine's archive from seq 0. The cache is derived: deleting it costs one re-pull.
 - **E2E with no master-key replication.** Per-device keypairs → one wrapped History Key → auto-rotating epoch DEKs → records. Every hot path (search, decrypt, enroll, revoke) is O(1) in how much history has accumulated — nothing degrades as the archive grows over years.
 - **Single-directory footprint.** All client state under `~/.config/yore/`; nothing scattered in `$HOME`.
 - **The server stores ciphertext + device public keys only.** Mutating sync requests are signed per-device (a leaked bearer token can't push garbage or revoke devices).

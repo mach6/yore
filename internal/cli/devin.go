@@ -9,9 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"yore/internal/config"
 	"yore/internal/rec"
-	"yore/internal/redact"
 )
 
 // agentDevin is the executor tag stamped on commands captured from the Devin
@@ -116,10 +114,7 @@ func runHookDevin() {
 			r.DurMs = &d
 		}
 	}
-	if ps, ok := loadPromptState(dir, session); ok {
-		r.PromptID = ps.ID
-		r.Prompt = ps.Text
-	}
+	stampPrompt(dir, session, &r)
 	spoolRecord(dir, r)
 }
 
@@ -156,26 +151,7 @@ func runHookDevinPrompt() {
 	if json.Unmarshal(raw, &in) != nil {
 		return
 	}
-	text := strings.TrimSpace(in.Prompt)
-	session := devinSession(in.SessionID)
-	if text == "" || session == "" {
-		return
-	}
-	dir := stateDir()
-	cfg, _ := config.Load(dir)
-	if filter, _ := redact.Load(dir, cfg.IgnorePatterns, cfg.IgnoreDirs); filter.Sensitive(text) {
-		return
-	}
-	ps := promptState{ID: rec.NewID(), Text: text, Ms: time.Now().UnixMilli()}
-	b, err := json.Marshal(ps)
-	if err != nil {
-		return
-	}
-	path := promptStatePath(dir, session)
-	if os.MkdirAll(filepath.Dir(path), 0o700) != nil {
-		return
-	}
-	_ = os.WriteFile(path, b, 0o600)
+	recordPrompt(stateDir(), devinSession(in.SessionID), agentDevin, devinCwd(in), in.Prompt)
 }
 
 // --- `yore init devin`: install the capture hooks + MCP server -------------

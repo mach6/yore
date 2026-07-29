@@ -8,15 +8,16 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/cursor"
-	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 
+	"yore/internal/match"
 	"yore/internal/proto"
 	"yore/internal/rec"
+	"yore/internal/tui/keyhelp"
 	"yore/internal/tui/theme"
 )
 
@@ -40,6 +41,11 @@ type Options struct {
 	Cwd     string // current directory
 	Now     int64  // injectable clock in unix ms; 0 => time.Now
 	Keymap  string // "vim" enables vi-style navigation; "" / "emacs" = default
+
+	// HideAgents starts the browse table with agent-run commands filtered out
+	// (config hide_agent_commands). A is the session toggle; this is only the
+	// state it opens in.
+	HideAgents bool
 
 	// Splits restores the pane layout the user last dragged to; the zero value
 	// starts each view at its default proportions. SaveSplits, when set, is
@@ -137,16 +143,16 @@ type Model struct {
 	b    Backend
 	opts Options
 	th   *theme.Theme
-	keys keyMap
 
 	// child components
 	ti     textinput.Model
 	detail viewport.Model
-	help   help.Model
 
 	// pre-built (once) box styles for focused / blurred panes
 	borderFocus lipgloss.Style
 	borderBlur  lipgloss.Style
+	inkFocus    lipgloss.Style
+	inkBlur     lipgloss.Style
 
 	// data. allRows is what the daemon returned; rows is that narrowed to the
 	// selected period (see applyPeriodFilter) and is what the table renders.
@@ -161,22 +167,43 @@ type Model struct {
 	gotResult bool
 	hasTags   bool // any current row carries a Tag (gates the tag column)
 
+	// hideAgents keeps agent-run commands out of the table (the A key). hidden
+	// is how many the daemon dropped for the current query — the number the
+	// status bar and the empty state quote, so the filter never costs the user
+	// history without telling them.
+	hideAgents bool
+	hidden     int
+
 	// table window
 	sel int
 	top int
 
 	// stats
-	stats        *statsData
-	agents       *agentsData  // per-executor aggregation, from the same sample
-	prompts      *promptsData // prompt aggregation, from the same sample
-	promptSel    int          // selected prompt in the explorer's prompt pane
-	drillSel     int          // selected row within that prompt's command pane
-	hscroll      int          // horizontal column offset for the focused list's selected row
-	agentSel     int          // selected row in the executor sidebar (0 = all agents)
-	agentFilter  string       // executor the sidebar is filtering to; "" = all
-	apane        agentPane    // which of the explorer's four panes holds focus
-	statsRows    []rec.Record // the full sample; re-aggregated when the period changes
-	period       int          // index into statPeriods
+	stats       *statsData
+	agents      *agentsData  // per-executor aggregation, from the same sample
+	prompts     *promptsData // prompt aggregation, from the same sample
+	promptSel   int          // selected prompt in the explorer's prompt pane
+	drillSel    int          // selected row within that prompt's command pane
+	hscroll     int          // horizontal column offset for the focused list's selected row
+	agentSel    int          // selected row in the executor sidebar (0 = all agents)
+	agentFilter string       // executor the sidebar is filtering to; "" = all
+	apane       agentPane    // which of the explorer's four panes holds focus
+	statsRows   []rec.Record // the full sample; re-aggregated when the period changes
+	promptRows  []rec.Record // prompt records covering the sample, incl. ones that ran nothing
+
+	// The explorer's per-list text filters (the / key). Each list keeps its own
+	// query: tabbing between panes must not silently re-point one pane's filter
+	// at another pane's rows. filteredPrompts is prompts.prompts narrowed by
+	// promptQ, held rather than recomputed because every render and every cursor
+	// move asks for it.
+	afilter         textinput.Model
+	afiltering      bool      // the filter input has focus
+	afilterPane     agentPane // which list that input is editing
+	promptQ         string
+	cmdQ            string
+	filteredPrompts []promptStat
+
+	period       int // index into statPeriods
 	statsErr     error
 	gotStats     bool
 	statsSeq     uint64
@@ -190,7 +217,8 @@ type Model struct {
 	tagging        bool // ctrl+t: entering a freeform tag for the selected row
 	tagInput       textinput.Model
 	confirmDelete  bool
-	showHelp       bool
+	showHelp       bool   // ?: the key panel, over whichever view is beneath it
+	helpTop        int    // first visible row of that panel, when it overflows
 	executorFilter string // active executor-tag filter (the t key); "" = no filter
 	flash          string
 	flashID        int
@@ -252,6 +280,12 @@ func NewModel(b Backend, opts Options) Model {
 	ti.Cursor.SetMode(cursor.CursorStatic)
 	ti.Cursor.Style = th.Accent
 
+	afilter := textinput.New()
+	afilter.Prompt = "" // the explorer draws its own "filter <list> ❯" prompt
+	afilter.TextStyle = th.Input
+	afilter.Cursor.SetMode(cursor.CursorStatic)
+	afilter.Cursor.Style = th.Accent
+
 	tagInput := textinput.New()
 	tagInput.Prompt = "tag: "
 	tagInput.Placeholder = "name"
@@ -259,40 +293,36 @@ func NewModel(b Backend, opts Options) Model {
 	tagInput.Cursor.SetMode(cursor.CursorStatic)
 	tagInput.Cursor.Style = th.Accent
 
-	h := help.New()
-	h.Styles.ShortKey = th.Accent
-	h.Styles.ShortDesc = th.Dim
-	h.Styles.ShortSeparator = th.Dim
-	h.Styles.FullKey = th.Accent
-	h.Styles.FullDesc = th.Dim
-	h.Styles.FullSeparator = th.Dim
-	h.Styles.Ellipsis = th.Dim
-
 	vp := viewport.New(0, 0)
 
 	m := Model{
-		b:        b,
-		opts:     opts,
-		th:       th,
-		keys:     defaultKeyMap(vim),
-		vim:      vim,
-		ti:       ti,
-		tagInput: tagInput,
-		detail:   vp,
-		help:     h,
-		hosts:    []hostItem{{label: "All hosts", scope: proto.ScopeAll}},
-		period:   allPeriod, // open on the widest window; 1..5 narrow it
-		focus:    focusTable,
-		apane:    apPrompts,
-		splits:   opts.Splits.withDefaults(),
-		width:    80,
-		height:   24,
+		b:          b,
+		opts:       opts,
+		th:         th,
+		vim:        vim,
+		hideAgents: opts.HideAgents,
+		ti:         ti,
+		tagInput:   tagInput,
+		afilter:    afilter,
+		detail:     vp,
+		hosts:      []hostItem{{label: "All hosts", scope: proto.ScopeAll}},
+		period:     allPeriod, // open on the widest window; 1..5 narrow it
+		focus:      focusTable,
+		apane:      apPrompts,
+		splits:     opts.Splits.withDefaults(),
+		width:      80,
+		height:     24,
 		borderFocus: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(th.Accent.GetForeground()),
 		borderBlur: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(th.Border.GetBorderTopForeground()),
+		// The same two inks as plain foregrounds: titledBox composes its own rule
+		// glyphs (to seat the pane name in the top border) rather than letting
+		// lipgloss draw the frame, so it needs the color without the border.
+		inkFocus: lipgloss.NewStyle().Foreground(th.Accent.GetForeground()),
+		inkBlur:  lipgloss.NewStyle().Foreground(th.Border.GetBorderTopForeground()),
 	}
 	switch opts.Start {
 	case StartStats:
@@ -403,6 +433,7 @@ func (m Model) applyResult(msg queryResultMsg) (tea.Model, tea.Cmd) {
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].StartMs > rows[j].StartMs })
 	m.allRows = rows
 	m.srvTotal = msg.resp.Total
+	m.hidden = msg.resp.HiddenAgents
 	m.remote = msg.resp.Remote
 	m.applyPeriodFilter()
 	m.sel = 0
@@ -469,6 +500,7 @@ func (m Model) applyStats(msg statsResultMsg) (tea.Model, tea.Cmd) {
 	}
 	m.statsErr = nil
 	m.statsRows = msg.resp.Rows
+	m.promptRows = msg.resp.Prompts
 	m.recomputeStats()
 	return m, nil
 }
@@ -532,7 +564,10 @@ func (m Model) applySync(msg syncDoneMsg) (tea.Model, tea.Cmd) {
 func (m Model) statsCmd(seq uint64) tea.Cmd {
 	b := m.b
 	return func() tea.Msg {
-		resp, err := b.Query(proto.QueryReq{Scope: proto.ScopeAll, Limit: statsLimit})
+		// WantPrompts: the agent explorer aggregates prompts from the commands
+		// they caused, so a prompt that caused none has no row to be found in.
+		// These carry them alongside.
+		resp, err := b.Query(proto.QueryReq{Scope: proto.ScopeAll, Limit: statsLimit, WantPrompts: true})
 		return statsResultMsg{seq: seq, resp: resp, err: err}
 	}
 }
@@ -546,6 +581,9 @@ func (m Model) buildReq() proto.QueryReq {
 		Executor: m.executorFilter,
 		Limit:    queryLimit,
 		Dedupe:   false, // browse shows the real timeline, newest first
+		// Asking for one executor is asking for agent commands, so the two
+		// filters cannot both apply — t wins over A while it is set.
+		HumanOnly: m.hideAgents && m.executorFilter == "",
 	}
 	return req
 }
@@ -606,6 +644,19 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	// The explorer's filter box: esc/enter leave it, the rest edits and re-filters
+	// as you type.
+	if m.afiltering {
+		return m.handleAgentFilterKey(msg, s)
+	}
+
+	// The key panel is a modal like the others: it lists what works in the view
+	// beneath it, so letting those keys fire through it would act on a view the
+	// user cannot currently see.
+	if m.showHelp {
+		return m.handleHelpKey(s)
+	}
+
 	// Devices view swallows its own keys.
 	if m.view == viewDevices {
 		return m.handleDevicesKey(s)
@@ -623,11 +674,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.quitting = true
 		return m, tea.Quit
 	case "?":
-		m.showHelp = !m.showHelp
-		m.help.ShowAll = m.showHelp
-		m.applyLayout()
-		m.syncDetail()
-		return m, nil
+		return m.openHelp()
 	case "s":
 		return m.toggleStats()
 	case "a":
@@ -672,6 +719,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "t":
 		return m.toggleExecutorFilter()
+	case "A":
+		return m.toggleHideAgents()
 	case "ctrl+t":
 		if m.sel >= 0 && m.sel < len(m.rows) {
 			m.tagging = true
@@ -770,6 +819,64 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// --- the key panel ------------------------------------------------------
+
+// openHelp raises the key panel over the current view.
+func (m Model) openHelp() (tea.Model, tea.Cmd) {
+	m.showHelp = true
+	m.helpTop = 0
+	return m, nil
+}
+
+// handleHelpKey services the key panel: it scrolls when the list is taller than
+// the pane, and esc/?/q dismiss it. q closes the panel rather than quitting —
+// the panel is transient, and on the devices screen underneath it q means "back",
+// so a q that quit from here would be the one place it ended the session.
+func (m Model) handleHelpKey(s string) (tea.Model, tea.Cmd) {
+	page := maxInt(1, m.helpBodyHeight())
+	switch s {
+	case "esc", "?", "q":
+		m.showHelp = false
+		m.helpTop = 0
+		return m, nil
+	case "ctrl+c":
+		m.quitting = true
+		return m, tea.Quit
+	case "up", "k":
+		m.helpTop--
+	case "down", "j":
+		m.helpTop++
+	case "pgup":
+		m.helpTop -= page
+	case "pgdown":
+		m.helpTop += page
+	case "g", "home":
+		m.helpTop = 0
+	case "G", "end":
+		m.helpTop = m.helpMaxTop()
+	}
+	if top := m.helpMaxTop(); m.helpTop > top {
+		m.helpTop = top
+	}
+	if m.helpTop < 0 {
+		m.helpTop = 0
+	}
+	return m, nil
+}
+
+// The panel is a pane like any other: its body is the frame less the box sides
+// and the two border rows.
+func (m Model) helpBodyWidth() int  { return maxInt(1, m.width-2) }
+func (m Model) helpBodyHeight() int { return maxInt(1, m.midHeight-2) }
+
+// helpMaxTop is how far the panel can scroll — zero unless the list is taller
+// than the pane, which on a stock 80×24 terminal it can be.
+func (m Model) helpMaxTop() int {
+	body := m.helpBodyHeight()
+	_, total := keyhelp.Panel(m.th, m.helpGroups(), m.helpBodyWidth(), body, 0)
+	return maxInt(0, total-body)
+}
+
 // applyPeriodFilter narrows the queried rows to the selected period. The daemon's
 // query protocol carries no time window, so the browse table filters the rows it
 // got back — which is exactly the right semantics for this view: it shows the
@@ -815,6 +922,44 @@ func (m Model) setPeriod(p int) (tea.Model, tea.Cmd) {
 	m.recomputeStats()
 	m.syncDetail()
 	return m, nil
+}
+
+// hiddenAgentsNote describes what the agent filter is holding back, or "" when
+// it is holding nothing back worth reporting. The footer always names the
+// filter's state; this speaks only when history is actually being withheld.
+//
+// The count is the daemon's, taken across everything the query matched. The
+// period tabs narrow further, client-side, over rows the daemon has already
+// dropped — so with a period selected the count cannot be attributed to the
+// window on screen, and the note states the filter without quoting a number
+// that may be describing last month.
+func (m Model) hiddenAgentsNote() string {
+	if !m.hideAgents || m.hidden == 0 {
+		return ""
+	}
+	if m.period != allPeriod {
+		return "agent commands hidden"
+	}
+	return plural(m.hidden, "agent command") + " hidden"
+}
+
+// toggleHideAgents flips agent-run commands in and out of the browse table (the
+// A key), re-issuing the query because the filter is applied server-side.
+//
+// It is a session toggle, not a setting: config's hide_agent_commands decides
+// what the browser opens with, and a keystroke that quietly rewrote that file
+// would make an experiment permanent.
+func (m Model) toggleHideAgents() (tea.Model, tea.Cmd) {
+	m.hideAgents = !m.hideAgents
+	if m.hideAgents {
+		m.flash = "agent commands hidden"
+	} else {
+		m.flash = "agent commands shown"
+	}
+	m.flashID++
+	var q tea.Cmd
+	m, q = m.issueQuery()
+	return m, tea.Batch(q, flashTick(m.flashID))
 }
 
 // toggleExecutorFilter flips the executor-tag filter (the t key). With a filter
@@ -863,7 +1008,8 @@ func (m *Model) recomputeStats() {
 	if m.agentSel == 0 {
 		m.agentFilter = "" // the filtered executor has no commands in this period
 	}
-	m.prompts = computePrompts(m.statsRows, m.now(), days, m.agentFilter)
+	m.prompts = computePrompts(m.statsRows, m.promptRows, m.now(), days, m.agentFilter)
+	m.applyPromptFilter()
 	m.clampPrompts()
 }
 
@@ -904,18 +1050,25 @@ func (m Model) toggleZoom() (tea.Model, tea.Cmd) {
 }
 
 // handleAgentsKey services the agent explorer: navigation in whichever pane holds
-// focus, Tab to cycle panes, Esc to unzoom then leave, plus the shared period
-// tabs. The global keys (a/p/s/z/q/S/D/?) are handled before this in handleKey,
-// so they still work here.
+// focus, Tab to cycle panes, / to filter that pane's list, Esc to back out one
+// level at a time, plus the shared period tabs. The global keys (a/s/z/q/S/D/?)
+// are handled before this in handleKey, so they still work here.
 func (m Model) handleAgentsKey(s string) (tea.Model, tea.Cmd) {
 	switch s {
 	case "esc":
+		// Back out one visible thing at a time, innermost first: the zoom, then
+		// the focused list's filter, then the view.
 		if m.zoom {
-			return m.toggleZoom() // unzoom first; a second esc leaves the view
+			return m.toggleZoom()
+		}
+		if m.clearFocusedFilter() {
+			return m, nil
 		}
 		m.view = viewBrowse
 		m.applyLayout()
 		return m, nil
+	case "/":
+		return m.openAgentFilter()
 	case "tab":
 		m.focusAgentPane(1)
 		return m, nil
@@ -948,6 +1101,92 @@ func (m Model) handleAgentsKey(s string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+// --- the explorer's list filters ----------------------------------------
+
+// filterTarget is the list the / key filters from the current pane. The two list
+// panes filter themselves; the sidebar and the details pane have no list of
+// their own to narrow, so they aim at the prompts — the list everything else in
+// the view hangs off.
+func (m Model) filterTarget() agentPane {
+	if m.apane == apCommands {
+		return apCommands
+	}
+	return apPrompts
+}
+
+// filterFor returns the committed query for a list.
+func (m Model) filterFor(p agentPane) string {
+	if p == apCommands {
+		return m.cmdQ
+	}
+	return m.promptQ
+}
+
+// setFilter stores a list's query and re-narrows whatever it feeds. The cursor
+// goes back to the top: after a query change the row under it is a different
+// row, and leaving the cursor at index 3 of a list that just became two rows
+// long only looks like the filter misfired.
+func (m *Model) setFilter(p agentPane, q string) {
+	m.hscroll = 0 // the row under the cursor is a different row now
+	if p == apCommands {
+		m.cmdQ = q
+		m.drillSel = 0
+		return
+	}
+	m.promptQ = q
+	m.applyPromptFilter()
+	m.promptSel = 0
+	m.drillSel = 0
+}
+
+// openAgentFilter puts the cursor in the filter box for the focused list,
+// pre-loaded with that list's current query so a filter can be edited rather
+// than retyped.
+func (m Model) openAgentFilter() (tea.Model, tea.Cmd) {
+	m.afilterPane = m.filterTarget()
+	m.afiltering = true
+	m.afilter.SetValue(m.filterFor(m.afilterPane))
+	m.afilter.CursorEnd()
+	m.afilter.Focus()
+	return m, nil
+}
+
+// handleAgentFilterKey services the filter box. Esc and Enter both leave it with
+// the query kept — the filter is the point, and there is nothing to "cancel"
+// that closing the box would not also undo — so the way to drop a filter is to
+// empty it, or Esc again once the box is closed.
+func (m Model) handleAgentFilterKey(msg tea.KeyMsg, s string) (tea.Model, tea.Cmd) {
+	switch s {
+	case "esc", "enter":
+		m.afiltering = false
+		m.afilter.Blur()
+		return m, nil
+	case "ctrl+c":
+		m.quitting = true
+		return m, tea.Quit
+	}
+	prev := m.afilter.Value()
+	var cmd tea.Cmd
+	m.afilter, cmd = m.afilter.Update(msg)
+	if v := m.afilter.Value(); v != prev {
+		m.setFilter(m.afilterPane, v)
+	}
+	return m, cmd
+}
+
+// clearFocusedFilter drops the focused list's filter, reporting whether there
+// was one. It is what the first Esc does in a filtered explorer: the filter is
+// on screen, so backing out of it before backing out of the view is what the
+// key already means everywhere else.
+func (m *Model) clearFocusedFilter() bool {
+	p := m.filterTarget()
+	if m.filterFor(p) == "" {
+		return false
+	}
+	m.setFilter(p, "")
+	return true
 }
 
 // focusAgentPane moves focus around the explorer's four panes. Zoom follows
@@ -1009,7 +1248,7 @@ func (m *Model) jumpAgentPane(first bool) {
 
 // agentPaneRows is the focused pane's visible row count, for page scrolling.
 func (m Model) agentPaneRows() int {
-	h := m.geo.p[m.apane].h - 3 // two border rows plus the pane title
+	h := m.geo.p[m.apane].h - 2 // the two border rows; the pane title is in one
 	if h < 1 {
 		h = 1
 	}
@@ -1116,21 +1355,57 @@ func (m *Model) selectPrompt(i int) {
 	m.promptSel = next
 }
 
-// promptLen / drillLen are the row counts of the two prompt-explorer lists.
-func (m Model) promptLen() int {
+// applyPromptFilter narrows the aggregated prompts to those matching promptQ.
+// It runs whenever the sample, the period, the executor filter or the query text
+// changes — everything downstream (the list, the cursor, the command pane, the
+// details) reads the narrowed slice, so this is the one place the filter is
+// applied.
+func (m *Model) applyPromptFilter() {
 	if m.prompts == nil {
-		return 0
+		m.filteredPrompts = nil
+		return
 	}
-	return len(m.prompts.prompts)
+	q := match.Parse(m.promptQ)
+	if q.Empty() {
+		m.filteredPrompts = m.prompts.prompts
+		return
+	}
+	kept := make([]promptStat, 0, len(m.prompts.prompts))
+	for _, p := range m.prompts.prompts {
+		if q.Match(p.text) {
+			kept = append(kept, p)
+		}
+	}
+	m.filteredPrompts = kept
 }
 
-func (m Model) drillLen() int {
+// visibleCmds is the drilled prompt's commands narrowed by cmdQ. The prompt's
+// own aggregate (its counts, duration, modal path) is deliberately NOT filtered:
+// those describe the prompt, and rewriting them to match a search would make the
+// details pane disagree with the prompt list about the same prompt.
+func (m Model) visibleCmds() []rec.Record {
 	p, ok := m.drilledPrompt()
 	if !ok {
-		return 0
+		return nil
 	}
-	return len(p.cmds)
+	q := match.Parse(m.cmdQ)
+	if q.Empty() {
+		return p.cmds
+	}
+	kept := make([]rec.Record, 0, len(p.cmds))
+	for _, r := range p.cmds {
+		if q.Match(r.Cmd) {
+			kept = append(kept, r)
+		}
+	}
+	return kept
 }
+
+// promptLen / drillLen are the row counts of the two prompt-explorer lists,
+// after their filters.
+func (m Model) promptLen() int { return len(m.filteredPrompts) }
+
+func (m Model) drillLen() int { return len(m.visibleCmds()) }
 
 // clampPrompts keeps the prompt and drill selections in range after the sample
 // (and thus the prompt set) is recomputed.
@@ -1404,11 +1679,10 @@ func (m *Model) applyLayout() {
 		h = 24
 	}
 
-	m.help.Width = w
-	helpH := lipgloss.Height(m.help.View(m.helpKeys()))
-
-	// search line (1) + status line (1) + help.
-	mid := h - 2 - helpH
+	// header (1) + status line (1) + the footer hint line (1). The footer is one
+	// line in every state — the expanded key list is a panel over the view, not a
+	// footer that grows and reflows the panes under it.
+	mid := h - 3
 	if mid < 3 {
 		mid = 3
 	}
@@ -1456,9 +1730,9 @@ func (m *Model) applyLayout() {
 	}
 	m.tableWidth = tableContent
 
-	// Visible data rows: table content height minus the pane title and the
-	// column-header line.
-	m.tableRows = m.tableOuterH - 2 - 2
+	// Visible data rows: table content height less the two border rows and the
+	// column-header line. The pane title costs nothing — it rides in the border.
+	m.tableRows = m.tableOuterH - 2 - 1
 	if m.tableRows < 1 {
 		m.tableRows = 1
 	}
@@ -1473,7 +1747,7 @@ func (m *Model) applyLayout() {
 		dr = rect{w: tableContent + 2, h: m.detailOuterH}
 	}
 	m.detail.Width = maxInt(1, dr.w-2)
-	m.detail.Height = maxInt(1, dr.h-2-1) // less the pane title
+	m.detail.Height = maxInt(1, dr.h-2) // the two border rows; the title is in one
 
 	// The text input spans the search line after the "❯ " prompt (reserving the
 	// trailing cursor cell textinput always draws), less the period tab strip
@@ -1486,6 +1760,9 @@ func (m *Model) applyLayout() {
 		iw = 4
 	}
 	m.ti.Width = iw
+	// The explorer's filter box shares that line with its own "filter <list> ❯"
+	// prompt, which is longer than the browse view's bare "❯ ".
+	m.afilter.Width = maxInt(4, iw-lipgloss.Width("filter commands "))
 
 	m.clampWindow()
 }

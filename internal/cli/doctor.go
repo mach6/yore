@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"yore/internal/config"
@@ -105,6 +106,15 @@ func runDoctor() int {
 	}
 	ok(fmt.Sprintf("active (%d rules loaded, %d user patterns, %d ignored dirs)",
 		filter.NumRules(), len(cfg.IgnorePatterns), len(cfg.IgnoreDirs)))
+	// redact.yml is authoritative once it exists and is never overwritten, so a
+	// file seeded before a detector shipped keeps missing it — and a missing
+	// detector is indistinguishable from clean history. Say so; do not act on it,
+	// since a rule may be absent because it was deliberately removed.
+	if missing := redact.MissingBuiltins(dir); len(missing) > 0 {
+		warn(fmt.Sprintf("redact.yml is missing %d newer built-in rule(s): %s",
+			len(missing), strings.Join(missing, ", ")))
+		warn("delete redact.yml to pick up the built-ins again (`yore setup` reseeds it), or add the rules by hand")
+	}
 
 	// Enrollment + server.
 	u.section("sync")

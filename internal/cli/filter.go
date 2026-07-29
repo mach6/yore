@@ -57,11 +57,16 @@ func runFilter(cwd string) int {
 	return 1
 }
 
-// filterDecision reports whether the command WOULD be recorded (true = keep,
-// false = drop). It mirrors runRecord's gate exactly and in the same order:
-// the space-prefix opt-out first, then redact's ignored-dir and secret checks.
-// dir is the state directory whose redact.yml supplies the rules (built-ins on
-// fallback). Callers must have already handled empty input.
+// filterDecision reports whether the SHELL should keep the command in its own
+// history (true = keep, false = drop). dir is the state directory whose
+// redact.yml supplies the rules (built-ins on fallback). Callers must have
+// already handled empty input.
+//
+// It is strictly harsher than yore's own gate, and has to be: yore keeps a
+// secret-bearing command with the credential masked, but this hook can only
+// accept or reject — zsh gives it no way to rewrite the line it is about to
+// write. So a command yore would redact is dropped from the shell's history
+// entirely; yore's copy, redacted, is still there to search.
 func filterDecision(dir string, cfg config.Config, cmd, cwd string) bool {
 	// histignorespace: a leading space/tab opts a command out of history unless
 	// the user has explicitly turned that off. Checked on the raw text.

@@ -242,8 +242,21 @@ func (s *Store) IngestSpool() (int, error) {
 	return s.AppendBatch(drained)
 }
 
-// All returns the live history in ascending seq order, excluding tombstone
-// records and any record marked deleted. This is the search corpus.
+// IsCommand reports whether a raw-stream record belongs in the searchable
+// command corpus. Tombstones, tag ops, and prompt records are all part of the
+// stream (sync replays them) but none of them is a command, and a record that
+// has been tombstoned locally is no longer live.
+func IsCommand(r rec.Record) bool {
+	switch r.Type {
+	case rec.TypeDelete, rec.TypeTag, rec.TypePrompt:
+		return false
+	}
+	return r.DeletedMs == 0
+}
+
+// All returns the live history in ascending seq order, excluding tombstone,
+// tag, and prompt records and anything marked deleted. This is the search
+// corpus.
 func (s *Store) All() ([]rec.Record, error) {
 	var out []rec.Record
 	err := s.db.View(func(tx *bbolt.Tx) error {
@@ -253,7 +266,7 @@ func (s *Store) All() ([]rec.Record, error) {
 			if err := json.Unmarshal(v, &r); err != nil {
 				return err
 			}
-			if r.Type == rec.TypeDelete || r.Type == rec.TypeTag || r.DeletedMs != 0 {
+			if !IsCommand(r) {
 				continue
 			}
 			out = append(out, r)
@@ -296,7 +309,7 @@ func (s *Store) Count() (int, error) {
 			if err := json.Unmarshal(v, &r); err != nil {
 				return err
 			}
-			if r.Type == rec.TypeDelete || r.Type == rec.TypeTag || r.DeletedMs != 0 {
+			if !IsCommand(r) {
 				continue
 			}
 			n++
@@ -309,7 +322,15 @@ func (s *Store) Count() (int, error) {
 // TagRecords returns every TypeTag record in the stream, ascending. The daemon
 // scans these once at startup to seed its tag index, since tag records are not
 // part of the command corpus (and so not in the warm snapshot).
-func (s *Store) TagRecords() ([]rec.Record, error) {
+func (s *Store) TagRecords() ([]rec.Record, error) { return s.recordsOfType(rec.TypeTag) }
+
+// PromptRecords returns every TypePrompt record in the stream, ascending. Like
+// tag records these live outside the command corpus, so the daemon seeds its
+// prompt index from its own scan at startup.
+func (s *Store) PromptRecords() ([]rec.Record, error) { return s.recordsOfType(rec.TypePrompt) }
+
+// recordsOfType scans the raw stream for one record type, ascending.
+func (s *Store) recordsOfType(typ string) ([]rec.Record, error) {
 	var out []rec.Record
 	err := s.db.View(func(tx *bbolt.Tx) error {
 		c := tx.Bucket(bucketHistory).Cursor()
@@ -318,7 +339,7 @@ func (s *Store) TagRecords() ([]rec.Record, error) {
 			if err := json.Unmarshal(v, &r); err != nil {
 				return err
 			}
-			if r.Type == rec.TypeTag {
+			if r.Type == typ {
 				out = append(out, r)
 			}
 		}

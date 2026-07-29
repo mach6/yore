@@ -139,6 +139,13 @@ func (m Model) agentAt(i int) (agentStat, bool) {
 // and what the current filter is showing.
 func (m Model) agentsTitle(w int) string {
 	th := m.th
+	if m.afiltering {
+		// While the box has focus it takes the header line, exactly as the browse
+		// view's search does — the header is where this UI puts a query.
+		return m.titleWithTabs(
+			th.Dim.Render("filter "+filterNoun(m.afilterPane)+" ")+
+				th.Prompt.Render("❯ ")+m.afilter.View(), w)
+	}
 	var b strings.Builder
 	b.WriteString(th.Title.Render("AGENTS"))
 	scope := "all agents"
@@ -189,23 +196,18 @@ func (m Model) agentPaneBox(p agentPane, focused bool, w, h int) string {
 		h = 1
 	}
 	name, suffix := m.agentPaneHeading(p)
-	body := h - 1
-	if body < 1 {
-		body = 1
-	}
 	var inner string
 	switch p {
 	case apAgents:
-		inner = m.agentListInner(w, body)
+		inner = m.agentListInner(w, h)
 	case apPrompts:
-		inner = m.promptListInner(w, body)
+		inner = m.promptListInner(w, h)
 	case apCommands:
-		inner = m.promptCmdInner(w, body)
+		inner = m.promptCmdInner(w, h)
 	case apInfo:
-		inner = m.agentInfoInner(w, body)
+		inner = m.agentInfoInner(w, h)
 	}
-	title := m.paneTitle(name, suffix, focused, w)
-	return m.box(focused, w, h, title+"\n"+inner)
+	return m.titledBox(focused, w, h, name, suffix, inner)
 }
 
 // agentPaneHeading is a pane's name and the count/position suffix that goes
@@ -218,42 +220,37 @@ func (m Model) agentPaneHeading(p agentPane) (name, suffix string) {
 		}
 		return "AGENTS", strconv.Itoa(len(m.agents.agents))
 	case apPrompts:
-		n := m.promptLen()
-		if n == 0 {
-			return "PROMPTS", "0"
-		}
-		return "PROMPTS", fmt.Sprintf("%d/%d", clampIndex(m.promptSel, n)+1, n)
+		return "PROMPTS", countSuffix(m.promptSel, m.promptLen(), m.promptQ)
 	case apCommands:
-		n := m.drillLen()
-		if n == 0 {
-			return "COMMANDS", "0"
-		}
-		return "COMMANDS", fmt.Sprintf("%d/%d", clampIndex(m.drillSel, n)+1, n)
+		return "COMMANDS", countSuffix(m.drillSel, m.drillLen(), m.cmdQ)
 	default:
 		return "DETAILS", ""
 	}
 }
 
-// paneTitle renders a pane header: the name, a dim count/position suffix, and a
-// ⛶ marker when the pane is zoomed to the full frame.
-func (m Model) paneTitle(name, suffix string, focused bool, w int) string {
-	th := m.th
-	style := th.Title
-	if !focused {
-		style = th.Dim
+// filterNoun names the list the / key is aiming at, for the prompt on the filter
+// box: "filter prompts ❯" says what is about to be narrowed, which a bare ❯
+// cannot when two panes can both be filtered.
+func filterNoun(p agentPane) string {
+	if p == apCommands {
+		return "commands"
 	}
-	s := style.Render(name)
-	if suffix != "" {
-		s += th.Dim.Render("  " + suffix)
+	return "prompts"
+}
+
+// countSuffix is a list pane's "cursor/total" readout, with the active filter
+// appended so the total is understood as a filtered one. Without the marker a
+// narrowed list is indistinguishable from a quiet period, and the /query is the
+// only thing on screen that explains the missing rows.
+func countSuffix(sel, n int, query string) string {
+	out := "0"
+	if n > 0 {
+		out = fmt.Sprintf("%d/%d", clampIndex(sel, n)+1, n)
 	}
-	if focused && m.zoom {
-		s += th.Accent.Render("  ⛶")
+	if query != "" {
+		out += "  /" + query
 	}
-	pad := w - lipgloss.Width(s)
-	if pad > 0 {
-		s += strings.Repeat(" ", pad)
-	}
-	return clipW(s, w)
+	return out
 }
 
 // --- agent sidebar -------------------------------------------------------
@@ -362,7 +359,7 @@ func (m Model) agentSummary(i, w int) []string {
 	}
 	return []string{
 		strings.Repeat(" ", w),
-		th.Title.Render(fitPlain(truncCols(a.name, w), w)),
+		th.Section.Render(fitPlain(truncCols(a.name, w), w)),
 		th.Dim.Render(fitPlain(fmt.Sprintf("%d cmds · %s", a.count, ok2), w)),
 		th.Dim.Render(fitPlain(fails+" · "+avg, w)),
 		th.Dim.Render(fitPlain("last "+theme.RelTime(m.now(), a.lastMs), w)),
@@ -382,7 +379,7 @@ func (m Model) agentInfoInner(w, h int) string {
 	th := m.th
 	p, ok := m.drilledPrompt()
 	if !ok {
-		return padLines([]string{"", "  " + th.Dim.Render("no prompt selected")}, w, h)
+		return padLines([]string{"", "  " + th.Dim.Render(m.noPromptMsg())}, w, h)
 	}
 	if m.apane == apCommands {
 		if r, has := m.drilledCmd(); has {
@@ -397,7 +394,7 @@ func (m Model) agentInfoInner(w, h int) string {
 func (m Model) promptInfoLines(p promptStat, w int) []string {
 	th := m.th
 	lines := make([]string, 0, 16)
-	lines = append(lines, th.Title.Render(fitPlain("Prompt", w)))
+	lines = append(lines, th.Section.Render(fitPlain("Prompt", w)))
 	for _, l := range wrapPlain(p.text, w-1) {
 		lines = append(lines, " "+th.Norm.Render(l))
 	}
@@ -425,7 +422,7 @@ func (m Model) promptInfoLines(p promptStat, w int) []string {
 func (m Model) cmdInfoLines(r rec.Record, w int) []string {
 	th := m.th
 	lines := make([]string, 0, 16)
-	lines = append(lines, th.Title.Render(fitPlain("Command", w)))
+	lines = append(lines, th.Section.Render(fitPlain("Command", w)))
 	for _, l := range wrapPlain(oneLine(r.Cmd), w-1) {
 		lines = append(lines, " "+th.Norm.Render(l))
 	}
@@ -435,21 +432,14 @@ func (m Model) cmdInfoLines(r rec.Record, w int) []string {
 	if r.DurMs != nil {
 		dur = theme.Duration(*r.DurMs)
 	}
-	exit := "○ unknown"
-	if r.Exit != nil {
-		if *r.Exit == 0 {
-			exit = "✓ 0"
-		} else {
-			exit = "✗ " + strconv.Itoa(*r.Exit)
-		}
-	}
 	for _, kv := range [][2]string{
 		{"Path", dashIfEmpty(r.Cwd)},
 		{"Host", dashIfEmpty(r.Hostname)},
+		{"Session", shortSession(r.Session)},
+		{"Executor", dashIfEmpty(r.Tag)},
 		{"Time", time.UnixMilli(r.StartMs).Local().Format("2006-01-02 15:04:05")},
 		{"Duration", dur},
-		{"Exit", exit},
-		{"Executor", dashIfEmpty(r.Tag)},
+		{"Exit", exitWord(r)},
 	} {
 		lines = append(lines, m.infoRow(kv[0], kv[1], w))
 	}

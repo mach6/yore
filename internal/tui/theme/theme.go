@@ -26,8 +26,15 @@ type Theme struct {
 	ExitErr lipgloss.Style // non-zero exit status (red)
 	Status  lipgloss.Style // the bottom status bar
 	Border  lipgloss.Style // pane borders
-	Title   lipgloss.Style // pane / section titles
 	Help    lipgloss.Style // the key-hints help line
+
+	// Three ranks of heading, and only three. A terminal has very few levers for
+	// hierarchy — color, weight, case, indent — so each rank gets its own and no
+	// rank shares. Title is the frame (a pane's name, in its border); Section is
+	// a heading inside a pane or screen; Dim is the chrome below both (column
+	// headers, field labels).
+	Title   lipgloss.Style // accent + bold: pane names, the outermost rank
+	Section lipgloss.Style // bold, normal color: a heading within a pane
 
 	// Syntax styles for command rows (layered under Match). Restrained so the
 	// match highlight and exit/host colors still read clearly.
@@ -40,6 +47,8 @@ type Theme struct {
 
 	// hostStyles are the pre-built per-host hue styles selected by Host.
 	hostStyles []lipgloss.Style
+	// dataStyles are the pre-built chart-ink styles selected by Data.
+	dataStyles []lipgloss.Style
 }
 
 // Palette. AdaptiveColor picks Light on light terminals, Dark on dark ones.
@@ -62,6 +71,24 @@ var (
 	cSynOp  = lipgloss.AdaptiveColor{Light: "#a01e78", Dark: "#d79fc7"} // operators: soft magenta
 	cSynVar = lipgloss.AdaptiveColor{Light: "#0a6ea0", Dark: "#7fc7df"} // variables: soft cyan
 )
+
+// dataRamp is the chart ink: ONE hue at four intensity steps, ascending.
+//
+// It is deliberately not the UI accent. Every bar, gauge and heat cell used to
+// render in accent blue, which meant that on the stats screen everything with
+// ink was the same color as everything selectable — the accent distinguished
+// nothing, and nothing could be emphasized within the data. Violet is clear of
+// the blue accent, of red/green (exit status) and of amber (match highlight).
+//
+// Intensity rides on lightness, not only on glyph height or density, so a chart
+// survives a terminal or a font that renders shade glyphs poorly.
+var dataRamp = [4]lipgloss.AdaptiveColor{
+	// On light terminals intensity darkens; on dark ones it brightens.
+	{Light: "#b7a9dc", Dark: "#4e4176"},
+	{Light: "#9080c6", Dark: "#6d5aa4"},
+	{Light: "#6b52ac", Dark: "#9583ce"},
+	{Light: "#472f86", Dark: "#c3b4f2"},
+}
 
 // hostPalette is 8 distinguishable hues (on both light and dark) for
 // per-hostname coloring. Pure red and green are deliberately excluded so
@@ -104,6 +131,7 @@ func NewWithRenderer(r *lipgloss.Renderer) *Theme {
 		Status:  base.Foreground(cDim).Background(cStatBg),
 		Border:  base.Foreground(cBorder).BorderForeground(cBorder).Border(lipgloss.RoundedBorder()),
 		Title:   base.Foreground(cAccent).Bold(true),
+		Section: base.Foreground(cNorm).Bold(true),
 		Help:    base.Foreground(cDim),
 
 		SynCommand:  base.Foreground(cSynCmd),
@@ -117,7 +145,27 @@ func NewWithRenderer(r *lipgloss.Renderer) *Theme {
 	for i, c := range hostPalette {
 		t.hostStyles[i] = base.Foreground(c)
 	}
+	t.dataStyles = make([]lipgloss.Style, len(dataRamp))
+	for i, c := range dataRamp {
+		t.dataStyles[i] = base.Foreground(c)
+	}
 	return t
+}
+
+// DataLevels is how many intensity steps Data accepts (0 .. DataLevels-1).
+const DataLevels = len(dataRamp)
+
+// Data returns the chart-ink style for an intensity level, clamped into the
+// ramp. Level 0 is the faintest step that still counts as activity; callers
+// render true zero with Dim, so "none" and "a little" never look alike.
+func (t *Theme) Data(level int) lipgloss.Style {
+	if level < 0 {
+		level = 0
+	}
+	if level >= len(t.dataStyles) {
+		level = len(t.dataStyles) - 1
+	}
+	return t.dataStyles[level]
 }
 
 // Syntax returns the style for a syntax kind, or Norm for plain text.

@@ -272,6 +272,16 @@ func (n *nonceCache) checkAndRecord(device, nonce string, now time.Time) bool {
 func readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		// A body over the limit reads as a plain error, which would report as a
+		// malformed request and tell the client nothing about how to recover.
+		// Name it: 413 is what makes a client's batch-splitting retry correct
+		// rather than a guess.
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeErr(w, http.StatusRequestEntityTooLarge,
+				fmt.Sprintf("request body exceeds %d bytes", tooLarge.Limit))
+			return nil, false
+		}
 		writeErr(w, http.StatusBadRequest, "unable to read body")
 		return nil, false
 	}

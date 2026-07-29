@@ -12,6 +12,7 @@ import (
 
 	"yore/internal/config"
 	"yore/internal/rec"
+	"yore/internal/redact"
 )
 
 // captureStdout runs fn with os.Stdout redirected to a pipe and returns what it
@@ -66,7 +67,7 @@ func TestCursorPromptTracing(t *testing.T) {
 
 	// beforeSubmitPrompt saves the conversation's prompt AND must allow it through.
 	out := captureStdout(t, func() {
-		feedStdin(t, `{"hook_event_name":"beforeSubmitPrompt","conversation_id":"c9","prompt":"add rate limiting"}`,
+		feedStdin(t, `{"hook_event_name":"beforeSubmitPrompt","conversation_id":"c9","prompt":"add rate limiting","workspace_roots":["/w"]}`,
 			runHookCursorPrompt)
 	})
 	assert.JSONEq(t, `{"continue": true}`, out, "the prompt hook must let the prompt through")
@@ -75,9 +76,12 @@ func TestCursorPromptTracing(t *testing.T) {
 	feedStdin(t, `{"hook_event_name":"afterShellExecution","command":"cargo add tower","conversation_id":"c9","workspace_roots":["/w"]}`,
 		runHookCursor)
 	rows := spooledRecords(t, dir)
-	require.Len(t, rows, 1)
-	assert.NotEmpty(t, rows[0].PromptID, "command traced to the prompt")
+	require.Len(t, rows, 2, "the prompt record plus the command it caused")
+	assert.Equal(t, rec.TypePrompt, rows[0].Type)
 	assert.Equal(t, "add rate limiting", rows[0].Prompt)
+	assert.Equal(t, "/w", rows[0].Cwd, "the workspace root is the prompt's directory")
+	assert.Equal(t, rows[0].ID, rows[1].PromptID, "command traced to the prompt record")
+	assert.Empty(t, rows[1].Prompt, "text lives on the prompt record only")
 }
 
 func TestCursorPromptRedactsButStillContinues(t *testing.T) {
@@ -90,8 +94,11 @@ func TestCursorPromptRedactsButStillContinues(t *testing.T) {
 			runHookCursorPrompt)
 	})
 	assert.JSONEq(t, `{"continue": true}`, out, "a secret-bearing prompt is still allowed through")
-	_, ok := loadPromptState(dir, "cursor-c1")
-	assert.False(t, ok, "but the secret-bearing prompt is not persisted")
+
+	rows := spooledRecords(t, dir)
+	require.Len(t, rows, 1, "the prompt is recorded with the credential masked")
+	assert.NotContains(t, rows[0].Prompt, "hunter2", "the secret is not persisted")
+	assert.Contains(t, rows[0].Prompt, redact.Mark("generic-token-assign"))
 }
 
 func TestRunHookCursorIgnoresEmpty(t *testing.T) {

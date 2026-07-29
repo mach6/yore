@@ -2,8 +2,11 @@ package syncer
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"sync"
 	"time"
@@ -25,6 +28,14 @@ const dekPageLimit = 1000
 // pushBatchLimit is the maximum records per push (the server's own cap).
 const pushBatchLimit = 1000
 
+// maxPushBytes bounds the encoded size of one push body, comfortably under the
+// server's 10 MiB request cap. A record count alone is not a bound: a thousand
+// records carrying long prompts or heredocs is megabytes, and a body over the
+// server's limit fails EVERY retry — the watermark never advances and sync
+// wedges permanently. Size is what the server actually limits, so size is what
+// the client batches on.
+const maxPushBytes = 8 << 20
+
 // dekEntry is a cached epoch data key: its keyID and the unwrapped 32-byte key.
 type dekEntry struct {
 	keyID string
@@ -43,6 +54,13 @@ type Syncer struct {
 	http  *HTTPClient
 	dev   cryptobox.DeviceKey
 	epoch time.Duration
+
+	// syncPrompts governs whether prompt records leave this machine. When false
+	// they stay in the local store and are never sealed or uploaded, so agent
+	// prompts remain readable here and nowhere else. Commands still sync, and
+	// still carry their PromptID — on another machine that id simply resolves to
+	// no text.
+	syncPrompts bool
 
 	// deviceID is this machine's identifier in the server's device registry.
 	// It equals the store's hostID, so it is stable across restarts without
@@ -63,7 +81,8 @@ type Syncer struct {
 
 // New builds a Syncer over the given local store, transport, device key, and
 // epoch width. The epoch width buckets records into DEKs (one DEK per epoch);
-// callers pass config.KeyEpochD().
+// callers pass config.KeyEpochD(). Prompt records are synced by default; see
+// SetSyncPrompts.
 func New(st *store.Store, http *HTTPClient, dev cryptobox.DeviceKey, epoch time.Duration) *Syncer {
 	id := st.HostID()
 	// Sign this device's mutating requests with its Ed25519 key.
@@ -73,12 +92,34 @@ func New(st *store.Store, http *HTTPClient, dev cryptobox.DeviceKey, epoch time.
 		http:        http,
 		dev:         dev,
 		epoch:       epoch,
+		syncPrompts: true,
 		deviceID:    id,
 		hostID:      id,
 		deksByEpoch: make(map[int64]dekEntry),
 		deksByKeyID: make(map[string][32]byte),
 		dekWraps:    make(map[string]wire.DEKWrap),
 	}
+}
+
+// SetSyncPrompts chooses whether agent prompt records are uploaded (callers
+// pass config.SyncPrompts). Turning it off is not retroactive: prompts already
+// pushed stay on the server, because the watermark has passed them.
+func (s *Syncer) SetSyncPrompts(v bool) {
+	s.mu.Lock()
+	s.syncPrompts = v
+	s.mu.Unlock()
+}
+
+// promptsSynced reports whether prompt text may leave this machine.
+func (s *Syncer) promptsSynced() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.syncPrompts
+}
+
+// pushable reports whether a local record should be uploaded at all.
+func (s *Syncer) pushable(r rec.Record) bool {
+	return r.Type != rec.TypePrompt || s.promptsSynced()
 }
 
 // DeviceID returns this machine's device/host identifier.
@@ -211,10 +252,11 @@ func (s *Syncer) setHK(hk [32]byte, version int) {
 }
 
 // Push encrypts and uploads every local record with seq greater than the
-// persisted watermark, in ascending batches of at most pushBatchLimit. After
-// each acknowledged batch it advances (and persists) the watermark, so a failed
-// batch leaves the watermark untouched and is retried on the next call. It
-// returns the total number of records uploaded.
+// persisted watermark, in ascending batches bounded by BOTH pushBatchLimit
+// records and maxPushBytes of encoded body. After each acknowledged batch it
+// advances (and persists) the watermark, so a failed batch leaves the watermark
+// untouched and is retried on the next call. It returns the total number of
+// records uploaded.
 func (s *Syncer) Push(ctx context.Context) (int, error) {
 	hk, hkVersion, err := s.resolveHK(ctx)
 	if err != nil {
@@ -236,8 +278,18 @@ func (s *Syncer) Push(ctx context.Context) (int, error) {
 			return pushed, nil
 		}
 
+		// Seal a size-bounded prefix of the batch. srcIdx[i] is the index in
+		// batch that records[i] came from, so a short send can still advance the
+		// watermark exactly as far as the server accepted.
 		records := make([]wire.PushRecord, 0, len(batch))
-		for _, r := range batch {
+		srcIdx := make([]int, 0, len(batch))
+		size := 0
+		consumed := 0
+		for i, r := range batch {
+			if !s.pushable(r) {
+				consumed = i + 1 // skipped, but the stream position still passes it
+				continue
+			}
 			epoch := cryptobox.EpochStart(time.UnixMilli(r.StartMs), s.epoch)
 			entry, err := s.ensurePushDEK(ctx, hk, hkVersion, epoch)
 			if err != nil {
@@ -257,25 +309,90 @@ func (s *Syncer) Push(ctx context.Context) (int, error) {
 			if err != nil {
 				return pushed, fmt.Errorf("syncer: seal record: %w", err)
 			}
-			records = append(records, wire.PushRecord{
-				Seq:   r.Seq,
-				ID:    r.ID,
-				KeyID: entry.keyID,
-				Blob:  blob,
-			})
+			pr := wire.PushRecord{Seq: r.Seq, ID: r.ID, KeyID: entry.keyID, Blob: blob}
+			// Stop before exceeding the cap — but never emit an empty batch, so a
+			// single oversized record is still attempted (and fails loudly) rather
+			// than silently stalling the stream forever.
+			n := pushRecordSize(pr)
+			if len(records) > 0 && size+n > maxPushBytes {
+				break
+			}
+			size += n
+			records = append(records, pr)
+			srcIdx = append(srcIdx, i)
+			consumed = i + 1
+		}
+		if consumed == 0 {
+			return pushed, fmt.Errorf("syncer: push made no progress at seq %d", batch[0].Seq)
 		}
 
-		if _, err := s.http.PushRecords(ctx, wire.PushReq{HostID: s.hostID, Records: records}); err != nil {
-			// Do not advance the watermark on a failed batch.
-			return pushed, err
+		if len(records) == 0 {
+			// Everything in this window was filtered out (prompt records, with
+			// prompt sync off). Bank the position and carry on.
+			watermark = batch[consumed-1].Seq
+			if err := s.writeWatermark(watermark); err != nil {
+				return pushed, err
+			}
+			continue
 		}
 
-		pushed += len(records)
-		watermark = batch[len(batch)-1].Seq
+		sent, err := s.pushWithBackoff(ctx, records)
+		if err != nil {
+			return pushed, err // watermark untouched: the whole batch retries
+		}
+		pushed += sent
+		if sent == len(records) {
+			watermark = batch[consumed-1].Seq
+		} else {
+			watermark = batch[srcIdx[sent-1]].Seq
+		}
 		if err := s.writeWatermark(watermark); err != nil {
 			return pushed, err
 		}
 	}
+}
+
+// pushWithBackoff uploads records, halving the batch and retrying whenever the
+// server rejects it in a way a smaller body would fix. It returns how many
+// leading records were accepted.
+//
+// The size estimate this backs up is only an estimate — a server configured
+// with a tighter limit, or a proxy in between, can still refuse a body we
+// thought was fine. Halving converges in a few round trips and, crucially,
+// terminates: once a single record is rejected the error is real and is
+// returned, instead of retrying an impossible batch forever.
+func (s *Syncer) pushWithBackoff(ctx context.Context, records []wire.PushRecord) (int, error) {
+	n := len(records)
+	for {
+		_, err := s.http.PushRecords(ctx, wire.PushReq{HostID: s.hostID, Records: records[:n]})
+		if err == nil {
+			return n, nil
+		}
+		if n <= 1 || !retryableSmaller(err) {
+			return 0, err
+		}
+		n /= 2
+	}
+}
+
+// retryableSmaller reports whether an error is one a smaller batch might avoid:
+// an explicit 413, or a 400 — which is what a body cut off by the server's
+// MaxBytesReader looks like once JSON decoding fails on the truncated stream.
+// A genuinely malformed request also 400s, but it 400s at every size too, so
+// the halving loop terminates on it rather than masking it.
+func retryableSmaller(err error) bool {
+	var ae *APIError
+	if !errors.As(err, &ae) {
+		return false
+	}
+	return ae.Status == http.StatusRequestEntityTooLarge || ae.Status == http.StatusBadRequest
+}
+
+// pushRecordSize estimates one record's JSON footprint inside a PushReq: the
+// base64-expanded blob plus the field names, quoting, and separators around it.
+func pushRecordSize(pr wire.PushRecord) int {
+	const scaffolding = 64 // {"seq":N,"id":"","key_id":"","blob":""},
+	return scaffolding + len(pr.ID) + len(pr.KeyID) + base64.StdEncoding.EncodedLen(len(pr.Blob))
 }
 
 // ensurePushDEK returns the DEK for an epoch, minting and uploading a fresh one
@@ -316,22 +433,15 @@ func (s *Syncer) ensurePushDEK(ctx context.Context, hk [32]byte, hkVersion int, 
 	return entry, nil
 }
 
-// PullOthers pulls every remote host stream incrementally from the passed-in
-// cursors, decrypts every record, and returns the decrypted records together
-// with the advanced cursor set. The self host is skipped (the local store
-// already holds those records). Remote records are NEVER persisted locally: the
-// caller (the daemon) keeps the returned records in memory for its lifetime, so
-// a fresh daemon re-pulls from empty cursors.
+// PullCiphertext fetches every remote host's new sealed records, starting from
+// the passed-in cursors, and returns them per host together with the advanced
+// cursor set. Nothing is decrypted here: the caller can cache the ciphertext
+// (see internal/rstore) before spending anything on crypto, which is what lets
+// a restart resume instead of re-downloading the whole archive.
 //
-// Decryption failure is FATAL: it signals tampering or a key mismatch and is
-// returned as an error, never silently skipped. The passed-in cursors map is
-// not mutated; a fresh advanced map is returned.
-func (s *Syncer) PullOthers(ctx context.Context, cursors map[string]uint64) ([]rec.Record, map[string]uint64, error) {
-	hk, _, err := s.resolveHK(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-
+// The self host is skipped — the local store already holds those records. The
+// passed-in cursors map is not mutated; a fresh advanced map is returned.
+func (s *Syncer) PullCiphertext(ctx context.Context, cursors map[string]uint64) (byHost map[string][]wire.PullRecord, advanced map[string]uint64, err error) {
 	newCursors := make(map[string]uint64, len(cursors))
 	for k, v := range cursors {
 		newCursors[k] = v
@@ -342,7 +452,7 @@ func (s *Syncer) PullOthers(ctx context.Context, cursors map[string]uint64) ([]r
 		return nil, nil, err
 	}
 
-	var out []rec.Record
+	out := make(map[string][]wire.PullRecord, len(hosts))
 	for _, h := range hosts {
 		if h.HostID == s.hostID {
 			continue // our own stream is already local
@@ -354,11 +464,7 @@ func (s *Syncer) PullOthers(ctx context.Context, cursors map[string]uint64) ([]r
 				return nil, nil, err
 			}
 			for _, pr := range resp.Records {
-				r, err := s.openRecord(ctx, hk, h.HostID, pr)
-				if err != nil {
-					return nil, nil, err
-				}
-				out = append(out, r)
+				out[h.HostID] = append(out[h.HostID], pr)
 				after = pr.Seq
 			}
 			newCursors[h.HostID] = after
@@ -366,6 +472,47 @@ func (s *Syncer) PullOthers(ctx context.Context, cursors map[string]uint64) ([]r
 				break
 			}
 		}
+	}
+	return out, newCursors, nil
+}
+
+// OpenRecords decrypts one host's sealed records into plaintext history.
+//
+// Decryption failure is FATAL: it signals tampering or a key mismatch and is
+// returned as an error, never silently skipped.
+func (s *Syncer) OpenRecords(ctx context.Context, hostID string, prs []wire.PullRecord) ([]rec.Record, error) {
+	if len(prs) == 0 {
+		return nil, nil
+	}
+	hk, _, err := s.resolveHK(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]rec.Record, 0, len(prs))
+	for _, pr := range prs {
+		r, err := s.openRecord(ctx, hk, hostID, pr)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+// PullOthers is PullCiphertext followed by OpenRecords for every host: the
+// whole remote fetch in one call, for callers with no ciphertext cache to fill.
+func (s *Syncer) PullOthers(ctx context.Context, cursors map[string]uint64) ([]rec.Record, map[string]uint64, error) {
+	byHost, newCursors, err := s.PullCiphertext(ctx, cursors)
+	if err != nil {
+		return nil, nil, err
+	}
+	var out []rec.Record
+	for hostID, prs := range byHost {
+		recs, err := s.OpenRecords(ctx, hostID, prs)
+		if err != nil {
+			return nil, nil, err
+		}
+		out = append(out, recs...)
 	}
 	return out, newCursors, nil
 }

@@ -98,6 +98,24 @@ func (s *server) runQuery(f *match.Filter, q proto.QueryReq) proto.QueryResp {
 		rows = kept
 	}
 
+	// Human-only: drop everything an agent ran. The count of what went is kept
+	// and returned — a caller hiding a whole category of history needs to be able
+	// to say how much, and "no matches" is a lie when the match is behind this
+	// filter. Counted after the query match, so it answers "how many *of these*
+	// are hidden", not "how many agent commands exist".
+	hiddenAgents := 0
+	if q.HumanOnly {
+		kept := rows[:0]
+		for _, r := range rows {
+			if r.Tag == "" {
+				kept = append(kept, r)
+			} else {
+				hiddenAgents++
+			}
+		}
+		rows = kept
+	}
+
 	// Freeform user-tag filter: matches any of a row's effective tags (the
 	// executor auto-tag, command tags, or session tags).
 	if q.Tag != "" {
@@ -162,13 +180,31 @@ func (s *server) runQuery(f *match.Filter, q proto.QueryReq) proto.QueryResp {
 	for i := range windowed {
 		windowed[i].Tags = s.tags.effective(windowed[i])
 	}
+	// Rejoin each row with the text of the prompt that caused it. The text is
+	// stored once, on its own record, so this is where it comes back — every
+	// consumer downstream still just reads r.Prompt.
+	s.prompts.hydrate(windowed)
 
-	return proto.QueryResp{
-		Rows:   windowed,
-		Total:  total,
-		Scope:  scope,
-		Remote: s.remote.info(),
+	resp := proto.QueryResp{
+		Rows:         windowed,
+		Total:        total,
+		Scope:        scope,
+		HiddenAgents: hiddenAgents,
+		Remote:       s.remote.info(),
 	}
+	if q.WantPrompts {
+		resp.Prompts = s.prompts.since(periodCutoff(s.nowMs(), q.PromptDays), q.Executor)
+	}
+	return resp
+}
+
+// periodCutoff is the oldest timestamp within a lookback window of days; 0 days
+// means no cutoff.
+func periodCutoff(nowMs int64, days int) int64 {
+	if days <= 0 {
+		return 0
+	}
+	return nowMs - int64(days)*24*int64(time.Hour/time.Millisecond)
 }
 
 // scopeMatch reports whether a LOCAL-corpus record belongs to the requested

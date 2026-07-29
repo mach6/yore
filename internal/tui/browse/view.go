@@ -14,8 +14,38 @@ import (
 	"yore/internal/proto"
 	"yore/internal/rec"
 	"yore/internal/tui/hl"
+	"yore/internal/tui/keyhelp"
 	"yore/internal/tui/theme"
 )
+
+// renderHelp draws the "?" panel: every binding that does something in the view
+// underneath it, grouped, in as many columns as the terminal affords. It is
+// framed like a pane so it reads as something laid over the view rather than as
+// the view having changed.
+func (m Model) renderHelp(w, h int) string {
+	bw, bh := maxInt(1, w-2), maxInt(1, h-2)
+	body, total := keyhelp.Panel(m.th, m.helpGroups(), bw, bh, m.helpTop)
+	suffix := m.helpViewName()
+	if total > bh {
+		suffix += "  ↑↓ for more"
+	}
+	return m.titledBox(true, bw, bh, "KEYS", suffix, body)
+}
+
+// helpViewName names the view the panel is describing — the panel covers it, so
+// without this the list has no subject.
+func (m Model) helpViewName() string {
+	switch m.view {
+	case viewStats:
+		return "stats"
+	case viewAgents:
+		return "agents"
+	case viewDevices:
+		return "devices"
+	default:
+		return "browse"
+	}
+}
 
 // View renders the whole alt-screen.
 func (m Model) View() string {
@@ -42,11 +72,13 @@ func (m Model) View() string {
 		top = m.searchLine(w)
 		mid = m.renderPanes(w)
 	}
-	// bubbles/help can overrun its Width when even an ellipsis would not fit;
-	// clip as a final guarantee against horizontal overflow. The keymap is
-	// contextual: browse, stats, and devices each advertise their own keys.
-	helpv := clipW(m.help.View(m.helpKeys()), w)
-	return strings.Join([]string{top, mid, m.statusBar(w), helpv}, "\n")
+	// The key panel takes over the middle, keeping the header and status bar so
+	// you can still see which view you asked about.
+	if m.showHelp {
+		mid = m.renderHelp(w, m.midHeight)
+	}
+	footer := clipW(keyhelp.Line(m.th, m.footerRows(), w), w)
+	return strings.Join([]string{top, mid, m.statusBar(w), footer}, "\n")
 }
 
 // searchLine draws the "❯ query" input row, with the shared period tabs pushed
@@ -82,22 +114,86 @@ func clipW(s string, w int) string {
 	return lipgloss.NewStyle().MaxWidth(w).Render(s)
 }
 
-// box wraps inner content (already sized to contentW × contentH) in a rounded
-// border, accent when focused and dim otherwise.
-func (m Model) box(focused bool, contentW, contentH int, inner string) string {
-	st := m.borderBlur
+// titledBox draws a pane: its name seated IN the top border rule, its body
+// filling everything inside.
+//
+//	╭─ PROMPTS  3/47 ──────╮
+//	│ 2h  s.4f2  claude  8 │
+//	╰──────────────────────╯
+//
+// The name goes in the rule rather than on a line of its own inside the box
+// because a pane only has so many rows: a title line costs one, and in the
+// four-pane explorer that was four rows of data spent on chrome. It also stops
+// the title competing with the first data row for the eye — a border is read as
+// frame, a line inside the box is read as content.
+//
+// inner is expected to be w columns wide already, but every line is padded and
+// clipped to w regardless: a viewport that renders short would otherwise leave
+// the right-hand border ragged.
+func (m Model) titledBox(focused bool, w, h int, name, suffix, inner string) string {
+	if w < 1 {
+		w = 1
+	}
+	if h < 1 {
+		h = 1
+	}
+	ink := m.inkBlur
 	if focused {
-		st = m.borderFocus
+		ink = m.inkFocus
 	}
-	if contentW < 1 {
-		contentW = 1
+
+	var b strings.Builder
+	b.WriteString(m.topRule(ink, focused, w, name, suffix))
+	b.WriteByte('\n')
+
+	side := ink.Render("│")
+	lines := strings.Split(inner, "\n")
+	for i := 0; i < h; i++ {
+		line := ""
+		if i < len(lines) {
+			line = lines[i]
+		}
+		b.WriteString(side + padTo(line, w) + side)
+		b.WriteByte('\n')
 	}
-	if contentH < 1 {
-		contentH = 1
+	b.WriteString(ink.Render("╰" + strings.Repeat("─", w) + "╯"))
+	return b.String()
+}
+
+// topRule composes the pane's top border with its name inside it. The rule is
+// exactly w+2 columns. A pane too narrow to seat a name gets a plain rule — the
+// status bar and the focus ring still say where you are.
+func (m Model) topRule(ink lipgloss.Style, focused bool, w int, name, suffix string) string {
+	plain := ink.Render("╭" + strings.Repeat("─", w) + "╮")
+	if w < 4 {
+		return plain
 	}
-	return st.Width(contentW).Height(contentH).
-		MaxWidth(contentW + 2).MaxHeight(contentH + 2).
-		Render(inner)
+	style := m.th.Title
+	if !focused {
+		style = m.th.Dim
+	}
+	head := style.Render(name)
+	if suffix != "" {
+		head += m.th.Dim.Render("  " + suffix)
+	}
+	if focused && m.zoom {
+		head += m.th.Accent.Render("  ⛶")
+	}
+	// "╭─ " + head + " " + fill + "╮" spans w+2 columns.
+	fill := w - 3 - lipgloss.Width(head)
+	if fill < 0 {
+		return plain
+	}
+	return ink.Render("╭─ ") + head + ink.Render(" "+strings.Repeat("─", fill)+"╮")
+}
+
+// padTo pads a possibly-styled line with spaces to exactly w columns, clipping
+// if it overruns.
+func padTo(s string, w int) string {
+	if d := w - lipgloss.Width(s); d > 0 {
+		return s + strings.Repeat(" ", d)
+	}
+	return clipW(s, w)
 }
 
 // renderPanes lays out the three browse panes: host sidebar on the left, the
@@ -129,21 +225,17 @@ func (m Model) browsePaneBox(f focus, focused bool, w, h int) string {
 	if h < 1 {
 		h = 1
 	}
-	body := h - 1
-	if body < 1 {
-		body = 1
-	}
 	name, suffix := m.browsePaneHeading(f)
 	var inner string
 	switch f {
 	case focusHosts:
-		inner = m.leftInner(w, body)
+		inner = m.leftInner(w, h)
 	case focusTable:
-		inner = m.tableInner(w, body)
+		inner = m.tableInner(w, h)
 	default:
 		inner = m.detail.View()
 	}
-	return m.box(focused, w, h, m.paneTitle(name, suffix, focused, w)+"\n"+inner)
+	return m.titledBox(focused, w, h, name, suffix, inner)
 }
 
 // browsePaneHeading names a browse pane and the count/position that goes beside
@@ -295,11 +387,19 @@ func (m Model) tableInner(w, h int) string {
 	case len(m.rows) == 0 && !m.gotResult:
 		lines = append(lines, centered(m.th.Dim.Render("loading…"), w, bodyRows)...)
 	case len(m.rows) == 0:
-		msg := "no history yet"
-		if m.ti.Value() != "" {
+		// An empty screen is a place to say what to do next, not just that there is
+		// nothing. A search that found nothing is the user's own doing and needs no
+		// instruction; an empty history means yore has nothing to show yet. But
+		// when the only matches are behind the agent filter, "no matches" is a lie
+		// about the user's own history — so that case names the way through.
+		msg := "no history yet — run a command, or import with: yore import auto"
+		switch note := m.hiddenAgentsNote(); {
+		case note != "":
+			msg = note + " — A shows them"
+		case m.ti.Value() != "":
 			msg = "no matches"
 		}
-		lines = append(lines, centered(m.th.Dim.Render(msg), w, bodyRows)...)
+		lines = append(lines, centered(m.th.Dim.Render(truncCols(msg, w)), w, bodyRows)...)
 	default:
 		now := m.now()
 		q := match.Parse(m.ti.Value())
@@ -392,14 +492,33 @@ func (m Model) renderRow(r rec.Record, l colLayout, q match.Query, selected bool
 	return composeSegs(segs, selected, w, th)
 }
 
+// exitMarker is a command's outcome as a glyph plus a style. Each of the three
+// states gets its OWN glyph: success and unknown used to share "·" and differ
+// only in color, which put a real distinction out of reach for anyone who cannot
+// separate dim grey from green — and put it out of reach of a screenshot.
 func exitMarker(th *theme.Theme, r rec.Record) (string, lipgloss.Style) {
-	if r.Exit == nil {
+	switch {
+	case r.Exit == nil:
 		return "·", th.Dim
+	case *r.Exit == 0:
+		return "✓", th.ExitOK
+	default:
+		return "✗" + strconv.Itoa(*r.Exit), th.ExitErr
 	}
-	if *r.Exit == 0 {
-		return "·", th.ExitOK
+}
+
+// exitWord is a command's outcome spelled out, for the details panes where there
+// is room for a word. It leads with the same glyph exitMarker uses in the table,
+// so the two never disagree about what a "·" means.
+func exitWord(r rec.Record) string {
+	switch {
+	case r.Exit == nil:
+		return "· unknown"
+	case *r.Exit == 0:
+		return "✓ 0"
+	default:
+		return "✗ " + strconv.Itoa(*r.Exit)
 	}
-	return "✗" + strconv.Itoa(*r.Exit), th.ExitErr
 }
 
 // --- detail pane --------------------------------------------------------
@@ -424,41 +543,30 @@ func (m *Model) syncDetail() {
 	}
 	b.WriteByte('\n')
 
+	// Same field names, same order, same label column as the agent explorer's
+	// details pane (see cmdInfoLines): the two panes are one keystroke apart and
+	// describe the same record, so calling a cwd "cwd" here and "Path" there just
+	// makes the reader re-learn the record.
 	meta := func(label, val string) {
-		lab := m.th.Dim.Render(padRight(label, 8))
-		vw := w - 9
-		if vw < 1 {
-			vw = 1
-		}
-		b.WriteString(lab + " " + m.th.Norm.Render(truncCols(val, vw)))
+		b.WriteString(m.infoRow(label, val, w))
 		b.WriteByte('\n')
 	}
-	dash := func(s string) string {
-		if s == "" {
-			return "—"
-		}
-		return s
-	}
-	meta("cwd", dash(r.Cwd))
-	meta("host", dash(r.Hostname))
-	meta("session", dash(r.Session))
+	meta("Path", dashIfEmpty(r.Cwd))
+	meta("Host", dashIfEmpty(r.Hostname))
+	meta("Session", dashIfEmpty(r.Session))
 	if r.Tag != "" {
-		meta("ran by", r.Tag)
+		meta("Executor", r.Tag)
 	}
 	if len(r.Tags) > 0 {
-		meta("tags", strings.Join(r.Tags, ", "))
+		meta("Tags", strings.Join(r.Tags, ", "))
 	}
-	meta("time", time.UnixMilli(r.StartMs).Local().Format("2006-01-02 15:04:05"))
+	meta("Time", time.UnixMilli(r.StartMs).Local().Format("2006-01-02 15:04:05"))
 	dur := "—"
 	if r.DurMs != nil {
 		dur = theme.Duration(*r.DurMs)
 	}
-	meta("dur", dur)
-	exit := "—"
-	if r.Exit != nil {
-		exit = strconv.Itoa(*r.Exit)
-	}
-	meta("exit", exit)
+	meta("Duration", dur)
+	meta("Exit", exitWord(r))
 
 	m.detail.SetContent(strings.TrimRight(b.String(), "\n"))
 	m.detail.SetYOffset(0)
@@ -520,6 +628,12 @@ func (m Model) statusBar(w int) string {
 		}
 		if m.executorFilter != "" {
 			pieces = append(pieces, th.Accent.Render("executor: "+m.executorFilter))
+		}
+		// A filter that drops a whole category of history has to say so. Without
+		// this the view is indistinguishable from one where no agent ever ran, and
+		// the archive looks like it lost the work.
+		if note := m.hiddenAgentsNote(); note != "" {
+			pieces = append(pieces, th.Dim.Render(note))
 		}
 
 		if m.remote.State == proto.RemoteOff &&
@@ -600,6 +714,13 @@ const (
 	kindMarker = 101
 )
 
+// rk is one display rune and the kind that colors it (an hl.Kind for normal
+// runs, or kindMatch/kindMarker).
+type rk struct {
+	r rune
+	k int
+}
+
 // commandSegments turns a command into highlighted, single-line, width-limited
 // runs, collapsing embedded newlines to a dim ⏎ marker. Returns the runs and
 // their total display width.
@@ -610,10 +731,6 @@ func commandSegments(th *theme.Theme, cmd string, q match.Query, maxCols int) (s
 	ranges := q.Ranges(cmd)
 	syn := hl.Classify(cmd)
 
-	type rk struct {
-		r rune
-		k int
-	}
 	disp := make([]rk, 0, len(cmd))
 	ri := 0
 	inRange := func(pos int) bool {
@@ -645,7 +762,36 @@ func commandSegments(th *theme.Theme, cmd string, q match.Query, maxCols int) (s
 		}
 		i += size
 	}
+	return emitRuns(th, disp, maxCols)
+}
 
+// matchSegments renders plain text with the query's matches highlighted, clipped
+// to maxCols. Unlike commandSegments it applies no syntax coloring: a prompt is
+// prose, and shell highlighting over prose paints arbitrary words as flags and
+// paths.
+func matchSegments(th *theme.Theme, s string, q match.Query, maxCols int) (segs []styledSeg, width int) {
+	if maxCols <= 0 || s == "" {
+		return nil, 0
+	}
+	ranges := q.Ranges(s)
+	disp := make([]rk, 0, len(s))
+	ri := 0
+	for i, r := range s {
+		for ri < len(ranges) && ranges[ri][1] <= i {
+			ri++
+		}
+		k := kindNorm
+		if ri < len(ranges) && ranges[ri][0] <= i {
+			k = kindMatch
+		}
+		disp = append(disp, rk{r, k})
+	}
+	return emitRuns(th, disp, maxCols)
+}
+
+// emitRuns clips a display sequence to maxCols (appending an ellipsis when it
+// had to cut) and groups adjacent same-kind runes into styled runs.
+func emitRuns(th *theme.Theme, disp []rk, maxCols int) (segs []styledSeg, width int) {
 	total := 0
 	for _, d := range disp {
 		total += runewidth.RuneWidth(d.r)

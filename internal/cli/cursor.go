@@ -7,11 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
-	"yore/internal/config"
 	"yore/internal/rec"
-	"yore/internal/redact"
 )
 
 // agentCursor is the executor tag stamped on commands captured from Cursor's
@@ -75,10 +72,7 @@ func runHookCursor() {
 		r.DurMs = in.Duration
 	}
 	// Exit status is not carried by Cursor's afterShellExecution, so it stays nil.
-	if ps, ok := loadPromptState(dir, session); ok {
-		r.PromptID = ps.ID
-		r.Prompt = ps.Text
-	}
+	stampPrompt(dir, session, &r)
 	spoolRecord(dir, r)
 }
 
@@ -100,28 +94,11 @@ func runHookCursorPrompt() {
 	if json.Unmarshal(raw, &in) != nil {
 		return
 	}
-	text := strings.TrimSpace(in.Prompt)
-	session := cursorSession(in.ConversationID)
-	if text == "" || session == "" {
-		return
+	cwd := ""
+	if len(in.WorkspaceRoots) > 0 {
+		cwd = in.WorkspaceRoots[0]
 	}
-	// The redaction gate also guards prompts: a prompt carrying a secret must
-	// not be persisted or later attached to a synced record.
-	dir := stateDir()
-	cfg, _ := config.Load(dir)
-	if filter, _ := redact.Load(dir, cfg.IgnorePatterns, cfg.IgnoreDirs); filter.Sensitive(text) {
-		return
-	}
-	ps := promptState{ID: rec.NewID(), Text: text, Ms: time.Now().UnixMilli()}
-	b, err := json.Marshal(ps)
-	if err != nil {
-		return
-	}
-	path := promptStatePath(dir, session)
-	if os.MkdirAll(filepath.Dir(path), 0o700) != nil {
-		return
-	}
-	_ = os.WriteFile(path, b, 0o600)
+	recordPrompt(stateDir(), cursorSession(in.ConversationID), agentCursor, cwd, in.Prompt)
 }
 
 // --- `yore init cursor`: install the capture hooks --------------------------

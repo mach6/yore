@@ -1,156 +1,344 @@
 package browse
 
 import (
-	"github.com/charmbracelet/bubbles/help"
-	"github.com/charmbracelet/bubbles/key"
+	"yore/internal/tui/keyhelp"
 )
 
-// keyMap is the browser's full binding set. Behavior is dispatched from
-// handleKey via msg.String() (so tests can synthesize keys directly); these
-// bindings exist to drive the bubbles/help bar and to document the map in one
-// place.
-type keyMap struct {
-	Up      key.Binding
-	Down    key.Binding
-	Page    key.Binding
-	Half    key.Binding // vim only: ctrl+u / ctrl+d half-page scroll
-	Jump    key.Binding
-	Scroll  key.Binding // left/right: horizontal scroll of the selected command
-	Focus   key.Binding
-	Search  key.Binding
-	Accept  key.Binding
-	Copy    key.Binding
-	Delete  key.Binding
-	Tag     key.Binding
-	TagAdd  key.Binding
-	Stats   key.Binding
-	Agents  key.Binding
-	Period  key.Binding // 1-5: the shared time window, in every view
-	Zoom    key.Binding // z: expand the focused pane to the whole frame
-	Devices key.Binding
-	Sync    key.Binding
-	Help    key.Binding
-	Quit    key.Binding
-	Confirm key.Binding
-	vim     bool
+// The browser's bindings, described once. Behavior is dispatched from handleKey
+// on the raw key string (so tests can synthesize keys directly); these tables are
+// what the footer and the "?" panel show, and each row carries the raw keys it
+// stands for so a test can hold the two to each other — a key that does something
+// but is described nowhere is a bug, and so is a key described but not handled.
+//
+// The tables are contextual: a view advertises the keys that do something *in
+// that view*, in the state it is in. The devices pane, for one, cannot reach the
+// global keys at all (handleDevicesKey runs before them), so it must not claim
+// them; the stats screen has nothing to zoom, so it does not offer z.
+
+// row is the terse constructor for a binding: how it is shown, what it does, and
+// the raw keys behind it.
+func row(keys, desc string, keyed ...string) keyhelp.Row {
+	return keyhelp.Row{Keys: keys, Desc: desc, Keyed: keyed}
 }
 
-// defaultKeyMap builds the binding set. In vim mode the pane-switch hint also
-// advertises h/l and a half-page (ctrl+u/ctrl+d) binding is surfaced; in emacs
-// mode the map is exactly as it has always been.
-func defaultKeyMap(vim bool) keyMap {
-	focus := key.NewBinding(key.WithKeys("tab", "shift+tab"), key.WithHelp("tab", "switch pane"))
-	if vim {
-		focus = key.NewBinding(key.WithKeys("tab", "shift+tab", "h", "l"), key.WithHelp("tab/h/l", "switch pane"))
+// agentToggleDesc says what A will do next, not what it is for: a control that
+// reads "show agents" when they are hidden tells the user both the current state
+// and the outcome of pressing it, which one static label cannot.
+func (m Model) agentToggleDesc() string {
+	if m.hideAgents {
+		return "show agent commands"
 	}
-	return keyMap{
-		Up:      key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
-		Down:    key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
-		Page:    key.NewBinding(key.WithKeys("pgup", "pgdown"), key.WithHelp("pgup/pgdn", "page")),
-		Half:    key.NewBinding(key.WithKeys("ctrl+u", "ctrl+d"), key.WithHelp("^u/^d", "half-page")),
-		Jump:    key.NewBinding(key.WithKeys("g", "G"), key.WithHelp("g/G", "top/bottom")),
-		Scroll:  key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "scroll")),
-		Focus:   focus,
-		Search:  key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),
-		Accept:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "insert")),
-		Copy:    key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "copy")),
-		Delete:  key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
-		Tag:     key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "executor filter")),
-		TagAdd:  key.NewBinding(key.WithKeys("ctrl+t"), key.WithHelp("^t", "tag row")),
-		Stats:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "stats")),
-		Agents:  key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "agents")),
-		Period:  key.NewBinding(key.WithKeys("1", "2", "3", "4", "5"), key.WithHelp("1-5", "period")),
-		Zoom:    key.NewBinding(key.WithKeys("z"), key.WithHelp("z", "zoom pane")),
-		Devices: key.NewBinding(key.WithKeys("D"), key.WithHelp("D", "devices")),
-		Sync:    key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "sync now")),
-		Help:    key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
-		Quit:    key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
-		Confirm: key.NewBinding(key.WithKeys("y", "n"), key.WithHelp("y/n", "confirm")),
-		vim:     vim,
-	}
+	return "hide agent commands"
 }
 
-// ShortHelp implements help.KeyMap: the compact one-line hint bar.
-func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Focus, k.Search, k.Accept, k.Copy, k.Delete, k.Tag, k.Period, k.Zoom, k.Stats, k.Agents, k.Help, k.Quit}
+// mouseRow describes a pointer gesture. It carries no keys, so the coverage test
+// skips it — but it belongs in the panel: the panes are resizable by drag and
+// nothing else on screen says so.
+func mouseRow(gesture, desc string) keyhelp.Row {
+	return keyhelp.Row{Keys: gesture, Desc: desc}
 }
 
-// FullHelp implements help.KeyMap: the expanded ? menu.
-func (k keyMap) FullHelp() [][]key.Binding {
-	nav := []key.Binding{k.Up, k.Down, k.Page, k.Jump, k.Scroll}
-	if k.vim {
-		nav = []key.Binding{k.Up, k.Down, k.Page, k.Half, k.Jump, k.Scroll}
-	}
-	return [][]key.Binding{
-		nav,
-		{k.Focus, k.Zoom, k.Search, k.Accept, k.Copy, k.Delete},
-		{k.Tag, k.TagAdd, k.Period, k.Stats, k.Agents},
-		{k.Devices, k.Sync, k.Help, k.Quit},
-	}
-}
+// --- the full "?" panel --------------------------------------------------
 
-// helpKeys returns the footer hint set for the active view, so the bottom line
-// advertises only the keys that actually do something here (handled in handleKey
-// and handleDevicesKey). The browse view keeps the full keyMap.
-func (m Model) helpKeys() help.KeyMap {
+// helpGroups is every binding that does something in the current view.
+func (m Model) helpGroups() []keyhelp.Group {
 	switch m.view {
 	case viewStats:
-		return statsKeys{}
-	case viewDevices:
-		return devicesKeys{}
+		return m.statsGroups()
 	case viewAgents:
-		return agentsKeys{}
+		return m.agentsGroups()
+	case viewDevices:
+		return devicesGroups()
 	default:
-		return m.keys
+		return m.browseGroups()
 	}
 }
 
-// statsKeys is the footer hint set for the stats view: s or esc returns to
-// browse, q quits (see handleKey's global keys and its viewStats branch).
-type statsKeys struct{}
+func (m Model) browseGroups() []keyhelp.Group {
+	move := []keyhelp.Row{
+		row("↑/k", "up", "up", "k"),
+		row("↓/j", "down", "down", "j"),
+		row("pgup/pgdn", "page", "pgup", "pgdown"),
+	}
+	if m.vim {
+		move = append(move, row("^u/^d", "half page", "ctrl+u", "ctrl+d"))
+	}
+	move = append(move,
+		row("g/G", "first/last", "g", "G", "home", "end"),
+		row("←/→", "scroll the long command", "left", "right"),
+	)
 
-func (statsKeys) ShortHelp() []key.Binding {
-	return []key.Binding{
-		key.NewBinding(key.WithKeys("1", "2", "3", "4", "5"), key.WithHelp("1-5", "period")),
-		key.NewBinding(key.WithKeys("s", "esc"), key.WithHelp("s/esc", "back")),
-		key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
+	panes := []keyhelp.Row{row("tab/⇧tab", "switch pane", "tab", "shift+tab")}
+	if m.vim {
+		panes = append(panes, row("h/l", "switch pane", "h", "l"))
+	}
+	panes = append(panes,
+		row("z", "zoom the pane", "z"),
+		row("esc", "unzoom", "esc"),
+		mouseRow("click", "focus a pane"),
+		mouseRow("drag", "resize panes"),
+		mouseRow("wheel", "scroll under the pointer"),
+	)
+
+	act := []keyhelp.Row{
+		row("enter", "put it on the prompt", "enter"),
+		row("y", "copy", "y"),
+		row("^t", "tag this command", "ctrl+t"),
+	}
+	if m.vim {
+		act = append(act, row("d", "delete", "d"))
+	} else {
+		act = append(act, row("d/^d", "delete", "d", "ctrl+d"))
+	}
+
+	return []keyhelp.Group{
+		{Title: "MOVE", Rows: move},
+		{Title: "PANES", Rows: panes},
+		{Title: "FIND", Rows: []keyhelp.Row{
+			row("/", "search", "/"),
+			row("A", m.agentToggleDesc(), "A"),
+			row("t", "filter by executor", "t"),
+			row("1-5", "time window", "1", "2", "3", "4", "5"),
+		}},
+		{Title: "ACT", Rows: act},
+		{Title: "GO", Rows: globalRows("")},
 	}
 }
 
-func (k statsKeys) FullHelp() [][]key.Binding { return [][]key.Binding{k.ShortHelp()} }
-
-// agentsKeys is the footer hint set for the agent explorer: pane focus, zoom,
-// period tabs; a/esc returns to browse, q quits.
-type agentsKeys struct{}
-
-func (agentsKeys) ShortHelp() []key.Binding {
-	return []key.Binding{
-		key.NewBinding(key.WithKeys("j", "k"), key.WithHelp("j/k", "move")),
-		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "switch pane")),
-		key.NewBinding(key.WithKeys("z"), key.WithHelp("z", "zoom pane")),
-		key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "scroll")),
-		key.NewBinding(key.WithKeys("1", "2", "3", "4", "5"), key.WithHelp("1-5", "period")),
-		key.NewBinding(key.WithKeys("a", "esc"), key.WithHelp("a/esc", "back")),
-		key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
+func (m Model) statsGroups() []keyhelp.Group {
+	return []keyhelp.Group{
+		{Title: "WINDOW", Rows: []keyhelp.Row{
+			row("1-5", "time window", "1", "2", "3", "4", "5"),
+		}},
+		{Title: "GO", Rows: append(
+			[]keyhelp.Row{row("s/esc", "back to browsing", "esc")},
+			globalRows("s")...,
+		)},
 	}
 }
 
-func (k agentsKeys) FullHelp() [][]key.Binding { return [][]key.Binding{k.ShortHelp()} }
-
-// devicesKeys is the footer hint set for the devices view (see handleDevicesKey:
-// a/x act, r refetches, j/k move; esc/q/D return to browse, ctrl+c quits — q
-// does NOT quit here, so the hint must not claim it does).
-type devicesKeys struct{}
-
-func (devicesKeys) ShortHelp() []key.Binding {
-	return []key.Binding{
-		key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "approve")),
-		key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "revoke")),
-		key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
-		key.NewBinding(key.WithKeys("j", "k"), key.WithHelp("j/k", "move")),
-		key.NewBinding(key.WithKeys("esc", "q"), key.WithHelp("esc/q", "back")),
-		key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("^c", "quit")),
+func (m Model) agentsGroups() []keyhelp.Group {
+	return []keyhelp.Group{
+		{Title: "MOVE", Rows: []keyhelp.Row{
+			row("↑/k", "up", "up", "k"),
+			row("↓/j", "down", "down", "j"),
+			row("pgup/pgdn", "page", "pgup", "pgdown"),
+			row("g/G", "first/last", "g", "G", "home", "end"),
+			row("←/→", "scroll the long command", "left", "right"),
+		}},
+		{Title: "PANES", Rows: []keyhelp.Row{
+			row("tab/⇧tab", "switch pane", "tab", "shift+tab"),
+			row("z", "zoom the pane", "z"),
+			mouseRow("click", "focus a pane"),
+			mouseRow("drag", "resize panes"),
+			mouseRow("wheel", "scroll under the pointer"),
+		}},
+		{Title: "FIND", Rows: []keyhelp.Row{
+			row("/", "filter this pane's list", "/"),
+			row("1-5", "time window", "1", "2", "3", "4", "5"),
+		}},
+		// Esc backs out one visible thing at a time. Spelling the order out is
+		// the only way the key is predictable in a view that can be zoomed and
+		// filtered at once.
+		{Title: "GO", Rows: append(
+			[]keyhelp.Row{row("esc", "unzoom, then clear the filter, then back", "esc")},
+			globalRows("a")...,
+		)},
 	}
 }
 
-func (k devicesKeys) FullHelp() [][]key.Binding { return [][]key.Binding{k.ShortHelp()} }
+// devicesGroups is the devices pane, which owns its keys outright: the global
+// switch never runs here, so nothing from it may be advertised — and q goes back
+// rather than quitting, which is the one place the browser's q does not quit.
+func devicesGroups() []keyhelp.Group {
+	return []keyhelp.Group{
+		{Title: "MOVE", Rows: []keyhelp.Row{
+			row("↑/k", "up", "up", "k"),
+			row("↓/j", "down", "down", "j"),
+			row("g/G", "first/last", "g", "G"),
+		}},
+		{Title: "ACT", Rows: []keyhelp.Row{
+			row("a", "approve a pending device", "a"),
+			row("x", "revoke (asks first)", "x"),
+			row("r", "refetch the list", "r"),
+		}},
+		{Title: "GO", Rows: []keyhelp.Row{
+			row("esc/q/D", "back to browsing", "esc", "q", "D"),
+			row("?", "these keys", "?"),
+			row("^c", "quit", "ctrl+c"),
+		}},
+	}
+}
+
+// globalRows are the keys handled for every view that reaches the global switch
+// — browse, stats and the agent explorer. `except` drops the one that would name
+// the view you are already in, since there it reads as "back", listed separately.
+func globalRows(except string) []keyhelp.Row {
+	all := []keyhelp.Row{
+		row("s", "stats", "s"),
+		row("a", "agents", "a"),
+		row("D", "devices", "D"),
+		row("S", "sync now", "S"),
+		row("?", "these keys", "?"),
+		row("q", "quit", "q", "ctrl+c"),
+	}
+	out := make([]keyhelp.Row, 0, len(all))
+	for _, r := range all {
+		if r.Keys == except {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// --- the terse footer ----------------------------------------------------
+
+// footerRows is the one-line hint bar: a handful of keys chosen for the state
+// the browser is actually in, ending in the pointer to the rest. Anything longer
+// is a help panel pretending to be a footer.
+func (m Model) footerRows() []keyhelp.Row {
+	switch {
+	case m.confirmDelete:
+		return confirmDeleteRows()
+	case m.searching:
+		return searchingRows()
+	case m.afiltering:
+		return agentFilterRows(m.afilterPane)
+	case m.tagging:
+		return taggingRows()
+	case m.showHelp:
+		return m.helpOpenRows()
+	case m.view == viewDevices && m.devConfirm != "":
+		return confirmRevokeRows()
+	}
+
+	switch m.view {
+	case viewStats:
+		return []keyhelp.Row{
+			row("1-5", "window", "1", "2", "3", "4", "5"),
+			row("a", "agents", "a"),
+			row("s/esc", "back", "esc"),
+			row("?", "keys", "?"),
+			row("q", "quit", "q"),
+		}
+	case viewAgents:
+		rows := []keyhelp.Row{
+			row("↑↓", "move", "up", "down"),
+			row("tab", "pane", "tab"),
+			row("/", "filter "+filterNoun(m.filterTarget()), "/"),
+			row("z", "zoom", "z"),
+			row("1-5", "window", "1", "2", "3", "4", "5"),
+		}
+		// With a filter up, esc means "drop it" before it means "leave" — say the
+		// one that will actually happen next.
+		if m.filterFor(m.filterTarget()) != "" {
+			rows = append(rows, row("esc", "clear filter", "esc"))
+		} else {
+			rows = append(rows, row("a/esc", "back", "esc"))
+		}
+		return append(rows, row("?", "keys", "?"), row("q", "quit", "q"))
+	case viewDevices:
+		return []keyhelp.Row{
+			row("a", "approve", "a"),
+			row("x", "revoke", "x"),
+			row("r", "refresh", "r"),
+			row("esc", "back", "esc"),
+			row("?", "keys", "?"),
+			row("^c", "quit", "ctrl+c"),
+		}
+	}
+
+	// Browse: the first hints follow focus, because the same arrow keys mean
+	// three different things across the three panes.
+	var rows []keyhelp.Row
+	switch m.focus {
+	case focusHosts:
+		rows = []keyhelp.Row{
+			row("↑↓", "host", "up", "down"),
+			row("tab", "pane", "tab"),
+			row("/", "search", "/"),
+		}
+	case focusDetail:
+		rows = []keyhelp.Row{
+			row("↑↓", "scroll", "up", "down"),
+			row("tab", "pane", "tab"),
+			row("/", "search", "/"),
+		}
+	default:
+		rows = []keyhelp.Row{
+			row("↑↓", "move", "up", "down"),
+			row("enter", "prompt", "enter"),
+			row("y", "copy", "y"),
+			row("/", "search", "/"),
+			row("tab", "pane", "tab"),
+		}
+	}
+	// Advertise the agent filter exactly when it is holding something back —
+	// which is exactly when someone might be wondering where a command they
+	// remember running went. With nothing hidden there is nothing to explain, and
+	// "?" still carries the key.
+	if m.hiddenAgentsNote() != "" {
+		rows = append(rows, row("A", "show agents", "A"))
+	}
+	if m.zoom {
+		rows = append(rows, row("z/esc", "unzoom", "z", "esc"))
+	}
+	return append(rows, row("?", "keys", "?"), row("q", "quit", "q"))
+}
+
+// The modal states. Each swallows nearly all input, so its footer lists what is
+// left rather than the keys the view underneath would have offered.
+
+func confirmDeleteRows() []keyhelp.Row {
+	return []keyhelp.Row{
+		row("y", "delete", "y", "Y"),
+		row("n/esc", "cancel", "n", "N", "esc"),
+	}
+}
+
+func confirmRevokeRows() []keyhelp.Row {
+	return []keyhelp.Row{
+		row("y", "revoke", "y", "Y"),
+		// Deliberately not a binding: anything that is not y cancels, which is the
+		// safe default for the one action here that rotates keys.
+		{Keys: "any other key", Desc: "cancel"},
+	}
+}
+
+func searchingRows() []keyhelp.Row {
+	return []keyhelp.Row{
+		{Keys: "type", Desc: "to filter"},
+		row("enter/esc", "done", "enter", "esc"),
+		row("^c", "quit", "ctrl+c"),
+	}
+}
+
+// agentFilterRows is the footer while the explorer's filter box has focus. It
+// names the list being narrowed, because the box is on the header line and the
+// two panes it can aim at are both on screen.
+func agentFilterRows(p agentPane) []keyhelp.Row {
+	return []keyhelp.Row{
+		{Keys: "type", Desc: "to filter " + filterNoun(p)},
+		row("enter/esc", "done", "enter", "esc"),
+		row("^c", "quit", "ctrl+c"),
+	}
+}
+
+func taggingRows() []keyhelp.Row {
+	return []keyhelp.Row{
+		row("enter", "save the tag", "enter"),
+		row("esc", "cancel", "esc"),
+	}
+}
+
+// helpOpenRows offers a scroll hint only when the list actually overflows the
+// pane — on a wide terminal it never does, and a hint for a key that would move
+// nothing is worse than no hint.
+func (m Model) helpOpenRows() []keyhelp.Row {
+	var rows []keyhelp.Row
+	if m.helpMaxTop() > 0 {
+		rows = append(rows, row("↑↓", "scroll", "up", "down", "k", "j"))
+	}
+	return append(rows, row("esc/?", "close", "esc", "?", "q"))
+}

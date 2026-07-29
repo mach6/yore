@@ -7,6 +7,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"yore/internal/config"
+	"yore/internal/rec"
+	"yore/internal/redact"
 )
 
 func TestRunHookOpenCodeCaptures(t *testing.T) {
@@ -38,9 +40,12 @@ func TestOpenCodePromptTracing(t *testing.T) {
 	feedStdin(t, `{"session_id":"s2","command":"go build","cwd":"/w","exit":0}`, runHookOpenCode)
 
 	rows := spooledRecords(t, dir)
-	require.Len(t, rows, 1)
-	assert.NotEmpty(t, rows[0].PromptID)
+	require.Len(t, rows, 2, "the prompt record plus the command it caused")
+	assert.Equal(t, rec.TypePrompt, rows[0].Type)
 	assert.Equal(t, "add caching", rows[0].Prompt)
+	assert.Equal(t, agentOpenCode, rows[0].Tag)
+	assert.Equal(t, rows[0].ID, rows[1].PromptID, "the command references the prompt record")
+	assert.Empty(t, rows[1].Prompt, "text lives on the prompt record only")
 }
 
 func TestOpenCodePromptRedacts(t *testing.T) {
@@ -48,8 +53,11 @@ func TestOpenCodePromptRedacts(t *testing.T) {
 	t.Setenv("YORE_DIR", dir)
 	require.NoError(t, config.EnsureDir(dir))
 	feedStdin(t, `{"session_id":"s3","prompt":"use export DB_PASSWORD=hunter2"}`, runHookOpenCodePrompt)
-	_, ok := loadPromptState(dir, "opencode-s3")
-	assert.False(t, ok, "a secret-bearing prompt is not persisted")
+
+	rows := spooledRecords(t, dir)
+	require.Len(t, rows, 1, "the prompt is recorded with the credential masked")
+	assert.NotContains(t, rows[0].Prompt, "hunter2", "the secret is not persisted")
+	assert.Contains(t, rows[0].Prompt, redact.Mark("generic-token-assign"))
 }
 
 func TestRunHookOpenCodeIgnoresEmpty(t *testing.T) {

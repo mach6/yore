@@ -1,9 +1,11 @@
 package redact
 
 import (
+	"os"
 	"regexp"
 	"strings"
 	"testing"
+	"yore/internal/config"
 
 	"github.com/stretchr/testify/require"
 )
@@ -70,6 +72,24 @@ func TestTruePositives(t *testing.T) {
 		{"openssl passin", `openssl rsa -passin pass:s3cret -in enc.pem -out plain.pem`, "openssl-passin"},
 		{"openssl passout", `openssl genrsa -passout pass:s3cret -out key.pem 2048`, "openssl-passin"},
 		{"gpg passphrase", `gpg --batch --passphrase hunter2 -c secret.txt`, "gpg-passphrase"},
+
+		// Modern key formats. These are shape rules with no assignment context,
+		// so they hold in an agent PROMPT as much as in a command line.
+		{"google api key", `curl "https://maps.googleapis.com/maps/api/js?key=AIzaSyD-1234567890abcdefghijklmnopqrstu"`, "google-api-key"},
+		{"stripe live key", `stripe listen --api-key sk_live_51Abc0000000000000000000`, "stripe-key"},
+		{"stripe restricted key", `export STRIPE=rk_test_51Abc0000000000000000000`, "stripe-key"},
+		{"anthropic style key", `export X=sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789`, "llm-api-key"},
+		{"huggingface token", `huggingface-cli login --token hf_AbCdEfGhIjKlMnOpQrStUvWxYz01234567`, "huggingface-token"},
+		{"npm token", `echo npm_AbCdEfGhIjKlMnOpQrStUvWxYz01234567`, "npm-token"},
+		{"pypi token", `twine upload -p pypi-AgEIcHlwaS5vcmcAAAAAAAAAAAAAAAAAAAAA dist/*`, "pypi-token"},
+		{"sendgrid key", `echo SG.AbCdEfGhIjKlMnOp.QrStUvWxYz0123456789abcd`, "sendgrid-key"},
+
+		// Prose. The gate guards agent prompts too, where a secret is stated in a
+		// sentence rather than assigned.
+		{"prose api key is", `the api key is AbCdEfGhIjKlMnOpQrStUv, use it for the staging call`, "secret-prose-assign"},
+		{"prose password colon space", `deploy with password: hunter2hunter2hunter2`, "secret-prose-assign"},
+		{"prose token equals space", `set the token = AbCdEfGh0123456789XyZ`, "secret-prose-assign"},
+		{"prose passphrase is", `my passphrase is correct-horse-battery-staple`, "secret-prose-assign"},
 	}
 
 	for _, tc := range cases {
@@ -115,6 +135,20 @@ func TestFalsePositives(t *testing.T) {
 		{"openssl passin from file", `openssl rsa -passin file:pw.txt -in enc.pem`},
 		{"curl user-agent flag", `curl --user-agent mybot https://api.example.com/tokens`},
 		{"mysql port capital P attached", `mysql -uroot -P3306 -h db`},
+
+		// The new shape rules must not fire on ordinary text that merely starts
+		// the same way. Length floors are what buys this.
+		{"branch named sk-something", `git checkout -b sk-refactor-the-parser`},
+		{"short AIza-like string", `echo AIzaShort`},
+		{"sk_live prefix without a key", `grep -r sk_live_ src/`},
+
+		// Prose that mentions a secret without stating one. The value has to look
+		// like a key (16+ key characters) for the prose rule to fire.
+		{"password is required", `echo "the password is required for this step"`},
+		{"token is missing", `git commit -m "fix: token is missing from the header"`},
+		{"api key discussion", `write docs explaining how the api key is issued`},
+		{"grep for a password line", `grep "password:" config.yml`},
+		{"vault password file flag", `ansible-playbook --vault-password-file ~/.vault site.yml`},
 	}
 
 	for _, tc := range cases {
@@ -267,7 +301,7 @@ func TestHintGating(t *testing.T) {
 	// Contains "AKIA"-ish but wrong shape (too short) -> no match.
 	require.False(t, f.Sensitive("echo AKIA123"), "short AKIA-like string must not match aws-access-key")
 	// A real regexp sanity: our built-in count is what we expect (catch drift).
-	require.Len(t, builtins, 17, "expected 17 built-in rules")
+	require.Len(t, builtins, 25, "expected 25 built-in rules")
 }
 
 // Sanity: ensure our patterns are valid Go regexp (defense in depth beyond
@@ -277,4 +311,165 @@ func TestSpecsAreValidRegexp(t *testing.T) {
 		_, err := regexp.Compile(r.re.String())
 		require.NoError(t, err, "rule %q regexp invalid", r.name)
 	}
+}
+
+// TestMissingBuiltins backs the `yore doctor` warning: redact.yml is
+// authoritative once written and is never overwritten, so a file seeded before
+// a detector shipped keeps missing it — silently, since an absent rule looks
+// exactly like clean history.
+func TestMissingBuiltins(t *testing.T) {
+	t.Run("stale file reports what it lacks", func(t *testing.T) {
+		dir := t.TempDir()
+		writeRules(t, dir, []Spec{{Name: "pem-block", Pattern: `-----BEGIN`}})
+
+		missing := MissingBuiltins(dir)
+		require.NotEmpty(t, missing)
+		require.Contains(t, missing, "secret-prose-assign")
+		require.NotContains(t, missing, "pem-block", "a rule the file defines is not missing")
+	})
+
+	t.Run("a current file reports nothing", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, Seed(dir))
+		require.Empty(t, MissingBuiltins(dir), "a freshly seeded file has every built-in")
+	})
+
+	t.Run("no file reports nothing", func(t *testing.T) {
+		// An absent or unusable file already falls back to the whole built-in
+		// table, so there is nothing to warn about.
+		require.Empty(t, MissingBuiltins(t.TempDir()))
+	})
+
+	t.Run("a rule deliberately removed is reported, not restored", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, Seed(dir))
+		specs := DefaultSpecs()
+		writeRules(t, dir, specs[1:]) // drop pem-block
+
+		require.Equal(t, []string{"pem-block"}, MissingBuiltins(dir))
+		f, _ := Load(dir, nil, nil)
+		require.False(t, f.Sensitive(`echo "-----BEGIN RSA PRIVATE KEY-----"`),
+			"the user's file stays authoritative: a removed rule is not silently re-added")
+	})
+}
+
+// writeRules replaces dir's redact.yml with exactly these specs.
+func writeRules(t *testing.T, dir string, specs []Spec) {
+	t.Helper()
+	body, err := marshalSpecs(specs)
+	require.NoError(t, err, "marshalSpecs")
+	require.NoError(t, os.WriteFile(config.RedactPath(dir), body, 0o600), "write redact.yml")
+}
+
+// TestRedactKeepsTheCommand is the behaviour that replaced dropping: a
+// secret-bearing command survives, minus the secret, with a marker saying which
+// rule took it. The commands most worth remembering are often the ones with a
+// credential in them, so losing the whole line lost real history.
+func TestRedactKeepsTheCommand(t *testing.T) {
+	f := mustFilter(t, nil, nil)
+
+	cases := []struct {
+		name   string
+		cmd    string
+		want   string
+		secret string // must NOT survive
+	}{
+		{
+			name: "env assignment keeps the variable name",
+			cmd:  `export DB_PASSWORD=hunter2sixseven`,
+			want: `export DB_PASSWORD=` + Mark("generic-token-assign"),
+		},
+		{
+			name: "tool flags keep the whole invocation",
+			cmd:  `mysql -uroot -ps3cretvalue appdb`,
+			want: `mysql -uroot -p` + Mark("mysql-password") + ` appdb`,
+		},
+		{
+			name: "curl keeps the url and the username",
+			cmd:  `curl -u admin:hunter2 https://api.example.com/v1/things`,
+			want: `curl -u admin:` + Mark("curl-userpass") + ` https://api.example.com/v1/things`,
+		},
+		{
+			name: "a url keeps host and path, loses the password",
+			cmd:  `git clone https://user:s3cret@host.example.com/path.git`,
+			want: `git clone https://user:` + Mark("url-userinfo") + `@host.example.com/path.git`,
+		},
+		{
+			name: "a whole-value shape is replaced entirely",
+			cmd:  `aws s3 ls --profile AKIAIOSFODNN7EXAMPLE`,
+			want: `aws s3 ls --profile ` + Mark("aws-access-key"),
+		},
+		{
+			name: "prose keeps the sentence around the secret",
+			cmd:  `the api key is AbCdEfGhIjKlMnOpQrStUv, use it for staging`,
+			want: `the api key is ` + Mark("secret-prose-assign") + `, use it for staging`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, fired := f.Redact(tc.cmd)
+			require.Equal(t, tc.want, got)
+			require.NotEmpty(t, fired, "a redaction must name the rules that fired")
+		})
+	}
+}
+
+// TestRedactLeavesCleanTextAlone: no match, no change, no allocation of a
+// rule list. A false positive here corrupts history the user wanted.
+func TestRedactLeavesCleanTextAlone(t *testing.T) {
+	f := mustFilter(t, nil, nil)
+	for _, cmd := range []string{
+		`git commit -m "fix password reset email"`,
+		`grep -r token docs/`,
+		`kubectl get pods -n prod`,
+		``,
+	} {
+		got, fired := f.Redact(cmd)
+		require.Equal(t, cmd, got, "clean text must pass through byte for byte")
+		require.Empty(t, fired)
+	}
+}
+
+// TestRedactAllOccurrences: two secrets on one line both go.
+func TestRedactAllOccurrences(t *testing.T) {
+	f := mustFilter(t, nil, nil)
+	got, fired := f.Redact(`echo AKIAIOSFODNN7EXAMPLE && echo ASIAY34FZKBOKMUTVV7A`)
+	require.NotContains(t, got, "AKIAIOSFODNN7EXAMPLE")
+	require.NotContains(t, got, "ASIAY34FZKBOKMUTVV7A")
+	require.Equal(t, []string{"aws-access-key"}, fired, "one rule, reported once")
+	require.Contains(t, got, "&& echo", "everything between them survives")
+}
+
+// TestRedactOverlappingRulesDoNotNest is why spans are collected against the
+// original text: `export DB_PASSWORD=…` is caught by two rules, and redacting
+// them in sequence would let the second match the marker the first inserted.
+func TestRedactOverlappingRulesDoNotNest(t *testing.T) {
+	f := mustFilter(t, nil, nil)
+	got, _ := f.Redact(`export DB_PASSWORD=hunter2sixseven`)
+	require.Equal(t, 1, strings.Count(got, "⟪redacted:"), "exactly one marker, never a nested one")
+	require.Equal(t, `export DB_PASSWORD=`+Mark("generic-token-assign"), got)
+}
+
+// TestRedactIsIdempotent: re-redacting already-redacted text must not stack
+// markers — records pass the gate again on import and on the daemon's ingest.
+func TestRedactIsIdempotent(t *testing.T) {
+	f := mustFilter(t, nil, nil)
+	once, _ := f.Redact(`export DB_PASSWORD=hunter2sixseven`)
+	twice, fired := f.Redact(once)
+	require.Equal(t, once, twice, "a second pass must change nothing")
+	require.Empty(t, fired)
+}
+
+// TestIgnoredIsSeparateFromRedaction: the user's own ignore_patterns still mean
+// "do not record this", which is a different instruction from "hide the secret".
+func TestIgnoredIsSeparateFromRedaction(t *testing.T) {
+	f := mustFilter(t, []string{`^kubectl .*prod`}, nil)
+
+	require.True(t, f.Ignored(`kubectl get pods -n prod`), "a user pattern drops the record")
+	require.False(t, f.Ignored(`export DB_PASSWORD=hunter2sixseven`), "a secret is not an ignore")
+
+	// And an ignore pattern must not leak into redaction: it drops, never masks.
+	got, fired := f.Redact(`kubectl get pods -n prod`)
+	require.Equal(t, `kubectl get pods -n prod`, got, "ignore_patterns do not redact")
+	require.Empty(t, fired)
 }

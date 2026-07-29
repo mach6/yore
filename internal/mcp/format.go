@@ -212,9 +212,33 @@ type promptAgg struct {
 
 // groupPrompts aggregates agent commands by PromptID, newest-active first. Rows
 // with no PromptID are skipped. executor/session/dir, when non-empty, filter.
-func groupPrompts(rows []rec.Record, executor, session, dir string) []*promptAgg {
+//
+// prompts are the prompt records themselves, seeded first so a prompt that
+// triggered no commands is still reported (with a count of zero) rather than
+// being invisible for having caused nothing. A directory filter drops them: a
+// prompt is not tied to a directory the way a command is.
+func groupPrompts(rows, prompts []rec.Record, executor, session, dir string) []*promptAgg {
 	by := map[string]*promptAgg{}
 	order := []string{}
+	if dir == "" {
+		for i := range prompts {
+			r := prompts[i]
+			if r.ID == "" || r.Deleted() {
+				continue
+			}
+			if executor != "" && r.Tag != executor {
+				continue
+			}
+			if session != "" && r.Session != session {
+				continue
+			}
+			by[r.ID] = &promptAgg{
+				id: r.ID, text: r.Prompt, executor: r.Tag, session: r.Session,
+				firstMs: r.StartMs, lastMs: r.StartMs,
+			}
+			order = append(order, r.ID)
+		}
+	}
 	for i := range rows {
 		r := rows[i]
 		if r.PromptID == "" || r.Deleted() {
@@ -237,6 +261,9 @@ func groupPrompts(rows []rec.Record, executor, session, dir string) []*promptAgg
 		}
 		if a.text == "" {
 			a.text = r.Prompt
+		}
+		if a.executor == "" {
+			a.executor = r.Tag
 		}
 		a.count++
 		a.cmds = append(a.cmds, r)

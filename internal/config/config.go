@@ -73,6 +73,25 @@ type Config struct {
 	// cycle per PushDebounce for the whole run — that's why it's opt-in.)
 	PushDebounce string `toml:"push_debounce,omitempty"` // EXPERIMENTAL; default off
 
+	// SyncPrompts controls whether agent prompt records leave this machine. The
+	// server only ever holds ciphertext either way, so this is not about trusting
+	// the server — it is about blast radius: a prompt is far more likely than a
+	// command to carry pasted secrets, customer data, or context you would rather
+	// not have decryptable by every device in the group. Off keeps prompts
+	// readable on the machine that recorded them and nowhere else; the commands
+	// they caused still sync, and still show as agent commands, they just have no
+	// prompt text on other hosts. Defaults true — so no omitempty: an explicit
+	// false must survive a Save/Load round-trip. Not retroactive: prompts already
+	// pushed stay on the server.
+	SyncPrompts bool `toml:"sync_prompts"` // default true
+
+	// RemoteKeep caps how many of each OTHER host's records this machine caches
+	// and holds in RAM — the newest RemoteKeep per host. Remote history is
+	// unbounded over years, and all of it decrypted in a background daemon is
+	// not; this is the bound. Searching a remote host reaches back this far.
+	// 0 means unlimited (the old behaviour; a deliberate choice, not a default).
+	RemoteKeep int `toml:"remote_keep,omitempty"` // default 50000
+
 	// AutoDeepen lets a shallow (local) search that finds little transparently
 	// extend to all hosts when the server is reachable. Defaults true — so it has
 	// no omitempty: an explicit false must survive a Save/Load round-trip.
@@ -89,6 +108,19 @@ type Config struct {
 	// Ctrl-R), Atuin-style. Off by default because it changes a very
 	// muscle-memoried key. The shell integration reads it via `yore get-config`.
 	BindUpArrow bool `toml:"bind_up_arrow,omitempty"` // default false
+
+	// HideAgentCommands keeps agent-run commands out of the interactive search
+	// UIs, where one prompt's forty tool invocations otherwise bury a morning of
+	// the user's own work. The agent explorer (`a`) is where that history
+	// belongs — grouped under the prompt that caused it rather than interleaved.
+	// Default true; `A` in the browser and `⌥a` in the Ctrl-R panel toggle it for
+	// the session, and both always say how many rows the filter is holding back.
+	//
+	// It governs only the interactive UIs. `--headless` never hides anything: it
+	// feeds scripts, which want the whole archive and have no status line to be
+	// told what was withheld. An explicit false must round-trip, hence no
+	// omitempty.
+	HideAgentCommands bool `toml:"hide_agent_commands"` // default true
 
 	// Keymap selects the interactive key style for the TUIs (Atuin keymap_mode
 	// parity): "emacs" (default, also the empty value) or "vim". Vim mode adds
@@ -158,9 +190,24 @@ type Config struct {
 // their typed accessors instead (single source of truth for those).
 func Defaults() Config {
 	return Config{
-		AutoDeepen:    true,
-		EnterExecutes: true,
-		LogSilent:     true,
+		AutoDeepen:        true,
+		EnterExecutes:     true,
+		LogSilent:         true,
+		SyncPrompts:       true,
+		HideAgentCommands: true,
+	}
+}
+
+// RemoteKeepN is how many of each remote host's records to cache and hold in
+// RAM, newest first. Default 50000; an explicit negative value means unlimited.
+func (c Config) RemoteKeepN() int {
+	switch {
+	case c.RemoteKeep > 0:
+		return c.RemoteKeep
+	case c.RemoteKeep < 0:
+		return 0 // unlimited
+	default:
+		return 50000
 	}
 }
 

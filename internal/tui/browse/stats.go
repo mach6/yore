@@ -32,9 +32,16 @@ const (
 // (level 1..8).
 var sparkBlocks = []rune("▁▂▃▄▅▆▇█")
 
-// heatShades are the intensity glyphs for the contribution heatmap: index 0 is
-// "no activity", 1..4 are increasing shading.
-var heatShades = []rune("·░▒▓█")
+// The contribution heatmap draws one glyph, not a density ramp: intensity is
+// carried by color (theme.Data), and a day with nothing at all by a dim dot.
+//
+// ░▒▓ used to carry the levels, and they are the least portable glyphs in the
+// box-drawing set — plenty of terminal fonts render ▒ and ▓ close enough to be
+// indistinguishable, which silently collapsed two of the four levels.
+const (
+	heatEmpty = '·'
+	heatFill  = '█'
+)
 
 // statPeriods are the selectable time windows (keys 1..5), shared by every view
 // — the browse table, the agent explorer, and the stats screen all filter on the
@@ -367,8 +374,17 @@ func (m Model) sampleNote(s *statsData) string {
 	return fmt.Sprintf("newest %d commands · reaches back %s", statsLimit, reach)
 }
 
-// renderStats draws the full stats screen in exactly h lines, no wider than w:
-// a KPI header, up to four ranked columns, then the daily + hourly histograms.
+// minColumnsH is the shortest ranked-column block worth drawing: a heading plus
+// three entries. The charts below never eat into it.
+const minColumnsH = 4
+
+// renderStats draws the full stats screen in exactly h lines, no wider than w: a
+// KPI header, the ranked columns, then the charts.
+//
+// Charts are fitted whole or not at all. Each is offered the rows it needs and
+// declines if taking them would starve the ranked columns — so a short terminal
+// loses a chart cleanly instead of getting one with its axis sliced off, which
+// is what happened when the block was assembled first and trimmed to fit after.
 func (m Model) renderStats(w, h int) string {
 	th := m.th
 	if m.stats == nil {
@@ -379,19 +395,31 @@ func (m Model) renderStats(w, h int) string {
 	out := make([]string, 0, h)
 	out = append(out, m.kpiHeader(s, w), "")
 
-	// The heatmap + histograms occupy the bottom; columns fill what remains above
-	// them. The heatmap (9 lines) is shown only when the pane is tall enough to
-	// still leave room for the ranked columns.
-	bottom := m.histograms(s, w)
-	if h >= 26 {
-		bottom = append(m.renderHeatmap(s, w), bottom...)
+	// Spendable on charts, in the order they are willing to be dropped: the hourly
+	// distribution is the most useful per row it costs, the heatmap the least — but
+	// the heatmap has a compact form, so it is offered that before being dropped.
+	budget := h - len(out) - minColumnsH
+	take := func(block []string) []string {
+		if len(block) == 0 || len(block) > budget {
+			return nil
+		}
+		budget -= len(block)
+		return block
 	}
-	bodyH := h - len(out) - len(bottom)
-	if bodyH < 3 {
-		bodyH = 3
+	hourly := take(m.hourlyChart(s, w))
+	daily := take(m.dailyChart(s, w))
+	heat := take(m.heatmapChart(s, w, false))
+	if heat == nil {
+		heat = take(m.heatmapChart(s, w, true))
 	}
 
-	out = append(out, m.statColumns(s, w, bodyH)...)
+	// Display order is oldest-arc-first, whatever the fitting order was.
+	bottom := make([]string, 0, len(heat)+len(daily)+len(hourly))
+	bottom = append(bottom, heat...)
+	bottom = append(bottom, daily...)
+	bottom = append(bottom, hourly...)
+
+	out = append(out, m.statColumns(s, w, h-len(out)-len(bottom))...)
 	out = append(out, bottom...)
 	return padLines(out, w, h)
 }
@@ -476,9 +504,9 @@ func (m Model) statColumns(s *statsData, w, bodyH int) []string {
 // statColumn renders a titled list column of name/count pairs, each line padded
 // to exactly colW columns.
 func statColumn(th *theme.Theme, title string, items []cmdCount, colW, rows int) []string {
-	lines := []string{th.Title.Render(fitPlain(title, colW))}
+	lines := []string{th.Section.Render(fitPlain(title, colW))}
 	if len(items) == 0 {
-		lines = append(lines, th.Dim.Render(fitPlain("  (none)", colW)))
+		lines = append(lines, th.Dim.Render(fitPlain("  —", colW)))
 		return lines
 	}
 	maxN := 0
@@ -522,8 +550,9 @@ func statLine(th *theme.Theme, it cmdCount, maxN, colW int) string {
 		if maxN > 0 {
 			filled = it.n * barW / maxN
 		}
+		// A gauge is proportional by length, so one step of the ramp, not a scale.
 		bar := strings.Repeat("▬", filled) + strings.Repeat(" ", barW-filled)
-		b.WriteString(" " + th.Accent.Render(bar))
+		b.WriteString(" " + th.Data(theme.DataLevels-1).Render(bar))
 		used += 1 + barW
 	}
 
@@ -535,19 +564,23 @@ func statLine(th *theme.Theme, it cmdCount, maxN, colW int) string {
 	return b.String()
 }
 
-// histograms renders the daily trend and the hourly distribution. Both span the
-// full width: the daily trend by showing as many days as there are columns, the
-// hourly by widening each of its fixed 24 buckets to fill them.
-func (m Model) histograms(s *statsData, w int) []string {
-	th := m.th
-	pad := strings.Repeat(" ", heatLabelW) // align both charts under the heatmap
-	inner := w - heatLabelW
+// chartGutter is the left gutter every chart indents by, so the daily trend, the
+// hourly histogram and the heatmap all start in the same column — the heatmap's
+// weekday labels are what set it.
+func chartGutter(w int) (pad string, inner int) {
+	inner = w - heatLabelW
 	if inner < 8 {
-		pad, inner = "", w
+		return "", w
 	}
+	return strings.Repeat(" ", heatLabelW), inner
+}
 
-	// Daily trend: one column per day, newest at the right, as far back as the
-	// terminal is wide.
+// dailyChart is the daily trend: one column per day, newest at the right, as far
+// back as the terminal is wide.
+func (m Model) dailyChart(s *statsData, w int) []string {
+	th := m.th
+	pad, inner := chartGutter(w)
+
 	days := inner
 	if days > maxSparkDays {
 		days = maxSparkDays
@@ -564,12 +597,21 @@ func (m Model) histograms(s *statsData, w int) []string {
 
 	return []string{
 		"",
-		th.Title.Render(fitPlain(fmt.Sprintf("Commands per day (last %d days)", days), w)),
+		th.Section.Render(fitPlain(fmt.Sprintf("Commands per day (last %d days)", days), w)),
 		pad + renderBars(th, spark, sparkMax, inner),
 		th.Dim.Render(fitPlain(
 			fmt.Sprintf("%s%d commands over the window · peak %d/day", pad, total, sparkMax), w)),
+	}
+}
+
+// hourlyChart is the hour-of-day distribution: 24 fixed buckets widened to fill
+// the terminal.
+func (m Model) hourlyChart(s *statsData, w int) []string {
+	th := m.th
+	pad, inner := chartGutter(w)
+	return []string{
 		"",
-		th.Title.Render(fitPlain(
+		th.Section.Render(fitPlain(
 			"By hour of day · "+plural(s.total, "command")+" in "+s.periodLabel, w)),
 		pad + hourBars(th, s.hourly, s.hourMax, inner, m.hoursElapsed()),
 		pad + th.Dim.Render(hourAxis(inner)),
@@ -603,7 +645,7 @@ func hourBars(th *theme.Theme, hourly [24]int, maxN, w, live int) string {
 		case maxN <= 0 || hourly[h] <= 0:
 			b.WriteString(th.Dim.Render(strings.Repeat("·", cw)))
 		default:
-			b.WriteString(th.Accent.Render(strings.Repeat(string(sparkBlocks[sparkLevel(hourly[h], maxN)]), cw)))
+			b.WriteString(sparkCell(th, hourly[h], maxN, cw))
 		}
 	}
 	return b.String()
@@ -663,18 +705,57 @@ func heatWeeks(w int) int {
 	return n
 }
 
-// renderHeatmap draws the contribution calendar: 7 weekday rows × as many week
-// columns as the terminal affords, each cell shaded by activity intensity (a
-// GitHub-style graph) and heatCellW columns wide so it reads as a square. A
-// month ruler runs underneath — without it a year of unlabelled columns says
-// nothing about when.
-func (m Model) renderHeatmap(s *statsData, w int) []string {
+// heatCell renders one heatmap cell: a solid block colored by intensity, or a
+// dim dot for a day with nothing on it. "None" and "a little" must not look
+// alike, so zero gets its own glyph rather than the faintest step of the ramp.
+func heatCell(th *theme.Theme, cnt, peak int) string {
+	lvl := heatLevel(cnt, peak)
+	if lvl == 0 {
+		return th.Dim.Render(strings.Repeat(string(heatEmpty), heatCellW))
+	}
+	return th.Data(lvl - 1).Render(strings.Repeat(string(heatFill), heatCellW))
+}
+
+// heatmapChart is the contribution calendar. Full, it is 7 weekday rows × as many
+// week columns as the terminal affords, with a month ruler underneath — without
+// the ruler a year of unlabelled columns says nothing about when.
+//
+// Compact, it folds the week into a single row of per-week totals. That form
+// exists because the full graph needs 10 rows and used to be gated on the pane
+// being 26 tall, which a standard 80×24 terminal never is: the one view that
+// shows years of history at a glance was invisible at the default terminal size.
+// Compressing beats disappearing.
+func (m Model) heatmapChart(s *statsData, w int, compact bool) []string {
 	th := m.th
 	weeks := heatWeeks(w)
 	if weeks < minHeatWks {
 		return nil
 	}
 	first := maxHeatWeeks - weeks // leftmost column drawn, into s.heat
+
+	if compact {
+		weekly := make([]int, 0, weeks)
+		for col := first; col < maxHeatWeeks; col++ {
+			n := 0
+			for row := range s.heat {
+				n += s.heat[row][col]
+			}
+			weekly = append(weekly, n)
+		}
+		peak := maxOf(weekly)
+		var b strings.Builder
+		b.WriteString(th.Dim.Render(padRight("wks", heatLabelW)))
+		for _, n := range weekly {
+			b.WriteString(heatCell(th, n, peak))
+		}
+		return []string{
+			"",
+			th.Section.Render(fitPlain(
+				fmt.Sprintf("Activity (last %d weeks) · peak %d/week", weeks, peak), w)),
+			clipW(b.String(), w),
+			th.Dim.Render(monthRuler(m.now(), weeks, w)),
+		}
+	}
 
 	peak := 0
 	for row := range s.heat {
@@ -686,20 +767,14 @@ func (m Model) renderHeatmap(s *statsData, w int) []string {
 	labels := [7]string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
 	lines := []string{
 		"",
-		th.Title.Render(fitPlain(
+		th.Section.Render(fitPlain(
 			fmt.Sprintf("Activity (last %d weeks) · peak %d/day", weeks, peak), w)),
 	}
 	for row := 0; row < 7; row++ {
 		var b strings.Builder
 		b.WriteString(th.Dim.Render(padRight(labels[row], heatLabelW)))
 		for col := first; col < maxHeatWeeks; col++ {
-			lvl := heatLevel(s.heat[row][col], peak)
-			cell := strings.Repeat(string(heatShades[lvl]), heatCellW)
-			if lvl == 0 {
-				b.WriteString(th.Dim.Render(cell))
-			} else {
-				b.WriteString(th.Accent.Render(cell))
-			}
+			b.WriteString(heatCell(th, s.heat[row][col], peak))
 		}
 		lines = append(lines, clipW(b.String(), w))
 	}
@@ -764,9 +839,18 @@ func renderBars(th *theme.Theme, vals []int, maxN, w int) string {
 			b.WriteString(th.Dim.Render(strings.Repeat("·", cw)))
 			continue
 		}
-		b.WriteString(th.Accent.Render(strings.Repeat(string(sparkBlocks[sparkLevel(cnt, maxN)]), cw)))
+		b.WriteString(sparkCell(th, cnt, maxN, cw))
 	}
 	return b.String()
+}
+
+// sparkCell is one histogram bar, cw columns wide: glyph height AND ramp color
+// both track the value. Doubling up costs nothing and means the shape survives a
+// terminal where the eighth-block glyphs are hard to tell apart.
+func sparkCell(th *theme.Theme, cnt, maxN, cw int) string {
+	lvl := sparkLevel(cnt, maxN) // 0..7
+	return th.Data(lvl * theme.DataLevels / len(sparkBlocks)).
+		Render(strings.Repeat(string(sparkBlocks[lvl]), cw))
 }
 
 // sparkLevel buckets a count into an index into sparkBlocks (0..7), relative to

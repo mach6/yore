@@ -130,10 +130,21 @@ Request `wire.PushReq`:
 { "host_id": "01J…",
   "records": [ {"seq": 48212, "id": "01J…", "key_id": "01J…", "blob": "<base64>"}, … ] }
 ```
-Rules: `host_id` required; ≤1000 records; **strictly ascending** `seq`.
+Rules: `host_id` required; ≤1000 records; **strictly ascending** `seq`; the body,
+like every request, is capped at 10 MiB.
 Idempotent — an existing `(host_id, seq)` is skipped (first write wins).
 → `200 {"stored": 142, "max_seq": 48353}` (`stored` counts only newly-written rows).
-Errors: `400` (missing host_id / >1000 / non-ascending / malformed JSON).
+Errors: `400` (missing host_id / >1000 / non-ascending / malformed JSON),
+`413` (body over the 10 MiB cap).
+
+A record count alone does not bound a body: a thousand records carrying long
+prompts or heredocs is megabytes. So the client batches on **both** ≤1000 records
+and ≤8 MiB of encoded body, and on a `413` (or the `400` a truncated body decodes
+as) halves the batch and retries, down to a single record — at which point the
+error is real and is surfaced rather than retried forever. This matters because
+the push watermark only advances over what the server acked: a body that can
+never fit would otherwise fail every retry identically and wedge the client's
+sync permanently.
 
 ### `GET /v1/records?host_id=X&after=N&limit=M` — pull a page
 Returns records with `seq > after`, ascending. `limit` default/cap 1000.
@@ -333,9 +344,19 @@ Each record's plaintext is the JSON of its meaningful fields — `{v:1, id,
 host_id, hostname, session, cmd, cwd, exit, dur_ms, start_ms, tag, type,
 target_id, prompt_id, prompt, tag_name, tag_desc, tag_op}` — so **everything,
 including the hostname, travels encrypted**. (`tag` is the executor auto-tag;
-`tag_name`/`tag_desc`/`tag_op` carry a user-tag record when `type == "tag"`.) The
-stream metadata (`seq`, `key_id`, and the outer `id`) rides in the wire record,
-not the ciphertext, and is bound as AAD.
+`tag_name`/`tag_desc`/`tag_op` carry a user-tag record when `type == "tag"`.)
+
+`type` selects what a record *is*: `""` a captured command, `"delete"` a
+tombstone naming its victim in `target_id`, `"tag"` a user-tag op, and
+`"prompt"` one user prompt to an agent — its `prompt` field holds the text and
+its `id` is what the commands it caused reference in their `prompt_id`. So
+`prompt` is set only on a `"prompt"` record, and the text crosses the wire once
+per prompt rather than once per command. A client configured with
+`sync_prompts = false` simply never uploads its `"prompt"` records — their
+commands still sync, and the `prompt_id` resolves to no text on other machines.
+
+The stream metadata (`seq`, `key_id`, and the outer `id`) rides in the wire
+record, not the ciphertext, and is bound as AAD.
 
 **Seal** (`SealRecord`) under the epoch DEK is `nonce(24) ‖ ciphertext`, AAD:
 
@@ -425,6 +446,13 @@ never touches the network and is unrelated to the HTTP API above.
 | `limit` | `0` = daemon default (200) |
 | `offset` | window offset |
 | `dedupe` | collapse identical commands, newest wins |
+| `want_prompts` | also return the prompt records covering the window, in `prompts` |
+| `prompt_days` | lookback bound for `want_prompts` (`0` = all) |
+
+Returned rows always carry their `prompt` text, rejoined from the daemon's
+prompt index — the text itself is stored once, on its own record. `want_prompts`
+exists for the one thing rows cannot show: a prompt that triggered no commands,
+and so appears in no row.
 
 ## Ops
 
@@ -448,7 +476,7 @@ never touches the network and is unrelated to the HTTP API above.
 
 ```json
 { "ok": true, "err": "",
-  "query":   { "rows":[…], "total":N, "scope":"local", "remote":{…} },
+  "query":   { "rows":[…], "total":N, "scope":"local", "prompts":[…], "remote":{…} },
   "hosts":   { "hosts":[{"hostname","host_id","count"}], "remote":{…} },
   "devices": { "devices":[{"id","name","status","code","self"}] },
   "status":  { "pid","uptime_sec","local_rows","remote":{…},"version" } }

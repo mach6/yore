@@ -330,3 +330,37 @@ func ids(rows []rec.Record) []string {
 	}
 	return out
 }
+
+// TestHumanOnlyFilter: the browse table hides agent-run commands, and it needs
+// the daemon to do the hiding — filtering after Limit would spend the row budget
+// on rows the caller is about to drop. The count of what went comes back so a UI
+// can say what it is holding, rather than a search reporting "no matches" about
+// history that exists.
+func TestHumanOnlyFilter(t *testing.T) {
+	dir := t.TempDir()
+	seed(t, dir, []rec.Record{
+		{ID: "h1", Cmd: "git status", StartMs: 1000},
+		{ID: "a1", Cmd: "git add -A", Tag: "claude-code", StartMs: 2000},
+		{ID: "a2", Cmd: "git commit", Tag: "devin", StartMs: 3000},
+		{ID: "h2", Cmd: "git push", StartMs: 4000},
+	})
+	c, _ := startDaemon(t, dir, 30*time.Second)
+
+	all, err := c.Query(proto.QueryReq{Q: "git"})
+	require.NoError(t, err)
+	assert.Equal(t, 4, all.Total, "unfiltered Total")
+	assert.Zero(t, all.HiddenAgents, "nothing is hidden unless asked")
+
+	human, err := c.Query(proto.QueryReq{Q: "git", HumanOnly: true})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"h2", "h1"}, ids(human.Rows), "only untagged commands survive")
+	assert.Equal(t, 2, human.Total, "Total counts what is left")
+	assert.Equal(t, 2, human.HiddenAgents, "and reports what went")
+
+	// The count is scoped to the query, not to the archive: it answers "how many
+	// of these are hidden", which is what an empty result has to explain.
+	none, err := c.Query(proto.QueryReq{Q: "commit", HumanOnly: true})
+	require.NoError(t, err)
+	assert.Empty(t, none.Rows, "the only match was an agent's")
+	assert.Equal(t, 1, none.HiddenAgents, "so the caller can say the match exists")
+}

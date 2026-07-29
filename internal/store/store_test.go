@@ -273,3 +273,56 @@ func BenchmarkAll200k(b *testing.B) {
 		}
 	}
 }
+
+// TestPromptRecordsStayOutOfTheCorpus: a prompt is part of the synced stream but
+// is not a command, so it must not turn up as a blank row in search.
+func TestPromptRecordsStayOutOfTheCorpus(t *testing.T) {
+	s, err := Open(t.TempDir())
+	require.NoError(t, err, "Open")
+	t.Cleanup(func() { _ = s.Close() })
+
+	_, err = s.AppendBatch([]rec.Record{
+		{ID: "p1", Type: rec.TypePrompt, Prompt: "add rate limiting", Tag: "claude-code"},
+		{ID: "c1", Cmd: "cargo add tower", PromptID: "p1"},
+		{ID: "t1", Type: rec.TypeTag, TagName: "work", TargetID: "c1"},
+	})
+	require.NoError(t, err, "AppendBatch")
+
+	all, err := s.All()
+	require.NoError(t, err, "All")
+	require.Len(t, all, 1, "only the command is part of the search corpus")
+	require.Equal(t, "c1", all[0].ID)
+
+	n, err := s.Count()
+	require.NoError(t, err, "Count")
+	require.Equal(t, 1, n, "Count agrees with All")
+
+	// But the prompt IS in the raw stream, so sync replays it to other machines.
+	raw, err := s.Since(0, 0)
+	require.NoError(t, err, "Since")
+	require.Len(t, raw, 3, "the raw stream carries every record type")
+
+	prompts, err := s.PromptRecords()
+	require.NoError(t, err, "PromptRecords")
+	require.Len(t, prompts, 1, "the daemon seeds its prompt index from these")
+	require.Equal(t, "add rate limiting", prompts[0].Prompt)
+}
+
+func TestIsCommand(t *testing.T) {
+	tests := []struct {
+		name string
+		r    rec.Record
+		want bool
+	}{
+		{"a plain command", rec.Record{Cmd: "ls"}, true},
+		{"a tombstone", rec.Record{Type: rec.TypeDelete, TargetID: "x"}, false},
+		{"a tag op", rec.Record{Type: rec.TypeTag, TagName: "work"}, false},
+		{"a prompt", rec.Record{Type: rec.TypePrompt, Prompt: "do it"}, false},
+		{"a deleted command", rec.Record{Cmd: "ls", DeletedMs: 1}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, IsCommand(tt.r))
+		})
+	}
+}

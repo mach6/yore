@@ -11,9 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"yore/internal/config"
 	"yore/internal/rec"
-	"yore/internal/redact"
 )
 
 // agentClaudeCode is the executor tag stamped on commands captured from Claude
@@ -38,8 +36,7 @@ type claudeHookInput struct {
 	// ISO-8601 tool timing, when the payload provides it; duration is derived.
 	ToolStartTime string `json:"tool_start_time"`
 	ToolEndTime   string `json:"tool_end_time"`
-	// Prompt is only present on a UserPromptSubmit payload (unused here; reserved
-	// for prompt tracing).
+	// Prompt is only present on a UserPromptSubmit payload; see recordPrompt.
 	Prompt string `json:"prompt"`
 }
 
@@ -139,45 +136,8 @@ func ingestClaudeTool(failed bool) {
 			r.DurMs = &d
 		}
 	}
-	// Stamp the prompt this command served, if the UserPromptSubmit hook recorded
-	// one for this session. Best-effort: absent state just leaves it untraced.
-	if ps, ok := loadPromptState(dir, in.SessionID); ok {
-		r.PromptID = ps.ID
-		r.Prompt = ps.Text
-	}
+	stampPrompt(dir, in.SessionID, &r)
 	spoolRecord(dir, r)
-}
-
-// promptState is the latest user prompt seen for a session, persisted by the
-// UserPromptSubmit hook so the separate PostToolUse hook processes can stamp it
-// onto the commands it triggered.
-type promptState struct {
-	ID   string `json:"id"`
-	Text string `json:"text"`
-	Ms   int64  `json:"ms"`
-}
-
-// promptStatePath is where a session's current prompt is held. Session ids are
-// opaque; hash to a safe filename.
-func promptStatePath(dir, session string) string {
-	sum := sha256.Sum256([]byte(session))
-	return filepath.Join(dir, "agent-prompts", hex.EncodeToString(sum[:])[:32]+".json")
-}
-
-// loadPromptState reads the current prompt for a session (ok=false if none).
-func loadPromptState(dir, session string) (promptState, bool) {
-	if session == "" {
-		return promptState{}, false
-	}
-	b, err := os.ReadFile(promptStatePath(dir, session))
-	if err != nil {
-		return promptState{}, false
-	}
-	var ps promptState
-	if json.Unmarshal(b, &ps) != nil || ps.ID == "" {
-		return promptState{}, false
-	}
-	return ps, true
 }
 
 // cmdStart is a command's start time, written by the PreToolUse hook and read
@@ -267,27 +227,7 @@ func runHookClaudePrompt() {
 	if json.Unmarshal(raw, &in) != nil {
 		return
 	}
-	text := strings.TrimSpace(in.Prompt)
-	if text == "" || in.SessionID == "" {
-		return
-	}
-	// The redaction gate also guards prompts: a prompt containing a secret must
-	// not be persisted or later attached to a synced record.
-	dir := stateDir()
-	cfg, _ := config.Load(dir)
-	if filter, _ := redact.Load(dir, cfg.IgnorePatterns, cfg.IgnoreDirs); filter.Sensitive(text) {
-		return
-	}
-	ps := promptState{ID: rec.NewID(), Text: text, Ms: time.Now().UnixMilli()}
-	b, err := json.Marshal(ps)
-	if err != nil {
-		return
-	}
-	path := promptStatePath(dir, in.SessionID)
-	if os.MkdirAll(filepath.Dir(path), 0o700) != nil {
-		return
-	}
-	_ = os.WriteFile(path, b, 0o600)
+	recordPrompt(stateDir(), in.SessionID, agentClaudeCode, in.Cwd, in.Prompt)
 }
 
 // --- `yore init claude-code`: install the capture hook -----------------------

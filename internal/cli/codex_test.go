@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"yore/internal/config"
+	"yore/internal/rec"
 )
 
 func TestRunHookCodexCaptures(t *testing.T) {
@@ -62,9 +63,12 @@ func TestCodexPromptTracing(t *testing.T) {
 	feedStdin(t, `{"tool_name":"Bash","session_id":"c2","cwd":"/w","tool_input":{"command":"go test"}}`,
 		runHookCodex)
 	rows := spooledRecords(t, dir)
-	require.Len(t, rows, 1)
-	assert.NotEmpty(t, rows[0].PromptID)
+	require.Len(t, rows, 2, "the prompt record plus the command it caused")
+	assert.Equal(t, rec.TypePrompt, rows[0].Type)
 	assert.Equal(t, "refactor the parser", rows[0].Prompt)
+	assert.Equal(t, agentCodex, rows[0].Tag)
+	assert.Equal(t, rows[0].ID, rows[1].PromptID, "the command references the prompt record")
+	assert.Empty(t, rows[1].Prompt, "text lives on the prompt record only")
 }
 
 func TestCodexHooksBlockIsValidToml(t *testing.T) {

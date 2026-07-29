@@ -14,6 +14,7 @@ import (
 	"yore/internal/proto"
 	"yore/internal/rec"
 	"yore/internal/tui/hl"
+	"yore/internal/tui/keyhelp"
 	"yore/internal/tui/theme"
 )
 
@@ -76,11 +77,30 @@ func (m Model) View() string {
 	nowMs := time.Now().UnixMilli()
 
 	switch {
+	case m.showHelp:
+		// The key list takes the rows' place and is bounded by the same rowsVisible
+		// they are: the panel is drawn inline above the shell prompt, so a list
+		// that grew past a full result set would shove the terminal's scrollback
+		// around every time someone asked what a key does.
+		body, _ := keyhelp.Panel(m.th, m.helpGroups(), m.helpWidth(), m.rowsVisible, m.helpTop)
+		for _, line := range strings.Split(body, "\n") {
+			if line != "" {
+				b.WriteString("  " + line) // the gutter the result rows use
+			}
+			b.WriteByte('\n')
+		}
 	case len(m.rows) == 0 && !m.gotResult:
-		b.WriteString(m.th.Dim.Render("  …"))
+		b.WriteString(m.th.Dim.Render("  loading…"))
 		b.WriteByte('\n')
 	case len(m.rows) == 0 && m.lastErr == nil:
-		b.WriteString(m.th.Dim.Render("  no matches"))
+		// "no matches" is a lie when the matches are sitting behind the agent
+		// filter — and this panel's whole job is recall, so the one thing it must
+		// never do is tell you a command you ran does not exist.
+		msg := "no matches"
+		if note := m.hiddenAgentsNote(); note != "" {
+			msg = note + " — ⌥a shows them"
+		}
+		b.WriteString(m.th.Dim.Render("  " + msg))
 		b.WriteByte('\n')
 	default:
 		end := m.top + m.rowsVisible
@@ -169,14 +189,19 @@ func (m Model) renderRow(r rec.Record, q match.Query, selected bool, w int, nowM
 	return m.composeLine(segs, selected, w)
 }
 
+// exitMarker is a command's outcome as a glyph plus a style. Each of the three
+// states gets its own glyph: success and unknown used to share "·" and differ
+// only in color, which is unreadable for anyone who cannot separate dim grey
+// from green.
 func (m Model) exitMarker(r rec.Record) (string, lipgloss.Style) {
-	if r.Exit == nil {
+	switch {
+	case r.Exit == nil:
 		return "·", m.th.Dim
+	case *r.Exit == 0:
+		return "✓", m.th.ExitOK
+	default:
+		return "✗" + strconv.Itoa(*r.Exit), m.th.ExitErr
 	}
-	if *r.Exit == 0 {
-		return "·", m.th.ExitOK
-	}
-	return "✗" + strconv.Itoa(*r.Exit), m.th.ExitErr
 }
 
 // composeLine joins the segments behind a 2-column selection gutter. The
@@ -348,10 +373,16 @@ func (m Model) statusLine(w int) string {
 		pieces = append(pieces, statusPiece{"daemon unreachable", th.ExitErr})
 	}
 	if !m.dedupe {
-		pieces = append(pieces, statusPiece{"dups shown", th.Dim})
+		pieces = append(pieces, statusPiece{"duplicates shown", th.Dim})
+	}
+	// Ahead of the sync hint and the key hints: a filter withholding results the
+	// user is actively searching for outranks both. With no rows at all the empty
+	// state is already saying this, and the panel is too small to say it twice.
+	if note := m.hiddenAgentsNote(); note != "" && len(m.rows) > 0 {
+		pieces = append(pieces, statusPiece{note, th.Dim})
 	}
 	if m.remote.State == proto.RemoteOff && (m.scope == proto.ScopeAll || m.scope == proto.ScopeHost) {
-		pieces = append(pieces, statusPiece{"all hosts = local (sync not configured)", th.Dim})
+		pieces = append(pieces, statusPiece{"remote sync not configured — showing local only", th.Dim})
 	}
 
 	right := ""
@@ -381,6 +412,15 @@ func (m Model) statusLine(w int) string {
 		leftWidth += add
 	}
 	left := strings.Join(rendered, sep)
+
+	// Key hints go last on the line and are dropped whole when they do not fit:
+	// they are the least important thing here, and half a hint is not a hint.
+	if hints := keyhelp.Line(th, m.hintRows(), budget); hints != "" {
+		if hw := lipgloss.Width(hints); leftWidth+len(sep)+hw <= budget {
+			left += th.Dim.Render(sep) + hints
+			leftWidth += len(sep) + hw
+		}
+	}
 
 	if right == "" {
 		return left

@@ -276,6 +276,29 @@ func (s *Server) sample(scope string) ([]rec.Record, error) {
 	return s.fetch(proto.QueryReq{Scope: scope, Limit: sampleCap})
 }
 
+// samplePrompts is sample plus the prompt records covering the same slice, for
+// the tools that report on prompts rather than commands. A prompt that ran no
+// command appears in no row, so it has to be asked for separately.
+func (s *Server) samplePrompts(scope string) (rows, prompts []rec.Record, err error) {
+	q := proto.QueryReq{Scope: scope, Limit: sampleCap, WantPrompts: true}
+	resp, err := s.q.Query(q)
+	if err != nil {
+		return nil, nil, err
+	}
+	rows = resp.Rows
+	if len(s.opts.ExcludeDirs) > 0 {
+		filtered := make([]rec.Record, 0, len(rows))
+		for _, r := range rows {
+			if s.excluded(r.Cwd) {
+				continue
+			}
+			filtered = append(filtered, r)
+		}
+		rows = filtered
+	}
+	return rows, resp.Prompts, nil
+}
+
 func (s *Server) excluded(cwd string) bool {
 	for _, d := range s.opts.ExcludeDirs {
 		if d != "" && (cwd == d || strings.HasPrefix(cwd, strings.TrimRight(d, "/")+"/")) {
@@ -427,11 +450,11 @@ func (s *Server) toolGetPrompts(raw json.RawMessage) (any, *rpcError) {
 	if rerr != nil {
 		return nil, rerr
 	}
-	rows, err := s.sample(scopeOr(a.Scope, proto.ScopeAll))
+	rows, prompts, err := s.samplePrompts(scopeOr(a.Scope, proto.ScopeAll))
 	if err != nil {
 		return toolError("query failed: %v", err), nil
 	}
-	groups := groupPrompts(rows, a.Executor, a.SessionID, "")
+	groups := groupPrompts(rows, prompts, a.Executor, a.SessionID, "")
 	limit := a.limitOr(10)
 	if len(groups) > limit {
 		groups = groups[:limit]

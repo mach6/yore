@@ -17,6 +17,7 @@ const (
 	TypeCmd    = ""       // a captured shell command (the zero value)
 	TypeDelete = "delete" // a tombstone; TargetID names the record it deletes
 	TypeTag    = "tag"    // a user-tag op: add/remove a freeform label on a command or session
+	TypePrompt = "prompt" // one user prompt to an agent; the commands it caused reference it by ID
 )
 
 // TagOp values for Record.TagOp (on TypeTag records).
@@ -47,9 +48,15 @@ type Record struct {
 	StartMs int64  `json:"start_ms,omitempty"`
 	Tag     string `json:"tag,omitempty"` // executor: agent/tool that ran it (e.g. "claude-code"), "" = interactive
 
-	// Prompt tracing (agent commands only). PromptID groups every command an
-	// agent ran in service of one user prompt; Prompt is that prompt's text,
-	// carried on each member so the grouping survives sync without a join.
+	// Prompt tracing. A TypePrompt record carries the prompt text in Prompt and
+	// IS the prompt: its ID is what agent commands reference in PromptID. So the
+	// text is stored, sealed, and synced exactly once no matter how many commands
+	// one prompt causes — and a prompt that caused none is still recorded.
+	//
+	// On a stored command record Prompt is always empty — only PromptID is. The
+	// daemon fills the text in on query results from its prompt index, which is
+	// why consumers can read r.Prompt on a command row without knowing about the
+	// join.
 	PromptID string `json:"prompt_id,omitempty"`
 	Prompt   string `json:"prompt,omitempty"`
 

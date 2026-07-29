@@ -88,7 +88,7 @@ func TestRemoteAttach(t *testing.T) {
 	require.False(t, rc.enabled(), "fresh cache should be disabled")
 	require.Equal(t, proto.RemoteOff, rc.info().State)
 
-	rc.attach(newTestSyncer(t))
+	rc.attach(newTestSyncer(t), 0)
 	assert.True(t, rc.enabled(), "attaching a syncer must enable the cache")
 	assert.Equal(t, proto.RemoteUnavailable, rc.info().State, "newly attached sync is unavailable until it succeeds")
 
@@ -101,11 +101,11 @@ func TestRemoteAttach(t *testing.T) {
 	rc.mu.Unlock()
 	require.Len(t, rc.search("echo", ""), 1, "cache should be warm before re-attach")
 
-	rc.attach(newTestSyncer(t))
+	rc.attach(newTestSyncer(t), 0)
 	assert.Empty(t, rc.search("echo", ""), "records from the previous server must be dropped")
 	assert.Empty(t, rc.cursors, "pull cursors from the previous server must be dropped")
 
-	rc.attach(nil)
+	rc.attach(nil, 0)
 	assert.False(t, rc.enabled(), "detaching must disable the cache")
 	assert.Equal(t, proto.RemoteOff, rc.info().State)
 }

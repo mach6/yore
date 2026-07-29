@@ -1,6 +1,8 @@
 package search
 
 import (
+	"strconv"
+
 	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -9,6 +11,7 @@ import (
 
 	"yore/internal/proto"
 	"yore/internal/rec"
+	"yore/internal/tui/keyhelp"
 	"yore/internal/tui/theme"
 )
 
@@ -28,6 +31,12 @@ type Options struct {
 	Cwd          string // current directory, for scope cycling
 	Version      string
 	Keymap       string // "vim" enables an insert/normal sub-mode; "" / "emacs" = default
+
+	// HideAgents starts the panel with agent-run commands filtered out (config
+	// hide_agent_commands). ⌥a is the session toggle; this is only the state it
+	// opens in. An explicit --executor overrides it: asking for one executor is
+	// asking for agent commands.
+	HideAgents bool
 
 	// Renderer is bound to the output tty so color detection ignores a piped
 	// os.Stdout; nil = default renderer.
@@ -66,8 +75,18 @@ type Model struct {
 	frecency bool // alt+f: rank by frequency×recency instead of recency
 	fuzzy    bool // alt+z: subsequence matching instead of substring
 
+	// hideAgents keeps agent-run commands out of the results (⌥a); hidden is how
+	// many the daemon dropped for the current query. The panel quotes that number
+	// rather than filtering silently — above all when it is the reason a search
+	// looks like it found nothing.
+	hideAgents bool
+	hidden     int
+
 	vim    bool // vim keymap: Esc toggles an insert/normal sub-mode
 	normal bool // vim only: true while in the normal (navigation) sub-mode
+
+	showHelp bool // alt+/ (or ? in normal mode): the key list, over the rows
+	helpTop  int  // first visible row of that list, when it overflows the panel
 
 	rows      []rec.Record
 	total     int
@@ -114,6 +133,7 @@ func NewModel(q Querier, opts Options) Model {
 		ti:          ti,
 		scope:       initialScope(opts.Scope),
 		dedupe:      true,
+		hideAgents:  opts.HideAgents && opts.Executor == "",
 		vim:         opts.Keymap == "vim",
 		width:       80,
 		rowsVisible: maxRows,
@@ -167,6 +187,7 @@ func (m Model) applyResult(msg queryResultMsg) (tea.Model, tea.Cmd) {
 	m.lastErr = nil
 	m.rows = msg.resp.Rows
 	m.total = msg.resp.Total
+	m.hidden = msg.resp.HiddenAgents
 	m.remote = msg.resp.Remote
 	m.sel = 0
 	m.top = 0
@@ -175,12 +196,21 @@ func (m Model) applyResult(msg queryResultMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// The key list swallows input while it is up: it covers the rows it would
+	// otherwise be moving, and Esc has to close it before it can cancel.
+	if m.showHelp {
+		return m.handleHelpKey(msg.String())
+	}
+
 	// Vim normal sub-mode swallows input with its own tiny binding set.
 	if m.vim && m.normal {
 		return m.handleNormalKey(msg)
 	}
 
 	switch msg.String() {
+	case "alt+/":
+		return m.openHelp()
+
 	case "esc":
 		// Vim: the first Esc leaves insert/filter for the normal sub-mode; a
 		// second Esc (handled in handleNormalKey) cancels. Emacs: cancel now.
@@ -226,6 +256,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.fuzzy = !m.fuzzy
 		m.applyLayout()
 		return m.issueQuery()
+
+	case "alt+a":
+		return m.toggleHideAgents()
 
 	case "up", "ctrl+p":
 		m.moveSel(-1)
@@ -275,6 +308,11 @@ func (m Model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.ti.Focus()
 		return m, nil
 
+	case "?":
+		// Normal mode types nothing, so here "?" can mean what it means
+		// everywhere else in yore.
+		return m.openHelp()
+
 	case "j", "down", "ctrl+n":
 		m.moveSel(1)
 		return m, nil
@@ -299,8 +337,92 @@ func (m Model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.scope = nextScope(m.scope)
 		m.applyLayout()
 		return m.issueQuery()
+
+	case "alt+a":
+		return m.toggleHideAgents()
 	}
 	return m, nil
+}
+
+// toggleHideAgents flips agent-run commands in and out of the results,
+// re-querying because the filter is the daemon's. It is a session toggle, not a
+// setting: config's hide_agent_commands decides what the panel opens with, and a
+// keystroke that quietly rewrote that file would make an experiment permanent.
+func (m Model) toggleHideAgents() (tea.Model, tea.Cmd) {
+	if m.opts.Executor != "" {
+		return m, nil // --executor asked for agent commands; do not fight it
+	}
+	m.hideAgents = !m.hideAgents
+	return m.issueQuery()
+}
+
+// hiddenAgentsNote describes what the agent filter is holding back, or "" when
+// it is holding nothing back. The panel has no second line to explain itself, so
+// this is the whole disclosure — and it is what keeps a search whose only
+// matches are an agent's from reporting "no matches" about history that exists.
+func (m Model) hiddenAgentsNote() string {
+	if !m.hideAgents || m.hidden == 0 {
+		return ""
+	}
+	unit := "agent commands"
+	if m.hidden == 1 {
+		unit = "agent command"
+	}
+	return strconv.Itoa(m.hidden) + " " + unit + " hidden"
+}
+
+// openHelp raises the key list over the result rows.
+func (m Model) openHelp() (tea.Model, tea.Cmd) {
+	m.showHelp = true
+	m.helpTop = 0
+	return m, nil
+}
+
+// handleHelpKey services the key list: scroll it if it is taller than the panel,
+// Esc (or the key that opened it) to dismiss. Ctrl-C still cancels the search
+// outright — it is the one key that always means "get me out of here".
+func (m Model) handleHelpKey(s string) (tea.Model, tea.Cmd) {
+	switch s {
+	case "esc", "?", "alt+/":
+		m.showHelp = false
+		m.helpTop = 0
+		return m, nil
+	case "ctrl+c", "ctrl+g":
+		m.cancel = true
+		m.done = true
+		return m, tea.Quit
+	case "up", "k", "ctrl+p":
+		m.helpTop--
+	case "down", "j", "ctrl+n":
+		m.helpTop++
+	}
+	if top := m.helpMaxTop(); m.helpTop > top {
+		m.helpTop = top
+	}
+	if m.helpTop < 0 {
+		m.helpTop = 0
+	}
+	return m, nil
+}
+
+// helpMaxTop is how far the key list can scroll — zero unless it is taller than
+// the panel, which a short terminal can force.
+func (m Model) helpMaxTop() int {
+	_, total := keyhelp.Panel(m.th, m.helpGroups(), m.helpWidth(), m.rowsVisible, 0)
+	if d := total - m.rowsVisible; d > 0 {
+		return d
+	}
+	return 0
+}
+
+// helpWidth is the list's width: the panel's, less the two-column gutter the
+// rows are indented by, so the help lines up with them.
+func (m Model) helpWidth() int {
+	w := m.width - 2
+	if w < 1 {
+		w = 1
+	}
+	return w
 }
 
 // issueQuery bumps the sequence counter and returns a command that runs the
@@ -326,6 +448,10 @@ func (m Model) buildReq() proto.QueryReq {
 		Tag:      m.opts.Tag,
 		Limit:    queryLimit,
 		Dedupe:   m.dedupe,
+		// Applied by the daemon, not here: filtering after Limit would spend the
+		// row budget on rows about to be dropped, and a machine where an agent ran
+		// all morning would answer a full request with a handful.
+		HumanOnly: m.hideAgents,
 	}
 	if m.frecency {
 		req.Sort = proto.SortFrecency

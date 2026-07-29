@@ -33,6 +33,10 @@ func interactiveSearch(initialQuery, scope, executor, tag string) int {
 		Cwd:          cwd,
 		Version:      Version,
 		Keymap:       cfg.Keymap,
+		// The panel opens without agent-run commands (⌥a shows them). Only the
+		// interactive path does this: it has a status line to say what it is
+		// holding back, which the headless path below does not.
+		HideAgents: cfg.HideAgentCommands,
 	})
 	if err != nil {
 		// No /dev/tty (or the TUI failed): behave like headless so pipes

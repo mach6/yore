@@ -78,9 +78,17 @@ func spoolRecord(dir string, r rec.Record) {
 		return
 	}
 	filter, _ := redact.Load(dir, cfg.IgnorePatterns, cfg.IgnoreDirs)
-	if filter.SkipDir(r.Cwd) || filter.Sensitive(r.Cmd) {
+	// An ignored directory or a user ignore_pattern means "never record this" —
+	// the user asked for the command to be absent, so it is.
+	if filter.SkipDir(r.Cwd) || filter.Ignored(r.Cmd) {
 		return
 	}
+	// A secret, by contrast, costs the record only the secret: the command is
+	// kept with the credential replaced by a marker naming the rule. Prompt
+	// records carry their payload in Prompt rather than Cmd; running both through
+	// the gate here means no caller can route text into the store around it.
+	r.Cmd, _ = filter.Redact(r.Cmd)
+	r.Prompt, _ = filter.Redact(r.Prompt)
 	if r.ID == "" {
 		r.ID = rec.NewID()
 	}

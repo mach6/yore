@@ -36,6 +36,9 @@ func runBrowse(acceptFile string, start browse.StartView) int {
 		Cwd:     cwd,
 		Keymap:  cfg.Keymap,
 		Start:   start,
+		// The browse table opens without agent-run commands (A toggles); the agent
+		// explorer is where that work is shown, grouped by the prompt behind it.
+		HideAgents: cfg.HideAgentCommands,
 		Splits: browse.Splits{
 			BrowseLeft: ui.BrowseLeftSplit,
 			BrowseTop:  ui.BrowseTopSplit,

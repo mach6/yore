@@ -11,6 +11,7 @@ import (
 	"yore/internal/match"
 	"yore/internal/proto"
 	"yore/internal/rec"
+	"yore/internal/rstore"
 	"yore/internal/secret"
 	"yore/internal/store"
 	"yore/internal/syncer"
@@ -79,11 +80,19 @@ func (s *server) mintToken() (proto.TokenInfo, error) {
 	return proto.TokenInfo{Token: t.Token, ExpiresMs: t.ExpiresMs}, nil
 }
 
-// remoteCache holds other hosts' history, decrypted, in RAM ONLY — it is never
-// written to disk (a hard requirement). It is populated by pulling ciphertext
-// from the sync server and decrypting via the syncer, and it is re-pulled from
-// scratch each daemon lifetime (pull cursors are RAM-only). When sync is not
-// configured the cache is disabled and reports state "off".
+// remoteCache holds other hosts' history, decrypted, in RAM ONLY — the
+// plaintext is never written to disk (a hard requirement). What IS written to
+// disk is the ciphertext it was decrypted from, in internal/rstore, which the
+// server holds anyway and this machine could not read without its keys.
+//
+// That distinction is what makes the cache bounded. Cursors used to be RAM-only,
+// so every daemon lifetime re-downloaded and re-decrypted every other machine's
+// entire history from seq 0 — and the daemon recycles on a 30-minute idle
+// timeout. Now the cursor is persisted with the ciphertext, so a restart fetches
+// only what is new, and `keep` caps how much of each host's tail is retained in
+// either place.
+//
+// When sync is not configured the cache is disabled and reports state "off".
 type remoteCache struct {
 	mu sync.RWMutex
 	// sy is nil until sync is configured. It is guarded by mu because the daemon
@@ -96,9 +105,22 @@ type remoteCache struct {
 	state   string
 	lastMs  int64
 
+	// rs is the on-disk ciphertext cache, or nil when it could not be opened —
+	// in which case the daemon degrades to the old re-pull-everything behaviour
+	// rather than refusing to run.
+	rs *rstore.Store
+	// keep caps retained records per remote host (0 = unlimited).
+	keep int
+	// hydrated records whether the cached ciphertext has been decrypted into RAM
+	// yet; that happens once per daemon lifetime, on the first sync that has keys.
+	hydrated bool
+
 	// tags is the shared server tag index; remote tag records are folded here so
 	// tags applied on one machine resolve on this one too.
 	tags *tagIndex
+	// prompts is the shared prompt index; remote prompt records are folded here
+	// so a command synced from another machine still shows the prompt behind it.
+	prompts *promptIndex
 }
 
 // syncConf is the resolved subset of configuration that decides WHICH server the
@@ -109,9 +131,11 @@ type remoteCache struct {
 // that holds one and knows the server URL can sync. Enrollment tokens are used
 // once by `yore setup` and never persisted.
 type syncConf struct {
-	url   string
-	pin   string
-	epoch time.Duration
+	url         string
+	pin         string
+	epoch       time.Duration
+	syncPrompts bool
+	keep        int
 }
 
 // configured reports whether there is enough configuration to sync at all.
@@ -120,7 +144,13 @@ func (sc syncConf) configured() bool { return sc.url != "" }
 // loadSyncConf resolves the sync-relevant configuration from config.toml.
 func loadSyncConf(dir string) syncConf {
 	cfg, _ := config.Load(dir)
-	return syncConf{url: cfg.ServerURL, pin: cfg.ServerPin, epoch: cfg.KeyEpochD()}
+	return syncConf{
+		url:         cfg.ServerURL,
+		pin:         cfg.ServerPin,
+		epoch:       cfg.KeyEpochD(),
+		syncPrompts: cfg.SyncPrompts,
+		keep:        cfg.RemoteKeepN(),
+	}
 }
 
 // newSyncer builds a syncer for sc, or nil when sync is not configured or this
@@ -133,20 +163,48 @@ func newSyncer(dir string, st *store.Store, sc syncConf) *syncer.Syncer {
 	if err != nil {
 		return nil
 	}
-	return syncer.New(st, syncer.NewHTTPClient(sc.url, sc.pin), key, sc.epoch)
+	sy := syncer.New(st, syncer.NewHTTPClient(sc.url, sc.pin), key, sc.epoch)
+	sy.SetSyncPrompts(sc.syncPrompts)
+	return sy
 }
 
 // newRemote builds the remote cache from persisted config. Missing server,
 // token, or device key yields a disabled cache (state "off") rather than an
 // error; the daemon re-checks the configuration as it runs, so sync configured
 // later comes alive without a restart (see syncLoop).
-func newRemote(dir string, st *store.Store, sc syncConf, tags *tagIndex) *remoteCache {
-	rc := &remoteCache{state: proto.RemoteOff, cursors: map[string]uint64{}, tags: tags}
+//
+// The on-disk ciphertext cache is opened best-effort: it is derived data, so a
+// cache that cannot be opened (locked, corrupt) costs a full re-pull and must
+// never stop the daemon starting.
+func newRemote(dir string, st *store.Store, sc syncConf, tags *tagIndex, prompts *promptIndex) *remoteCache {
+	rc := &remoteCache{
+		state:   proto.RemoteOff,
+		cursors: map[string]uint64{},
+		tags:    tags,
+		prompts: prompts,
+		keep:    sc.keep,
+	}
 	if sy := newSyncer(dir, st, sc); sy != nil {
 		rc.sy = sy
 		rc.state = proto.RemoteUnavailable // until the first successful sync
+		if rs, err := rstore.Open(dir); err == nil {
+			rc.rs = rs
+		}
 	}
 	return rc
+}
+
+// close releases the on-disk ciphertext cache.
+func (rc *remoteCache) close() {
+	if rc == nil {
+		return
+	}
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	if rc.rs != nil {
+		_ = rc.rs.Close()
+		rc.rs = nil
+	}
 }
 
 // syncer returns the attached syncer, or nil when sync is not configured.
@@ -177,9 +235,11 @@ func (rc *remoteCache) online() bool {
 }
 
 // attach installs (or, with nil, clears) the syncer after the sync-relevant
-// configuration changed. Cached remote history and pull cursors are dropped:
-// they belong to the previous server and must never be mixed with the new one's.
-func (rc *remoteCache) attach(sy *syncer.Syncer) {
+// configuration changed, and applies the new retention bound. Cached remote
+// history and pull cursors are dropped — in RAM and on disk both: they belong
+// to the previous server, whose key hierarchy has nothing to do with the new
+// one's, and must never be mixed with it.
+func (rc *remoteCache) attach(sy *syncer.Syncer, keep int) {
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
 	rc.sy = sy
@@ -187,6 +247,11 @@ func (rc *remoteCache) attach(sy *syncer.Syncer) {
 	rc.cmds = nil
 	rc.cursors = map[string]uint64{}
 	rc.lastMs = 0
+	rc.keep = keep
+	rc.hydrated = false
+	if rc.rs != nil {
+		_ = rc.rs.Reset()
+	}
 	if sy == nil {
 		rc.state = proto.RemoteOff
 	} else {
@@ -211,6 +276,10 @@ func (rc *remoteCache) info() proto.RemoteInfo {
 // syncOnce pushes local records and pulls remote ones into the cache. A
 // decryption failure during pull is fatal for the cycle (never silently
 // skipped) and leaves the cache as it was.
+//
+// The order matters: warm from the on-disk ciphertext first, so that a machine
+// coming back after days offline decrypts what it already has before asking the
+// server for anything, and then asks only for the delta.
 func (rc *remoteCache) syncOnce(ctx context.Context, nowMs int64) error {
 	sy := rc.syncer()
 	if sy == nil {
@@ -221,21 +290,113 @@ func (rc *remoteCache) syncOnce(ctx context.Context, nowMs int64) error {
 		rc.setState(proto.RemoteUnavailable)
 		return err
 	}
+	if err := rc.hydrate(ctx, sy); err != nil {
+		rc.setState(proto.RemoteUnavailable)
+		return err
+	}
+
 	rc.mu.RLock()
 	cursors := cloneCursors(rc.cursors)
 	rc.mu.RUnlock()
 
-	recs, next, err := sy.PullOthers(ctx, cursors)
+	byHost, next, err := sy.PullCiphertext(ctx, cursors)
 	if err != nil {
 		rc.setState(proto.RemoteUnavailable)
 		return err
 	}
 
+	var fresh []rec.Record
+	for hostID, prs := range byHost {
+		// Cache the ciphertext before decrypting it: if this process dies mid-cycle
+		// the next one resumes from here instead of re-downloading the stream.
+		rc.cacheCiphertext(hostID, prs, next[hostID])
+		opened, oerr := sy.OpenRecords(ctx, hostID, prs)
+		if oerr != nil {
+			rc.setState(proto.RemoteUnavailable)
+			return oerr
+		}
+		fresh = append(fresh, opened...)
+	}
+
 	rc.mu.Lock()
-	rc.foldRemote(recs)
+	rc.foldRemote(fresh)
+	rc.pruneLocked()
 	rc.cursors = next
 	rc.state = proto.RemoteOK
 	rc.lastMs = nowMs
+	rc.mu.Unlock()
+	return nil
+}
+
+// cacheCiphertext persists a host's freshly pulled sealed records and advances
+// its stored cursor. Best-effort: the cache is derived, so a write failure
+// costs a re-pull next time and nothing more.
+func (rc *remoteCache) cacheCiphertext(hostID string, prs []wire.PullRecord, cursor uint64) {
+	rc.mu.RLock()
+	rs, keep := rc.rs, rc.keep
+	rc.mu.RUnlock()
+	if rs == nil {
+		return
+	}
+	_, _ = rs.Append(hostID, prs, cursor, keep)
+}
+
+// hydrate decrypts the on-disk ciphertext cache into RAM, once per daemon
+// lifetime. It runs on the first sync rather than at startup because unwrapping
+// the keys needs the server.
+//
+// A decryption failure HERE is not treated as tampering, unlike one during a
+// live pull: the only way this file can hold records we cannot open is if it
+// outlived the group it belongs to (a re-enrollment the config did not
+// register). It is derived data, so the honest response is to throw it away and
+// re-pull, not to wedge sync forever on a stale cache.
+func (rc *remoteCache) hydrate(ctx context.Context, sy *syncer.Syncer) error {
+	rc.mu.Lock()
+	if rc.hydrated {
+		rc.mu.Unlock()
+		return nil
+	}
+	rs := rc.rs
+	if rs == nil {
+		rc.hydrated = true
+		rc.mu.Unlock()
+		return nil
+	}
+	rc.mu.Unlock()
+
+	cursors, err := rs.Cursors()
+	if err != nil {
+		return err
+	}
+	hosts, err := rs.Hosts()
+	if err != nil {
+		return err
+	}
+
+	var recs []rec.Record
+	for _, hostID := range hosts {
+		prs, rerr := rs.Records(hostID)
+		if rerr != nil {
+			return rerr
+		}
+		opened, oerr := sy.OpenRecords(ctx, hostID, prs)
+		if oerr != nil {
+			if resetErr := rs.Reset(); resetErr != nil {
+				return resetErr
+			}
+			rc.mu.Lock()
+			rc.hydrated = true
+			rc.cursors = map[string]uint64{}
+			rc.mu.Unlock()
+			return nil // fall through to a full re-pull this cycle
+		}
+		recs = append(recs, opened...)
+	}
+
+	rc.mu.Lock()
+	rc.foldRemote(recs)
+	rc.cursors = cursors
+	rc.hydrated = true
 	rc.mu.Unlock()
 	return nil
 }
@@ -306,8 +467,9 @@ func (rc *remoteCache) setState(state string) {
 }
 
 // foldRemote merges pulled records into the cache, keeping it live-only:
-// tombstones remove their targets and are not themselves stored. Caller holds
-// the write lock.
+// tombstones remove their targets and are not themselves stored, and tag and
+// prompt records go to their shared indexes rather than the command corpus.
+// Caller holds the write lock.
 func (rc *remoteCache) foldRemote(recs []rec.Record) {
 	var deleted map[string]struct{}
 	for i := range recs {
@@ -320,10 +482,13 @@ func (rc *remoteCache) foldRemote(recs []rec.Record) {
 		if recs[i].Type == rec.TypeTag && rc.tags != nil {
 			rc.tags.apply(recs[i]) // fold remote tags into the shared index
 		}
+		if recs[i].Type == rec.TypePrompt && rc.prompts != nil {
+			rc.prompts.apply(recs[i]) // likewise, so a synced command shows its prompt
+		}
 	}
 	for i := range recs {
 		r := recs[i]
-		if r.Type == rec.TypeDelete || r.Type == rec.TypeTag || r.DeletedMs != 0 {
+		if !store.IsCommand(r) {
 			continue
 		}
 		if _, gone := deleted[r.ID]; gone {
@@ -333,17 +498,61 @@ func (rc *remoteCache) foldRemote(recs []rec.Record) {
 		rc.cmds = append(rc.cmds, r.Cmd)
 	}
 	if len(deleted) > 0 {
-		keptR := rc.records[:0]
-		keptC := rc.cmds[:0]
-		for i := range rc.records {
-			if _, gone := deleted[rc.records[i].ID]; gone {
-				continue
-			}
-			keptR = append(keptR, rc.records[i])
-			keptC = append(keptC, rc.records[i].Cmd)
+		rc.keepLocked(func(r rec.Record) bool {
+			_, gone := deleted[r.ID]
+			return !gone
+		})
+		if rc.prompts != nil {
+			rc.prompts.drop(deleted)
 		}
-		rc.records, rc.cmds = keptR, keptC
 	}
+}
+
+// pruneLocked evicts the oldest records of any host holding more than keep, so
+// the decrypted cache stays bounded however long the daemon runs and however
+// much history the group accumulates. Records arrive in ascending seq per host,
+// so "oldest" is simply the leading ones. Caller holds the write lock.
+func (rc *remoteCache) pruneLocked() {
+	if rc.keep <= 0 {
+		return
+	}
+	counts := make(map[string]int)
+	for i := range rc.records {
+		counts[rc.records[i].HostID]++
+	}
+	excess := make(map[string]int)
+	for host, n := range counts {
+		if n > rc.keep {
+			excess[host] = n - rc.keep
+		}
+	}
+	if len(excess) == 0 {
+		return
+	}
+	rc.keepLocked(func(r rec.Record) bool {
+		if excess[r.HostID] > 0 {
+			excess[r.HostID]--
+			return false
+		}
+		return true
+	})
+}
+
+// keepLocked rebuilds the cache retaining the records keep reports true for,
+// visiting them oldest-first. It allocates fresh slices rather than filtering
+// in place so that a reader holding the previous slice header keeps seeing a
+// coherent view. Caller holds the write lock.
+func (rc *remoteCache) keepLocked(keep func(rec.Record) bool) {
+	recs := make([]rec.Record, 0, len(rc.records))
+	cmds := make([]string, 0, len(rc.records))
+	for i := range rc.records {
+		if !keep(rc.records[i]) {
+			continue
+		}
+		recs = append(recs, rc.records[i])
+		cmds = append(cmds, rc.records[i].Cmd)
+	}
+	rc.records, rc.cmds = recs, cmds
 }
 
 func cloneCursors(m map[string]uint64) map[string]uint64 {
@@ -379,7 +588,7 @@ func (s *server) syncLoop() {
 		s.syncConf = sc
 		cfg, _ := config.Load(s.dir)
 		pushDebounce = cfg.PushDebounceD()
-		s.remote.attach(newSyncer(s.dir, s.store, sc))
+		s.remote.attach(newSyncer(s.dir, s.store, sc), sc.keep)
 		enabled := s.remote.enabled()
 		tick.Reset(syncTick(enabled, cfg.SyncIntervalD()))
 		s.logf("config changed: sync enabled=%v server=%q", enabled, sc.url)

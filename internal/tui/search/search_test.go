@@ -246,7 +246,7 @@ func TestAltDTogglesDedupe(t *testing.T) {
 	cmd()
 	require.False(t, m.dedupe, "alt+d did not turn dedupe off")
 	require.False(t, f.last().Dedupe, "re-query after toggle should have Dedupe=false")
-	require.Contains(t, strip(m.View()), "dups shown")
+	require.Contains(t, strip(m.View()), "duplicates shown")
 
 	m, cmd = step(t, m, key("alt+d"))
 	cmd()

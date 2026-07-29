@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"yore/internal/config"
+	"yore/internal/rec"
 )
 
 // TestRunHookDevinCaptures covers Devin's exec capture: the command is tagged
@@ -57,15 +58,22 @@ func TestRunHookDevinPreDurationAndPrompt(t *testing.T) {
 	const cmd = "pytest -q"
 	feedStdin(t, `{"hook_event_name":"UserPromptSubmit","session_id":"d2","prompt":"run the tests"}`, runHookDevinPrompt)
 	feedStdin(t, `{"session_id":"d2","tool_name":"exec","tool_input":{"command":"`+cmd+`"}}`, runHookDevinPre)
-	require.Empty(t, spooledRecords(t, dir), "pre + prompt hooks record no command")
-
 	feedStdin(t, `{"session_id":"d2","tool_name":"exec","tool_input":{"command":"`+cmd+`"},"tool_response":{"success":true}}`, runHookDevin)
+
+	// The prompt hook records the prompt itself — that is the point of it being a
+	// record of its own — while the pre hook records nothing at all.
 	rows := spooledRecords(t, dir)
-	require.Len(t, rows, 1)
-	assert.Equal(t, 0, *rows[0].Exit, "success:true → exit 0")
-	require.NotNil(t, rows[0].DurMs, "duration derived from the PreToolUse stamp")
-	assert.NotEmpty(t, rows[0].PromptID, "command traced to the cached prompt")
-	assert.Equal(t, "run the tests", rows[0].Prompt)
+	require.Len(t, rows, 2, "the prompt record plus one command; the pre hook adds neither")
+
+	prompt := rows[0]
+	require.Equal(t, rec.TypePrompt, prompt.Type)
+	assert.Equal(t, "run the tests", prompt.Prompt)
+	assert.Empty(t, prompt.Cmd, "a prompt record is not a command")
+
+	cmdRow := rows[1]
+	assert.Equal(t, 0, *cmdRow.Exit, "success:true → exit 0")
+	require.NotNil(t, cmdRow.DurMs, "duration derived from the PreToolUse stamp")
+	assert.Equal(t, prompt.ID, cmdRow.PromptID, "command traced to the cached prompt")
 }
 
 // TestMergeDevinConfigSchema verifies the emitted config.json shape: hooks nested

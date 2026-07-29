@@ -62,12 +62,25 @@ type QueryReq struct {
 	Session  string `json:"session,omitempty"`  // session id for ScopeSession
 	Cwd      string `json:"cwd,omitempty"`      // directory for ScopeCwd
 	Executor string `json:"executor,omitempty"` // executor filter, e.g. "claude-code"; "" = any
-	Tag      string `json:"tag,omitempty"`      // freeform user-tag filter (matches any effective tag); "" = any
-	Sort     string `json:"sort,omitempty"`     // "" = recency (newest first); "frecency" = frequency×recency
-	Fuzzy    bool   `json:"fuzzy,omitempty"`    // subsequence (fzf-style) matching instead of substring
-	Limit    int    `json:"limit,omitempty"`    // 0 = server default (200)
-	Offset   int    `json:"offset,omitempty"`
-	Dedupe   bool   `json:"dedupe,omitempty"` // collapse identical commands, newest wins
+	// HumanOnly drops every command yore attributed to an agent (any executor
+	// tag), leaving the ones the user typed. It is applied server-side on
+	// purpose: filtering after Limit would spend the row budget on rows the
+	// caller is about to throw away, and a machine where an agent ran all
+	// morning would answer a 1000-row request with a handful.
+	HumanOnly bool   `json:"human_only,omitempty"`
+	Tag       string `json:"tag,omitempty"`   // freeform user-tag filter (matches any effective tag); "" = any
+	Sort      string `json:"sort,omitempty"`  // "" = recency (newest first); "frecency" = frequency×recency
+	Fuzzy     bool   `json:"fuzzy,omitempty"` // subsequence (fzf-style) matching instead of substring
+	Limit     int    `json:"limit,omitempty"` // 0 = server default (200)
+	Offset    int    `json:"offset,omitempty"`
+	Dedupe    bool   `json:"dedupe,omitempty"` // collapse identical commands, newest wins
+
+	// WantPrompts asks for the prompt records behind the window as well, in
+	// QueryResp.Prompts. The agent explorer needs them because a prompt that
+	// triggered no command has no row to be discovered from. PromptDays bounds
+	// how far back they reach (0 = all).
+	WantPrompts bool `json:"want_prompts,omitempty"`
+	PromptDays  int  `json:"prompt_days,omitempty"`
 }
 
 // Sort modes for QueryReq.Sort.
@@ -77,10 +90,20 @@ const (
 )
 
 type QueryResp struct {
-	Rows   []rec.Record `json:"rows"`
-	Total  int          `json:"total"` // matches before Limit/Offset
-	Scope  string       `json:"scope"`
-	Remote RemoteInfo   `json:"remote"`
+	Rows  []rec.Record `json:"rows"`
+	Total int          `json:"total"` // matches before Limit/Offset
+	Scope string       `json:"scope"`
+	// Prompts are the TypePrompt records covering the same period, present only
+	// when QueryReq.WantPrompts asked for them. Rows already carry their prompt
+	// text (the daemon fills it in from its index), so these matter for exactly
+	// one thing: prompts that triggered no command and so appear in no row.
+	Prompts []rec.Record `json:"prompts,omitempty"`
+	// HiddenAgents is how many rows matched everything else and were dropped by
+	// HumanOnly. A UI that hides a whole category of history has to be able to
+	// say so — above all when the answer is otherwise "no matches" and the
+	// command the user is looking for is sitting behind the filter.
+	HiddenAgents int        `json:"hidden_agents,omitempty"`
+	Remote       RemoteInfo `json:"remote"`
 }
 
 type RemoteInfo struct {

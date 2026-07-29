@@ -12,6 +12,7 @@ import (
 
 	"yore/internal/config"
 	"yore/internal/rec"
+	"yore/internal/redact"
 	"yore/internal/spool"
 )
 
@@ -273,7 +274,7 @@ func TestRunHookClaudeCodeIgnoresNonBashAndJunk(t *testing.T) {
 }
 
 // TestRunHookClaudeCodeRedacts confirms the agent path shares the same secret
-// gate as the shell path: a credential-bearing command is never captured.
+// gate as the shell path: the credential is masked and the command is kept.
 func TestRunHookClaudeCodeRedacts(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("YORE_DIR", dir)
@@ -283,7 +284,12 @@ func TestRunHookClaudeCodeRedacts(t *testing.T) {
 	// assignment. The agent path must gate it exactly as the shell path does.
 	payload := `{"tool_name":"Bash","cwd":"/w","tool_input":{"command":"export DB_PASSWORD=hunter2"}}`
 	feedStdin(t, payload, func() { runHookClaudeCode() })
-	assert.Empty(t, spooledRecords(t, dir), "a secret-bearing agent command must be redacted, not captured")
+
+	rows := spooledRecords(t, dir)
+	require.Len(t, rows, 1, "the command is kept — only the credential goes")
+	assert.NotContains(t, rows[0].Cmd, "hunter2", "the secret must never be spooled")
+	assert.Contains(t, rows[0].Cmd, "export DB_PASSWORD=", "the rest of the command survives")
+	assert.Contains(t, rows[0].Cmd, redact.Mark("generic-token-assign"), "the marker names the rule that fired")
 }
 
 func TestPromptTracing(t *testing.T) {
@@ -302,10 +308,21 @@ func TestPromptTracing(t *testing.T) {
 		runHookClaudeCode)
 
 	rows := spooledRecords(t, dir)
-	require.Len(t, rows, 2, "two commands captured")
-	require.NotEmpty(t, rows[0].PromptID, "command must be traced to a prompt")
-	assert.Equal(t, rows[0].PromptID, rows[1].PromptID, "both commands share the prompt id")
-	assert.Equal(t, "add rate limiting to the API", rows[0].Prompt, "prompt text carried on the record")
+	require.Len(t, rows, 3, "one prompt record plus two commands")
+
+	prompt := rows[0]
+	require.Equal(t, rec.TypePrompt, prompt.Type, "the prompt is a record in its own right")
+	assert.Equal(t, "add rate limiting to the API", prompt.Prompt)
+	assert.Equal(t, agentClaudeCode, prompt.Tag)
+	assert.Empty(t, prompt.Cmd, "a prompt record is not a command")
+
+	cmds := rows[1:]
+	require.Equal(t, prompt.ID, cmds[0].PromptID, "command must be traced to the prompt record")
+	assert.Equal(t, prompt.ID, cmds[1].PromptID, "both commands share the prompt id")
+	// The text is stored once, on the prompt record. Copying it onto every
+	// command is what this change removed; the daemon rejoins them on read.
+	assert.Empty(t, cmds[0].Prompt, "prompt text must not be duplicated onto commands")
+	assert.Empty(t, cmds[1].Prompt, "prompt text must not be duplicated onto commands")
 
 	// A command in a session with no prompt is untraced (not an error).
 	feedStdin(t, `{"session_id":"other","tool_name":"Bash","tool_input":{"command":"ls"}}`, runHookClaudeCode)
@@ -326,8 +343,20 @@ func TestPromptHookRedactsSecrets(t *testing.T) {
 	require.NoError(t, config.EnsureDir(dir))
 	feedStdin(t, `{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"use export DB_PASSWORD=hunter2 please"}`,
 		runHookClaudePrompt)
-	_, ok := loadPromptState(dir, "s1")
-	assert.False(t, ok, "a secret-bearing prompt must not be persisted")
+
+	// The prompt is recorded — with the credential masked, not the whole prompt
+	// thrown away, so the tracing still works and the question is still readable.
+	rows := spooledRecords(t, dir)
+	require.Len(t, rows, 1)
+	assert.NotContains(t, rows[0].Prompt, "hunter2", "the secret must never be spooled")
+	assert.Contains(t, rows[0].Prompt, "please", "the rest of the prompt survives")
+	assert.Contains(t, rows[0].Prompt, redact.Mark("generic-token-assign"))
+
+	// The session state exists so the commands that follow can be traced to it,
+	// and it holds the id alone — never a second copy of the text.
+	ps, ok := loadPromptState(dir, "s1")
+	require.True(t, ok, "a redacted prompt is still a prompt")
+	assert.Equal(t, rows[0].ID, ps.ID)
 }
 
 func TestMergeClaudeHookInstallsBothEvents(t *testing.T) {

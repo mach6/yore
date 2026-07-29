@@ -68,6 +68,11 @@ func (m Model) handleDevicesKey(s string) (tea.Model, tea.Cmd) {
 	case "esc", "D", "q":
 		m.view = viewBrowse
 		return m, nil
+	case "?":
+		// This pane runs before the global keys, so ? has to be handled here too
+		// — otherwise the one screen with destructive keys is the one screen that
+		// cannot show you what they are.
+		return m.openHelp()
 	case "ctrl+c":
 		m.quitting = true
 		return m, tea.Quit
@@ -108,7 +113,7 @@ func (m Model) handleDevicesKey(s string) (tea.Model, tea.Cmd) {
 func (m Model) devicesTitle(w int) string {
 	// The key hints live in the contextual footer (see helpKeys); the title is
 	// just the pane name.
-	return clipW(m.th.Title.Render("Devices"), w)
+	return clipW(m.th.Title.Render("DEVICES"), w)
 }
 
 // renderDevices draws the enrolled-device list, padded to h lines.

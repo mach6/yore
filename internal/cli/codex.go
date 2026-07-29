@@ -6,11 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
-	"yore/internal/config"
 	"yore/internal/rec"
-	"yore/internal/redact"
 )
 
 // agentCodex is the executor tag stamped on commands captured from OpenAI's
@@ -62,10 +59,7 @@ func runHookCodex() {
 		// best-effort: use tool_response.exit_code when present, else unknown.
 		Exit: responseExitCode(in.ToolResponse),
 	}
-	if ps, ok := loadPromptState(dir, session); ok {
-		r.PromptID = ps.ID
-		r.Prompt = ps.Text
-	}
+	stampPrompt(dir, session, &r)
 	spoolRecord(dir, r)
 }
 
@@ -81,26 +75,7 @@ func runHookCodexPrompt() {
 	if json.Unmarshal(raw, &in) != nil {
 		return
 	}
-	text := strings.TrimSpace(in.Prompt)
-	session := codexSession(in.SessionID)
-	if text == "" || session == "" {
-		return
-	}
-	dir := stateDir()
-	cfg, _ := config.Load(dir)
-	if filter, _ := redact.Load(dir, cfg.IgnorePatterns, cfg.IgnoreDirs); filter.Sensitive(text) {
-		return
-	}
-	ps := promptState{ID: rec.NewID(), Text: text, Ms: time.Now().UnixMilli()}
-	b, err := json.Marshal(ps)
-	if err != nil {
-		return
-	}
-	path := promptStatePath(dir, session)
-	if os.MkdirAll(filepath.Dir(path), 0o700) != nil {
-		return
-	}
-	_ = os.WriteFile(path, b, 0o600)
+	recordPrompt(stateDir(), codexSession(in.SessionID), agentCodex, in.Cwd, in.Prompt)
 }
 
 // --- `yore init codex`: install the capture hooks --------------------------

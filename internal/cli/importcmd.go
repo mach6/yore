@@ -86,13 +86,20 @@ func runImport(format string, rest []string) int {
 			continue
 		}
 
-		// Drop secret-bearing entries before they ever reach the store.
+		// Mask credentials before they ever reach the store — years of shell
+		// history is full of them, and the first sync would otherwise ship the
+		// lot. The commands themselves are kept: that history is the whole point
+		// of importing. Entries the user asked to ignore are dropped outright.
 		kept := recs[:0]
-		var skipped int
+		var redacted int
 		for _, r := range recs {
-			if filter.Sensitive(r.Cmd) {
-				skipped++
+			if filter.Ignored(r.Cmd) {
 				continue
+			}
+			cmd, hits := filter.Redact(r.Cmd)
+			if len(hits) > 0 {
+				r.Cmd = cmd
+				redacted++
 			}
 			kept = append(kept, r)
 		}
@@ -107,7 +114,7 @@ func runImport(format string, rest []string) int {
 			}
 			added += n
 		}
-		fmt.Printf("%-40s %6d entries, %6d new, %5d secrets skipped\n", src.Path, len(recs), added, skipped)
+		fmt.Printf("%-40s %6d entries, %6d new, %5d secrets redacted\n", src.Path, len(recs), added, redacted)
 	}
 	return 0
 }
