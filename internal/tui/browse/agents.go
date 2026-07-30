@@ -10,7 +10,6 @@ import (
 
 	"yore/internal/match"
 	"yore/internal/rec"
-	"yore/internal/risk"
 	"yore/internal/tui/theme"
 )
 
@@ -639,10 +638,8 @@ func (m Model) cmdInfoLines(r rec.Record, w, bodyCap int) []string {
 		m.infoRow("Time", theme.AbsTime(r.StartMs), w),
 		m.infoRow("Duration", dur, w),
 		m.infoRowSegs("Exit", exitSegs(th, r), w),
+		m.infoRowSegs("Risk", riskSegs(th, m.riskRS.Assess(r.Cmd)), w),
 	)
-	if a := m.riskRS.Assess(r.Cmd); a.Level > risk.None {
-		lines = append(lines, m.infoRowSegs("Risk", riskSegs(th, a), w))
-	}
 	return lines
 }
 

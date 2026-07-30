@@ -193,8 +193,9 @@ leaving everything else — including the agent's own auth — exactly as it was
   upgrades.
   Commands are **syntax-highlighted everywhere they appear** — the table, both
   details panes, the top-commands stats — hosts *and* executors carry stable
-  identity hues, and the details panes flag risky commands (`Risk  ⚠ high
-  (script-exec)`) using the same rules as the MCP `assess_risk` tool.
+  identity hues, and every command's details carry a verdict on how dangerous it
+  is (`Risk  ⚠ high (script-exec)`, `Risk  ✓ safe`) using the same rules as the
+  MCP `assess_risk` tool.
 - **`hs` + scoped `hsa`/`hss`/`hsc`/`hsw`** search aliases; `yore search
   --headless` for scripts and pipes.
 - **Freeform tags** — label commands and sessions (`yore tag add refactor`,
@@ -216,7 +217,8 @@ leaving everything else — including the agent's own auth — exactly as it was
   failed"*) — **across every machine you own**. `yore doctor` verifies it.
   Risk rules are yours to extend: `~/.config/yore/risk.toml` adds `[[rule]]`
   patterns and an `ignore` list on top of the built-ins, fail-safe like
-  `redact.yml`, and the browser and `assess_risk` read the same file.
+  `redact.yml`, and the browser and `assess_risk` read the same file. Risk is
+  **advisory** — yore labels commands, it never blocks one.
 - **Secrets redaction** from an editable, fail-safe `~/.config/yore/redact.yml`;
   runs on capture, on import, and on the history seed. It **masks the credential
   and keeps the command** — `export DB_PASSWORD=⟪redacted:generic-token-assign⟫`

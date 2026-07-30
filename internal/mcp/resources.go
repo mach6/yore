@@ -22,8 +22,8 @@ type resourceDef struct {
 	read func() (string, *rpcError)
 }
 
-// buildResources registers the auto-injected context resources. (risk/summary
-// arrives with the risk engine in a later phase.)
+// buildResources registers the context resources a client can attach. They are
+// offered, never pushed: one is read only when the client asks for it.
 func (s *Server) buildResources() []resourceDef {
 	return []resourceDef{
 		{

@@ -82,7 +82,8 @@ Concise map by role. Leaf-contract packages import nothing else in the tree.
 - **tui/search** — the inline Ctrl-R panel. **tui/browse** — the full-screen
   browser: three tiled browse panes plus the stats, agent-explorer, and devices
   screens. See "The browser" below.
-- **risk** — a deterministic, rule-based command classifier (`safe…critical`).
+- **risk** — a deterministic, rule-based command classifier (`safe…critical`),
+  advisory only: it labels history, it never gates execution. See "Risk" below.
 - **mcp** — the local, read-only MCP server (`yore mcp-serve`) over the daemon
   query layer; exposes history to coding agents. See "MCP server" below.
 
@@ -598,21 +599,23 @@ arbitrary words as flags. Paths dim their directory and keep the leaf normal,
 so the eye lands on the name rather than the prefix.
 
 **Risk is a glyph-first ramp** shared verbatim with the MCP output (`⛔`
-critical, `⚠` high, `▲` medium, `•` low), shown as a `Risk` row in the two
-command-level details panes only when a rule matched. Critical borrows the exit
-red and medium the match amber; high is the palette's one ink of its own, an
-orange seated between them — so the ramp reads as four levels without spending
-four new colors, and red/green stay reserved for outcomes.
+critical, `⚠` high, `▲` medium, `•` low, `✓` safe), shown as a `Risk` row in the
+two command-level details panes — for every command, clean ones included. A row
+that appears only on a hit cannot be told from a rule that never ran, so the
+clean verdict is stated: `Risk  ✓ safe`. The category is dropped when it merely
+repeats the level, so a safe command reads once rather than `safe (safe)`; a
+command silenced by the user's `ignore` list keeps its `(ignored)` and says why
+it went quiet. Critical borrows the exit red and safe the exit green — the same
+`✓` means the same thing on the `Exit` and `Risk` rows — medium the match amber;
+high is the palette's one ink of its own, an orange seated between them, so the
+ramp reads as five levels while spending one new color.
 
-**Risk rules are the user's.** The built-in table ships compiled in;
-`~/.config/yore/risk.toml` extends it — `[[rule]]` entries with a Go regexp, a
-level, and an optional category/reason, plus a top-level `ignore` list that
-neutralizes false positives by naming them. Loading is fail-safe exactly like
-`redact.yml`: a missing file is silent, a broken file or entry is skipped with
-a warning, and the built-ins are never lost. `yore doctor` is where a skipped
-rule gets named (the browser's alt-screen and the MCP server's stdout-owned
-transport have nowhere to say it), and the browser and `assess_risk` load the
-same file, so the TUI and an agent asking about the same command always agree.
+The prompt details pane has no `Risk` row: a prompt is not a command, and there
+is nothing to assess until it triggers one.
+
+What the ramp is ranking, and how a user's `risk.toml` reshapes it, is the
+"Risk" section below. The row is a label on history, not a guard: nothing the
+browser shows has any bearing on what an agent is allowed to run.
 
 **Sample honesty.** The stats and agent screens aggregate the whole archive, so
 the header normally reads "all history". It derives that from the response
@@ -817,15 +820,99 @@ corpus: tools take a `scope` (`local`/`all`), and `all` answers over every
 enrolled device while the sync server still holds only ciphertext — a question
 like *"have I run this migration anywhere?"* a single-machine tool cannot answer.
 It exposes tools (`search_commands`, `command_status`, `what_failed`,
-`get_prompts`, `replay_agent_session`, `assess_risk`, …) and auto-injected
-resources (`yore://history/recent`, `…/risk/summary`, …). `yore init claude-code`
-registers it in `~/.claude.json` (or `./.mcp.json` with `--project`).
+`get_prompts`, `replay_agent_session`, `assess_risk`, …) and context resources
+(`yore://history/recent`, `…/risk/summary`, …) over `resources/list` and
+`resources/read`. Nothing is pushed: a tool runs only when the model calls it,
+and a resource enters context only when the client attaches it — in Claude Code,
+an explicit `@` reference. `yore init claude-code` registers the server in
+`~/.claude.json` (or `./.mcp.json` with `--project`).
 
-**Risk** (`internal/risk`) is a deterministic, explainable classifier
-(`safe…critical` with a category and reason, highest-severity-wins; a command
-that only reads or prints is safe). It backs the `assess_risk` tool — which also
-reports how often the command has run across your machines and whether it
-succeeded — and the `risk/summary` resource. No model is involved.
+**Risk** backs the `assess_risk` tool — which also reports how often the command
+has run across your machines and whether it succeeded — and the `risk/summary`
+resource. See the next section.
+
+## Risk (`internal/risk`)
+
+A deterministic, rule-based classifier for how dangerous a shell command is:
+`safe` < `low` < `medium` < `high` < `critical`, each verdict carrying a category
+and a one-line reason. No model, no network, no state — the same command always
+gets the same answer, and the answer can always be explained.
+
+**It is advisory, and never blocks anything.** This is the property to be clear
+about, because a tool that rates danger invites the assumption that it prevents
+it. The classifier is not consulted anywhere in an execution path. Note that
+this is a choice, not a missing capability: the `PreToolUse` hook `yore init`
+installs for Claude Code and Devin already receives the command *before* it
+runs, and could adjudicate. It deliberately doesn't — it stamps a start time so
+`PostToolUse` can report a real duration, then exits 0 without printing, like
+every other capture hook. A recorder that can veto is a recorder that can wedge
+a session, and the prompt-latency invariant makes the same argument for shells.
+
+So there are exactly three consumers, and all three only *display* a verdict:
+the `Risk` row in the browser's two command-level details panes, the
+`assess_risk` MCP tool, and the `risk/summary` resource. An agent about to run a
+destructive command touches none of them unless the model volunteers to ask
+first, and nothing obliges it to — or stops it from proceeding when the answer
+comes back `critical`.
+
+**Reaching a verdict** takes three steps. A command that cannot execute anything
+short-circuits to safe: empty, a `#` comment, an `alias …` definition, or a bare
+`echo`/`printf` — the last only when it holds no `| & ; > <`, backtick, or `$(`,
+so `echo $(rm -rf x)` does not slip through. Then the user's `ignore` patterns
+are tried, and a match returns safe while naming the pattern that silenced it.
+Otherwise every rule is scanned and the highest severity wins; ties keep the
+first, which is why the table is ordered most-severe-first within a level.
+
+**The built-in rules** (`risk.go`), 19 of them. Because severity wins over
+order, `sudo npm install` is high (package-install), not medium.
+
+| Level | Matches | Category |
+|---|---|---|
+| ⛔ critical | `rm` that is both recursive *and* forced (`-rf`, `-fr`, `-r -f`, long forms) | destructive |
+| ⛔ critical | `git push --force` — but not `--force-with-lease` | destructive |
+| ⛔ critical | `git reset --hard` | destructive |
+| ⛔ critical | `DROP TABLE` / `DATABASE` / `SCHEMA` | destructive |
+| ⛔ critical | redirect into a raw disk (`> /dev/sd*`, `nvme*`, `disk*`) | destructive |
+| ⛔ critical | `mkfs.*` | destructive |
+| ⛔ critical | `dd … of=/dev/…` | destructive |
+| ⚠ high | package installs — npm/yarn/pnpm, pip, cargo, brew, gem, `go install`/`get`, apt/dnf/yum/pacman/apk | package-install |
+| ⚠ high | `chmod` to a world- or group-writable mode (a 2, 3, 6, or 7 digit) | permission |
+| ⚠ high | `chown -R` | permission |
+| ⚠ high | `curl`/`wget` piped into a shell | script-exec |
+| ⚠ high | running a local script (`./x.sh`, `bash x.sh`, `sudo sh x.sh`) | script-exec |
+| ⚠ high | `git clean -f` | destructive |
+| ▲ medium | `sudo` | privilege |
+| ▲ medium | `docker rm`/`kill`/`stop`/`prune` | container |
+| ▲ medium | `kill`, `killall`, `pkill` | process |
+| ▲ medium | `git reset`, `git checkout -- `, `git stash drop`, `git branch -d` | destructive |
+| • low | `curl`, `wget`, `ssh`, `scp`, `rsync` | network |
+| • low | `git push` | vcs |
+
+Two rules live in Go rather than in a regexp, and both for the same reason —
+being right matters more than being uniform. `rm` demands recursive *and* force
+in the flag clusters, so `rm -r` alone is not critical; and `git push --force`
+carves out `--force-with-lease`, which RE2 cannot express without negative
+lookahead and which would otherwise flag the *safe* form as the most dangerous
+thing in the table.
+
+**What it does not see.** Matching is over the raw command string, with no shell
+parsing: a dangerous command quoted inside a harmless one still trips its rule,
+and one hidden behind an alias or a `Makefile` target does not trip anything.
+This is the deliberate trade — a classifier that is wrong in an obvious,
+inspectable direction beats one that is wrong subtly.
+
+**Risk rules are the user's.** The built-in table ships compiled in;
+`~/.config/yore/risk.toml` extends it — `[[rule]]` entries with a Go regexp, a
+level, and an optional category/reason, plus a top-level `ignore` list that
+neutralizes false positives by naming them. User rules are appended after the
+built-ins and severity wins, so a rule can only ever *escalate* a command;
+de-escalation is what `ignore` is for, and it goes all the way to safe. Loading
+is fail-safe exactly like `redact.yml`: a missing file is silent, a broken file
+or entry is skipped with a warning, and the built-ins are never lost — a typo
+cannot switch risk assessment off. `yore doctor` is where a skipped rule gets
+named (the browser's alt-screen and the MCP server's stdout-owned transport have
+nowhere to say it), and the browser and `assess_risk` load the same file, so the
+TUI and an agent asking about the same command always agree.
 
 ## Shell integration modes
 

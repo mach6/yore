@@ -459,8 +459,9 @@ func hueSeg(th *theme.Theme, name string) []styledSeg {
 	return []styledSeg{{text: name, style: th.Host(name)}}
 }
 
-// riskStyle maps a risk level to its ink: critical borrows the exit red,
-// medium the match amber, and high is the ramp's own orange between them.
+// riskStyle maps a risk level to its ink: critical borrows the exit red and
+// safe the exit green — the same ✓ means the same thing on both rows — medium
+// the match amber, and high is the ramp's own orange between them.
 func riskStyle(th *theme.Theme, l risk.Level) lipgloss.Style {
 	switch l {
 	case risk.Critical:
@@ -469,6 +470,8 @@ func riskStyle(th *theme.Theme, l risk.Level) lipgloss.Style {
 		return th.RiskHigh
 	case risk.Medium:
 		return th.Match
+	case risk.None:
+		return th.ExitOK
 	default:
 		return th.Dim
 	}
@@ -476,9 +479,12 @@ func riskStyle(th *theme.Theme, l risk.Level) lipgloss.Style {
 
 // riskSegs renders a verdict as "⚠ high (script-exec)": glyph and level in the
 // tier's ink, the category dim. Glyph-first, so the tier survives without color.
+// A clean verdict is categorized "safe", which would only stutter after the
+// level, so the category is dropped when it repeats the label — but "ignored"
+// survives, since a row silenced by the user's risk.toml should say so.
 func riskSegs(th *theme.Theme, a risk.Assessment) []styledSeg {
 	segs := []styledSeg{{text: a.Level.Glyph() + " " + a.Level.String(), style: riskStyle(th, a.Level)}}
-	if a.Category != "" {
+	if a.Category != "" && a.Category != a.Level.String() {
 		segs = append(segs, styledSeg{text: " (" + a.Category + ")", style: th.Dim})
 	}
 	return segs
@@ -535,9 +541,9 @@ func (m *Model) syncDetail() {
 	}
 	meta("Duration", dur)
 	metaSegs("Exit", exitSegs(m.th, r))
-	if a := m.riskRS.Assess(r.Cmd); a.Level > risk.None {
-		metaSegs("Risk", riskSegs(m.th, a))
-	}
+	// Every command carries the row, clean ones included: a Risk line that only
+	// appears when something is wrong can't be told from a rule that never ran.
+	metaSegs("Risk", riskSegs(m.th, m.riskRS.Assess(r.Cmd)))
 
 	m.detail.SetContent(strings.TrimRight(b.String(), "\n"))
 	m.detail.SetYOffset(0)

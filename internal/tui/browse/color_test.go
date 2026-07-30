@@ -84,7 +84,7 @@ func TestPathSegs(t *testing.T) {
 		"pathSegs must honor its width budget")
 }
 
-// TestRiskStyleAndSegs: the four-level ramp keeps its inks, and a verdict
+// TestRiskStyleAndSegs: the five-level ramp keeps its inks, and a verdict
 // renders glyph-first with a dim category.
 func TestRiskStyleAndSegs(t *testing.T) {
 	th := truecolorTheme()
@@ -96,6 +96,7 @@ func TestRiskStyleAndSegs(t *testing.T) {
 		{risk.High, th.RiskHigh},
 		{risk.Medium, th.Match},
 		{risk.Low, th.Dim},
+		{risk.None, th.ExitOK},
 	} {
 		require.Equal(t, tc.style.GetForeground(), riskStyle(th, tc.level).GetForeground(), tc.level.String())
 	}
@@ -104,6 +105,13 @@ func TestRiskStyleAndSegs(t *testing.T) {
 	require.Equal(t, "⚠ high (script-exec)", segText(segs))
 	require.Equal(t, th.RiskHigh.GetForeground(), segs[0].style.GetForeground())
 	require.Equal(t, th.Dim.GetForeground(), segs[1].style.GetForeground())
+
+	// A clean verdict says "safe" once, not "safe (safe)" — but a row silenced
+	// by the user's ignore patterns still names why it went quiet.
+	require.Equal(t, "✓ safe",
+		segText(riskSegs(th, risk.Assessment{Level: risk.None, Category: "safe", Reason: "no risky pattern matched"})))
+	require.Equal(t, "✓ safe (ignored)",
+		segText(riskSegs(th, risk.Assessment{Level: risk.None, Category: "ignored", Reason: "matches ignore pattern"})))
 }
 
 // TestWrapHighlightedSyntaxAndMatch: the detail wrap carries the same syntax
@@ -209,8 +217,8 @@ func TestCommandsSegsSplit(t *testing.T) {
 
 // --- the Risk row in the panes (plain, strip-based) ------------------------
 
-// TestDetailShowsRiskRow: a risky selection grows a Risk line; a safe one has
-// none — no line at all, not a "safe" line.
+// TestDetailShowsRiskRow: every selection carries a Risk line — a risky one
+// names its tier, a clean one says so, because silence reads as "not checked".
 func TestDetailShowsRiskRow(t *testing.T) {
 	f := &fakeBackend{}
 	m := ready(t, f, 120, 40)
@@ -222,7 +230,8 @@ func TestDetailShowsRiskRow(t *testing.T) {
 
 	m, _ = step(t, m, press("down"))
 	out = strip(m.View())
-	require.NotContains(t, out, "Risk", "a safe selection shows no Risk row at all")
+	require.Contains(t, out, "Risk", "a safe selection keeps the row")
+	require.Contains(t, out, "✓ safe", "and says the verdict rather than leaving a blank")
 }
 
 // TestDetailRiskRowStaysWithinWidth: the new row obeys the frame like every
