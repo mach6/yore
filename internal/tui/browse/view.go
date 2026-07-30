@@ -74,6 +74,11 @@ func (m Model) View() string {
 	}
 	// The key panel takes over the middle, keeping the header and status bar so
 	// you can still see which view you asked about.
+	if m.showCols {
+		mid = m.renderColumns(w, m.midHeight)
+	}
+	// The key panel outranks the columns pane: it is what you press ? to see, and
+	// what it lists while the columns pane is up are the columns pane's own keys.
 	if m.showHelp {
 		mid = m.renderHelp(w, m.midHeight)
 	}
@@ -316,71 +321,10 @@ func (m Model) hostLine(i, w int) string {
 
 // --- results table ------------------------------------------------------
 
-type colLayout struct {
-	relW, hostW, exitW, durW, execW, tagW, cmdW int
-	showHost, showExec, showTag                 bool
-}
-
-// colLayout distributes the table content width across fixed columns, dropping
-// optional columns (executor, tag, duration, host, exit) when the terminal is
-// too narrow so the command always keeps room and the row never overflows.
-//
 // Executor and tags are two columns, never one. They answer different questions
 // — which agent ran this, versus what did I label it — and merging them meant a
-// user tag competed for cells with "claude-code" on every agent row. Each
-// appears only when a visible row actually carries one. Executor sheds first: it
-// is also in the details pane, the agent explorer, and stats, whereas a user tag
-// is shown nowhere else in the table.
-func (m Model) colLayout() colLayout {
-	w := m.tableWidth
-	showHost := m.hosts[m.hostSel].scope == proto.ScopeAll
-	showExec, showTag := m.hasExec, m.hasTags
-	relW, exitW, durW, hostW, execW, tagW := 8, 4, 7, 0, 0, 0
-	if showHost {
-		hostW = 14
-	}
-	if showExec {
-		execW = 12
-	}
-	if showTag {
-		tagW = 12
-	}
-	prefix := func() int {
-		p := 0
-		for _, c := range []int{relW, hostW, exitW, durW, execW, tagW} {
-			if c > 0 {
-				p += c + 1
-			}
-		}
-		return p
-	}
-	if prefix()+5 > w {
-		execW, showExec = 0, false
-	}
-	if prefix()+5 > w {
-		tagW, showTag = 0, false
-	}
-	if prefix()+5 > w {
-		durW = 0
-	}
-	if prefix()+5 > w {
-		hostW, showHost = 0, false
-	}
-	if prefix()+5 > w {
-		exitW = 0
-	}
-	if prefix()+3 > w {
-		relW = 0
-	}
-	cmdW := w - prefix()
-	if cmdW < 0 {
-		cmdW = 0
-	}
-	return colLayout{
-		relW: relW, hostW: hostW, exitW: exitW, durW: durW, execW: execW, tagW: tagW, cmdW: cmdW,
-		showHost: showHost, showExec: showExec, showTag: showTag,
-	}
-}
+// user tag competed for cells with "claude-code" on every agent row. The set, the
+// widths, the shedding order and the sort keys all live in columns.go.
 
 func (m Model) tableInner(w, h int) string {
 	l := m.colLayout()
@@ -423,87 +367,63 @@ func (m Model) tableInner(w, h int) string {
 	return padLines(lines, w, h)
 }
 
+// tableHeader names each visible column, with the sort arrow on the one the table
+// is ordered by — where the cell is wide enough to hold it. Narrow columns leave
+// it to the status bar rather than truncating the name to make room for a glyph.
 func (m Model) tableHeader(l colLayout, w int) string {
 	var segs []styledSeg
-	add := func(text string, width int, left bool) {
+	for c := range tableColCount {
+		width := l.w[c]
 		if width <= 0 {
-			return
+			continue
 		}
-		cell := padLeft(text, width)
-		if left {
-			cell = padRight(truncCols(text, width), width)
+		spec := tableSpecs[c]
+		title := spec.title
+		if m.sortCol == c && runewidth.StringWidth(title)+1 <= width {
+			title += sortArrow(m.sortDesc)
 		}
-		segs = append(segs,
-			styledSeg{text: cell, style: m.th.Dim},
-			styledSeg{text: " ", raw: true},
-		)
-	}
-	add("time", l.relW, false)
-	if l.showHost {
-		add("host", l.hostW, true)
-	}
-	add("exit", l.exitW, true)
-	add("dur", l.durW, false)
-	if l.showExec {
-		add("exec", l.execW, true)
-	}
-	if l.showTag {
-		add("tags", l.tagW, true)
-	}
-	if l.cmdW > 0 {
-		segs = append(segs, styledSeg{text: padRight("command", l.cmdW), style: m.th.Dim})
+		segs = append(segs, styledSeg{text: alignCell(title, width, spec.right), style: m.th.Dim})
+		if c != colCmd {
+			segs = append(segs, styledSeg{text: " ", raw: true})
+		}
 	}
 	return composeSegs(segs, false, w, m.th)
+}
+
+// alignCell pads text into a cell of exactly width columns, right-aligned for the
+// quantities and left-aligned (truncating) for the names.
+func alignCell(text string, width int, right bool) string {
+	if right {
+		return padLeft(text, width)
+	}
+	return padRight(truncCols(text, width), width)
 }
 
 func (m Model) renderRow(r rec.Record, l colLayout, q match.Query, selected bool, w int, now int64) string {
 	th := m.th
 	var segs []styledSeg
-	sep := func() { segs = append(segs, styledSeg{text: " ", raw: true}) }
 
-	if l.relW > 0 {
-		segs = append(segs, styledSeg{text: padLeft(theme.RelTime(now, r.StartMs), l.relW), style: th.Dim})
-		sep()
-	}
-	if l.showHost {
-		segs = append(segs, styledSeg{text: padRight(truncCols(r.Hostname, l.hostW), l.hostW), style: th.Host(r.Hostname)})
-		sep()
-	}
-	if l.exitW > 0 {
-		mark, style := exitMarker(th, r)
-		segs = append(segs, styledSeg{text: padRight(truncCols(mark, l.exitW), l.exitW), style: style})
-		sep()
-	}
-	if l.durW > 0 {
-		dur := ""
-		if r.DurMs != nil {
-			dur = theme.Duration(*r.DurMs)
+	for c := range colCmd {
+		width := l.w[c]
+		if width <= 0 {
+			continue
 		}
-		segs = append(segs, styledSeg{text: padLeft(dur, l.durW), style: th.Dim})
-		sep()
+		spec := tableSpecs[c]
+		text, style := spec.cell(th, r, now)
+		segs = append(segs,
+			styledSeg{text: alignCell(text, width, spec.right), style: style},
+			styledSeg{text: " ", raw: true},
+		)
 	}
-	if l.showExec {
-		// Metadata, so Dim — the same weight as the host and duration cells, and
-		// deliberately not the accent the user's own tags get. Blank for a command
-		// the user typed.
-		segs = append(segs, styledSeg{text: padRight(truncCols(r.Executor, l.execW), l.execW), style: th.Dim})
-		sep()
-	}
-	if l.showTag {
-		// The user's own labels, in the accent: they are the one thing in the row
-		// that is there because somebody put it there.
-		segs = append(segs, styledSeg{text: padRight(truncCols(strings.Join(r.Tags, ","), l.tagW), l.tagW), style: th.Accent})
-		sep()
-	}
-	if l.cmdW > 0 {
+	if l.w[colCmd] > 0 {
 		if selected && m.focus == focusTable && m.hscroll > 0 {
 			// The selected row scrolls horizontally to reveal a truncated command
 			// (it renders as a flat selection bar anyway, so syntax color is moot).
-			segs = append(segs, styledSeg{text: hOffset(oneLine(r.Cmd), m.hscroll, l.cmdW), raw: true})
+			segs = append(segs, styledSeg{text: hOffset(oneLine(r.Cmd), m.hscroll, l.w[colCmd]), raw: true})
 		} else {
-			cmdSegs, used := commandSegments(th, r.Cmd, q, l.cmdW)
+			cmdSegs, used := commandSegments(th, r.Cmd, q, l.w[colCmd])
 			segs = append(segs, cmdSegs...)
-			if pad := l.cmdW - used; pad > 0 {
+			if pad := l.w[colCmd] - used; pad > 0 {
 				segs = append(segs, styledSeg{text: strings.Repeat(" ", pad), raw: true})
 			}
 		}
@@ -723,6 +643,15 @@ func (m Model) statusBar(w int) string {
 		}
 		if m.tagFilter != "" {
 			pieces = append(pieces, th.Accent.Render("tag: "+m.tagFilter))
+		}
+		// The sort, named only when it is not the order the table opens in — and
+		// named in words, since a narrow column's header has no room for the arrow.
+		if !m.sortedByDefault() {
+			pieces = append(pieces, th.Accent.Render(
+				"sort: "+tableSpecs[m.sortCol].title+" "+sortArrow(m.sortDesc)))
+		}
+		if n := m.hiddenColCount(); n > 0 {
+			pieces = append(pieces, th.Dim.Render(plural(n, "column")+" hidden"))
 		}
 		// A filter that drops a whole category of history has to say so. Without
 		// this the view is indistinguishable from one where no agent ever ran, and

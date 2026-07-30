@@ -42,6 +42,9 @@ func mouseRow(gesture, desc string) keyhelp.Row {
 
 // helpGroups is every binding that does something in the current view.
 func (m Model) helpGroups() []keyhelp.Group {
+	if m.showCols {
+		return columnsGroups()
+	}
 	switch m.view {
 	case viewStats:
 		return m.statsGroups()
@@ -101,6 +104,9 @@ func (m Model) browseGroups() []keyhelp.Group {
 			row("T/E", "filter by any tag/executor", "T", "E"),
 			row("H", "cycle the host scope", "H"),
 			row("1-5", "time window", "1", "2", "3", "4", "5"),
+		}},
+		{Title: "COLUMNS", Rows: []keyhelp.Row{
+			row("c", "show, hide, and sort by column", "c"),
 		}},
 		{Title: "ACT", Rows: act},
 		{Title: "GO", Rows: globalRows("")},
@@ -183,6 +189,27 @@ func devicesGroups() []keyhelp.Group {
 	}
 }
 
+// columnsGroups is the columns pane, which owns its keys while it is up: it
+// covers the table it reshapes, so nothing from the view beneath may be claimed.
+func columnsGroups() []keyhelp.Group {
+	return []keyhelp.Group{
+		{Title: "MOVE", Rows: []keyhelp.Row{
+			row("↑/k", "up", "up", "k"),
+			row("↓/j", "down", "down", "j"),
+			row("g/G", "first/last", "g", "G", "home", "end"),
+		}},
+		{Title: "COLUMN", Rows: []keyhelp.Row{
+			row("space/x", "show or hide it", " ", "x"),
+			row("s/enter", "sort by it (again reverses)", "s", "enter"),
+		}},
+		{Title: "GO", Rows: []keyhelp.Row{
+			row("esc/c/q", "back to the table", "esc", "c", "q"),
+			row("?", "these keys", "?"),
+			row("^c", "quit", "ctrl+c"),
+		}},
+	}
+}
+
 // globalRows are the keys handled for every view that reaches the global switch
 // — browse, stats and the agent explorer. `except` drops the one that would name
 // the view you are already in, since there it reads as "back", listed separately.
@@ -224,6 +251,13 @@ func (m Model) footerRows() []keyhelp.Row {
 		return taggingRows()
 	case m.showHelp:
 		return m.helpOpenRows()
+	case m.showCols:
+		return []keyhelp.Row{
+			row("↑↓", "column", "up", "down"),
+			row("space", "show/hide", " "),
+			row("s", "sort by it", "s"),
+			row("esc", "back", "esc"),
+		}
 	case m.view == viewDevices && m.devConfirm != "":
 		return confirmDeviceRows(m.devApproving)
 	}

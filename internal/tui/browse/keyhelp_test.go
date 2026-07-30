@@ -24,6 +24,7 @@ var handlerFuncs = map[string]bool{
 	"handleAgentsKey":  true,
 	"handleDevicesKey": true,
 	"handleHelpKey":    true,
+	"handleColumnsKey": true,
 }
 
 // handledKeys reads the package's own source and returns every key string its
@@ -94,6 +95,13 @@ func describedKeys(t *testing.T) map[string]bool {
 			}
 			m.zoom = true
 			rows = append(rows, m.footerRows()...)
+			// The columns pane is a modal over the table, with its own keys.
+			m.zoom, m.showCols = false, true
+			rows = append(rows, m.footerRows()...)
+			for _, g := range m.helpGroups() {
+				rows = append(rows, g.Rows...)
+			}
+			m.showCols = false
 		}
 	}
 	rows = append(rows, confirmDeleteRows()...)

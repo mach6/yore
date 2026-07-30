@@ -183,8 +183,8 @@ leaving everything else — including the agent's own auth — exactly as it was
   with its tabs in the same top-right corner everywhere. `yore stats` and
   `yore agents` open straight on those two screens. Separate `exec` and `tags`
   columns, `e`/`t` filter by the row's executor/tag and `E`/`T` by any you type,
-  `H` cycles the
-  host scope, `Ctrl+T` tags a row, `S` sync-now; Enter recalls, `y` copies. (yore
+  `H` cycles the host scope, `c` opens a **columns pane** to show, hide, and sort
+  by any column, `Ctrl+T` tags a row, `S` sync-now; Enter recalls, `y` copies. (yore
   leaves your own `h` alone.) Pane sizes you drag persist to
   `~/.config/yore/ui.toml` — kept out of your hand-edited `config.toml`.
   Commands are **syntax-highlighted everywhere they appear** — the table, both
@@ -254,7 +254,8 @@ in [architecture.md](docs/architecture.md)); all state lives under
 | Read a command/prompt that's cut off with `…` | `←`/`→` scroll the selected row horizontally |
 | Capture what Claude Code / Devin runs + let it query history (MCP) | `yore init claude-code` \| `yore init devin` (once) |
 | See only what an agent ran | `yore search --executor claude-code` |
-| Tag commands/sessions and filter by tag | `yore tag add refactor` · `yore search --tag refactor` |
+| Tag commands/sessions and filter by tag | `yore tag add refactor` · `yore search --tag refactor` · `T` in the browser |
+| Sort by duration, or hide a column you don't need | `c` in the browser — `s` sorts by the highlighted column, `space` hides it |
 | See what your tags actually cover | `yore tag list` (counts commands; `--scope all` for every machine) |
 | Let an agent check a command's risk / history | it calls the `assess_risk` MCP tool |
 | Grep history in a script | `hs <query>` \| … or `yore search --headless <query>` |

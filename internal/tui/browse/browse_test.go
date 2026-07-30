@@ -758,8 +758,8 @@ func TestExecutorAndTagColumns(t *testing.T) {
 	require.True(t, m.hasExec, "a row an agent ran should set hasExec")
 	require.True(t, m.hasTags, "a labelled row should set hasTags")
 	l := m.colLayout()
-	require.True(t, l.showExec, "the exec column shows when a row carries an executor")
-	require.True(t, l.showTag, "the tags column shows when a row carries a tag")
+	require.True(t, l.shows(colExec), "the exec column shows when a row carries an executor")
+	require.True(t, l.shows(colTags), "the tags column shows when a row carries a tag")
 
 	out := strip(m.View())
 	require.Containsf(t, out, "exec", "table header should name the exec column:\n%s", out)
@@ -969,7 +969,7 @@ func TestTagFilterNoTag(t *testing.T) {
 	m := ready(t, f, 120, 40)
 	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("ls", "vim"))})
 	require.False(t, m.hasTags, "no rows carry a tag")
-	require.False(t, m.colLayout().showTag, "the tag column stays hidden without tags")
+	require.False(t, m.colLayout().shows(colTags), "the tag column stays hidden without tags")
 
 	// t on an untagged row flashes "no tag" and leaves the filter empty.
 	m, cmd := step(t, m, press("t"))

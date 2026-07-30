@@ -268,10 +268,21 @@ type Model struct {
 	// editing and doubles as the "box is open" flag.
 	axis        filterAxis
 	filterInput textinput.Model
-	flash       string
-	flashID     int
-	quitting    bool
-	accepted    string // command the user chose with enter; read by Run on exit
+
+	// The results table's columns. Both are session state, not settings, for the
+	// reason toggleHideAgents gives: a keystroke that quietly rewrote config would
+	// make an experiment permanent, and reordering or hiding a column is the most
+	// experimental thing in the view. An array, not a map, because the Model is
+	// copied on every update and a map would be shared between the copies.
+	colHidden [tableColCount]bool
+	sortCol   tableCol
+	sortDesc  bool
+	showCols  bool // the columns pane, over the view it describes
+	colSel    int  // cursor within that pane
+	flash     string
+	flashID   int
+	quitting  bool
+	accepted  string // command the user chose with enter; read by Run on exit
 
 	// devices view: the enrolled machines over the enrollment tokens.
 	devices    []proto.DeviceInfo
@@ -385,6 +396,8 @@ func NewModel(b Backend, opts Options) Model {
 		ti:          ti,
 		tagInput:    tagInput,
 		filterInput: filterInput,
+		sortCol:     defaultSort.col,
+		sortDesc:    defaultSort.desc,
 		afilter:     afilter,
 		detail:      vp,
 		hosts:       []hostItem{{label: "All hosts", scope: proto.ScopeAll}},
@@ -777,6 +790,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleHelpKey(s)
 	}
 
+	// The columns pane covers the table it reshapes, for the same reason.
+	if m.showCols {
+		return m.handleColumnsKey(s)
+	}
+
 	// Devices view swallows its own keys.
 	if m.view == viewDevices {
 		return m.handleDevicesKey(s)
@@ -848,6 +866,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openFilterEntry(axisExec)
 	case "H":
 		return m.cycleHost()
+	case "c":
+		return m.toggleColumns()
 	case "A":
 		return m.toggleHideAgents()
 	case "ctrl+t":
@@ -1031,6 +1051,8 @@ func (m *Model) applyPeriodFilter() {
 			break
 		}
 	}
+	// The rows arrive newest-first; put the chosen column's order on top of that.
+	m.sortRows()
 	m.clampWindow()
 }
 
@@ -1698,7 +1720,7 @@ func (m Model) hScrollTarget() (text string, colW int, ok bool) {
 		if !sel {
 			return "", 0, false
 		}
-		return oneLine(r.Cmd), m.colLayout().cmdW, true
+		return oneLine(r.Cmd), m.colLayout().w[colCmd], true
 	}
 	return "", 0, false
 }
