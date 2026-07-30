@@ -1675,18 +1675,12 @@ func (m Model) acceptSelected() (tea.Model, tea.Cmd) {
 	return m, tea.Quit
 }
 
-// copySelected copies the highlighted command to the clipboard (the `y` path).
-// It emits OSC 52 to the tty (tmux-wrapped when inside tmux) so the copy works
-// over SSH, AND best-effort pipes to a local clipboard tool, since many
-// terminals silently ignore OSC 52. Both are fire-and-forget in a tea.Cmd, so
-// neither blocks the UI.
-func (m Model) copySelected() (tea.Model, tea.Cmd) {
-	cmd, ok := m.selected()
-	if !ok {
-		return m, nil
-	}
-	text := cmd.Cmd
-	m.flash = "✓ copied"
+// copyText puts text on the clipboard and says so. It emits OSC 52 to the tty
+// (tmux-wrapped when inside tmux) so the copy works over SSH, AND best-effort
+// pipes to a local clipboard tool, since many terminals silently ignore OSC 52.
+// Both are fire-and-forget in a tea.Cmd, so neither blocks the UI.
+func (m Model) copyText(text, note string) (tea.Model, tea.Cmd) {
+	m.flash = note
 	m.flashID++
 	id := m.flashID
 	out := m.out
@@ -1701,6 +1695,15 @@ func (m Model) copySelected() (tea.Model, tea.Cmd) {
 		},
 		flashTick(id),
 	)
+}
+
+// copySelected copies the highlighted command to the clipboard (the `y` path).
+func (m Model) copySelected() (tea.Model, tea.Cmd) {
+	cmd, ok := m.selected()
+	if !ok {
+		return m, nil
+	}
+	return m.copyText(cmd.Cmd, "✓ copied")
 }
 
 // submitTag sends a user-tag record for the selected row and optimistically

@@ -2067,3 +2067,58 @@ func TestTokensPaneMint(t *testing.T) {
 	require.Equal(t, viewDevices, m.view, "dismissing the token is not leaving the view")
 	require.NotContains(t, strip(m.View()), "s3cret-enrollment-token")
 }
+
+// TestMintedTokenCopies: the banner is the only moment a token's plaintext
+// exists, and a narrow pane can clip it out of the mouse's reach — so y has to
+// take it from the state rather than the screen.
+func TestMintedTokenCopies(t *testing.T) {
+	prev := localClipboardCopy
+	localClipboardCopy = func(string) {}
+	t.Cleanup(func() { localClipboardCopy = prev })
+
+	m, _ := devicesFixture(t)
+	// With nothing minted there is no secret here to copy, and y must not be
+	// mistaken for an answer to a confirmation that was never asked.
+	m, cmd := step(t, m, press("y"))
+	require.Nil(t, cmd, "y with no minted token should do nothing")
+	require.NotContains(t, strip(m.View()), "copied")
+
+	m, cmd = step(t, m, press("n"))
+	m, _ = step(t, m, cmd())
+	require.Contains(t, footerText(m), "y copy the token", "the footer leads with it while it is up")
+
+	var buf bytes.Buffer
+	m.out = &buf
+	m, cmd = step(t, m, press("y"))
+	require.Contains(t, strip(m.View()), "token copied")
+	require.Equal(t, "s3cret-enrollment-token", m.minted, "copying is not dismissing")
+
+	batch, ok := cmd().(tea.BatchMsg)
+	require.Truef(t, ok, "copy command yielded %T, want tea.BatchMsg", cmd())
+	for _, c := range batch {
+		if c != nil {
+			c()
+		}
+	}
+	require.Contains(t, buf.String(), osc52("s3cret-enrollment-token"))
+}
+
+// TestMintedTokenCopyYieldsToAConfirmation: y answers an armed confirmation
+// before it copies. Both can be on screen at once — mint, then arm a revoke —
+// and the destructive question is the one the footer is showing.
+func TestMintedTokenCopyYieldsToAConfirmation(t *testing.T) {
+	m, f := devicesFixture(t)
+	m, cmd := step(t, m, press("n"))
+	m, _ = step(t, m, cmd())
+	require.NotEmpty(t, m.minted)
+
+	m, _ = step(t, m, press("tab")) // to the tokens pane
+	m, _ = step(t, m, press("x"))   // arm the cancel on the open token
+	require.NotEmpty(t, m.devConfirm)
+
+	m, cmd = step(t, m, press("y"))
+	require.NotNil(t, cmd, "y should answer the confirmation")
+	m, _ = step(t, m, cmd())
+	require.NotEmpty(t, f.tokRevoked, "y confirmed the revoke rather than copying")
+	require.NotContains(t, strip(m.View()), "token copied")
+}

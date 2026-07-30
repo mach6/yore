@@ -171,6 +171,7 @@ func devicesGroups() []keyhelp.Group {
 		// once per pane rather than once with a caveat.
 		{Title: "TOKENS", Rows: []keyhelp.Row{
 			row("n", "mint an enrollment token", "n"),
+			row("y", "copy the one just minted", "y"),
 			row("x", "cancel an unused token (asks first)", "x"),
 		}},
 		{Title: "GO", Rows: []keyhelp.Row{
@@ -260,6 +261,12 @@ func (m Model) footerRows() []keyhelp.Row {
 			rows = append(rows, row("n", "mint", "n"), row("x", "cancel", "x"))
 		} else {
 			rows = append(rows, row("a", "approve", "a"), row("x", "revoke", "x"))
+		}
+		// A minted token is on screen for one moment and never again, so the key
+		// that saves it leads while it is up — from either pane, since n mints
+		// from either.
+		if m.minted != "" {
+			rows = append([]keyhelp.Row{row("y", "copy the token", "y")}, rows...)
 		}
 		if m.zoom {
 			rows = append(rows, row("z", "unzoom", "z"))

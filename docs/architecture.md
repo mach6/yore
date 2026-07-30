@@ -213,6 +213,7 @@ asking first:
 | machines | `a` | approve a pending machine — the prompt quotes its verification code, so the out-of-band check is in front of the person answering |
 | machines | `x` | revoke it and rotate the group's keys |
 | tokens | `n` | mint an enrollment token, shown once (see below) |
+| tokens | `y` | copy the one just minted |
 | tokens | `x` | cancel an unclaimed token |
 
 The CLI had a second implementation of the machine actions (`devices
@@ -228,8 +229,15 @@ existed. Each row carries its state — `open`, `claimed` (by which device),
 from its own clock. A newly minted token's plaintext is displayed until
 dismissed and held nowhere else: the server kept only `sha256(token)`, so that
 is genuinely the one moment it exists, and it is never written to `ui.toml`, the
-log, or anywhere on disk. Cancelling a token rotates nothing — it let no one in
-— which is what separates it from revoking a device.
+log, or anywhere on disk. `y` copies it from that held value rather than from the
+screen, which matters because a narrow or short pane clips the banner and leaves
+a secret that can be read but not selected — and because the whole point of the
+banner is that there is no second chance to fetch it. The copy goes out the same
+OSC 52 + local-tool path the browse table's `y` uses, so it works over SSH. An
+armed confirmation still wins the key: mint a token, arm a cancel, and `y`
+answers the destructive question the footer is showing. Cancelling a token
+rotates nothing — it let no one in — which is what separates it from revoking a
+device.
 
 **Panes and geometry.** `panes.go` is the single place that decides how the
 screen is carved up: it resolves each view's pane rectangles in absolute screen

@@ -134,8 +134,8 @@ yore devices                         # back on the enrolled one: pick it, press
 `yore devices` also lists every enrollment token and what became of it — open,
 claimed (by which machine), expired, or revoked — so an outstanding invitation
 into your history is something you can see and cancel (`x`), not something you
-wait out. `n` mints one there; it is shown once and never again, because the
-server keeps only its hash.
+wait out. `n` mints one there and `y` copies it; it is shown once and never
+again, because the server keeps only its hash.
 
 Lost every machine? `yore recover` asks for the recovery phrase and re-enrols
 this one. Client secrets (the device key) live in your **OS keyring**, falling

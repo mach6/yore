@@ -183,6 +183,15 @@ func (m Model) handleDevicesKey(s string) (tea.Model, tea.Cmd) {
 		return m, m.refreshDevicesCmd()
 	case "n": // mint an enrollment token
 		return m, m.mintCmd()
+	case "y": // copy the token that was just minted
+		// The only secret this view ever holds. Every other token is a hash on
+		// the server and a short ID here, so there is nothing else worth copying
+		// — and the banner is the one place the plaintext exists, where a narrow
+		// pane may well have clipped it out of reach of the mouse.
+		if m.minted == "" {
+			return m, nil
+		}
+		return m.copyText(m.minted, "✓ token copied")
 	case "a": // approve a pending device (with confirm)
 		if m.dpane != dpDevices {
 			return m, nil
@@ -302,7 +311,7 @@ func (m Model) tokenListInner(w, h int) string {
 		lines = append(lines,
 			m.th.Match.Render("  new token: ")+m.th.Accent.Render(m.minted),
 			m.th.Dim.Render("  valid until "+theme.AbsTime(m.mintedTill)+
-				" — copy it now, it is never shown again (esc to dismiss)"),
+				" — y copies it, it is never shown again (esc to dismiss)"),
 			"",
 		)
 	}
