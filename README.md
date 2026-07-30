@@ -187,8 +187,10 @@ leaving everything else — including the agent's own auth — exactly as it was
   by any column of whichever list you are in — the results table, the explorer's
   prompts, or its commands, each keeping its own choices — `Ctrl+T` tags a row,
   `S` sync-now; Enter recalls, `y` copies. (yore
-  leaves your own `h` alone.) Pane sizes you drag persist to
-  `~/.config/yore/ui.toml` — kept out of your hand-edited `config.toml`.
+  leaves your own `h` alone.) Pane sizes you drag **and the columns you show,
+  hide, and sort by** persist to `~/.config/yore/ui.toml` — kept out of your
+  hand-edited `config.toml`, and stored by column *name* so the file survives
+  upgrades.
   Commands are **syntax-highlighted everywhere they appear** — the table, both
   details panes, the top-commands stats — hosts *and* executors carry stable
   identity hues, and the details panes flag risky commands (`Risk  ⚠ high
@@ -253,6 +255,7 @@ in [architecture.md](docs/architecture.md)); all state lives under
 | Narrow any view to a time window | `1`-`5` — Today (the calendar day) / 7d / 30d / 90d / All |
 | Give one pane the whole screen | `z` (again to restore) |
 | Resize the panes | drag the border between them with the mouse (remembered in `~/.config/yore/ui.toml`) |
+| Keep a table's columns and sort between runs | nothing to do — `c` writes them to `ui.toml` as you make them |
 | Read a command/prompt that's cut off with `…` | `←`/`→` scroll the selected row horizontally |
 | Capture what Claude Code / Devin runs + let it query history (MCP) | `yore init claude-code` \| `yore init devin` (once) |
 | See only what an agent ran | `yore search --executor claude-code` |

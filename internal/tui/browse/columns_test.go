@@ -3,6 +3,7 @@ package browse
 import (
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattn/go-runewidth"
 	"github.com/stretchr/testify/require"
 
@@ -452,6 +453,159 @@ func TestEachTableKeepsItsOwnSort(t *testing.T) {
 	require.Equal(t, "apple test", m.rows[0].Cmd)
 	require.Equal(t, pcCmds, m.cols[ctPrompts].sortCol)
 	require.Equal(t, dcWhen, m.cols[ctCommands].sortCol, "and the command list's default stands")
+}
+
+// --- persistence ---------------------------------------------------------
+
+// TestColumnChoicesPersistAndRestore: hiding a column and choosing a sort are
+// written to ui.toml as they happen, by name, and come back on the next run.
+func TestColumnChoicesPersistAndRestore(t *testing.T) {
+	f := &fakeBackend{
+		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 1}, {Hostname: "boxB", Count: 1}}},
+		resp:  mkResp(sortFixture()),
+	}
+	var saved []Prefs
+	m := NewModel(f, Options{
+		Version:   "v1",
+		Now:       now,
+		SavePrefs: func(p Prefs) error { saved = append(saved, p); return nil },
+	})
+	m, _ = step(t, m, tea.WindowSizeMsg{Width: 140, Height: 30})
+	m, _ = step(t, m, hostsResultMsg{info: f.hosts})
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: f.resp})
+
+	// Hide the host column.
+	m, _ = step(t, m, press("c"))
+	for m.colSel != colHost {
+		m, _ = step(t, m, press("down"))
+	}
+	m, cmd := step(t, m, press(" "))
+	require.NotNil(t, cmd, "hiding a column should persist it")
+	runBatch(cmd)
+	require.NotEmpty(t, saved)
+	require.Equal(t, []string{"host"}, saved[len(saved)-1].Columns["browse"].Hidden,
+		"columns are remembered by name")
+
+	// Sort by dur, descending.
+	for m.colSel != colDur {
+		m, _ = step(t, m, press("down"))
+	}
+	m, _ = step(t, m, press("s"))
+	m, cmd = step(t, m, press("s"))
+	runBatch(cmd)
+	last := saved[len(saved)-1]
+	require.Equal(t, "dur", last.Columns["browse"].Sort)
+	require.True(t, last.Columns["browse"].SortDesc)
+
+	// A fresh model restores both.
+	m2 := NewModel(f, Options{Version: "v1", Now: now, Prefs: last})
+	m2, _ = step(t, m2, tea.WindowSizeMsg{Width: 140, Height: 30})
+	m2, _ = step(t, m2, hostsResultMsg{info: f.hosts})
+	m2, _ = step(t, m2, queryResultMsg{seq: 1, resp: f.resp})
+	require.True(t, m2.cols[ctBrowse].hidden[colHost], "the hidden column came back hidden")
+	require.Equal(t, colDur, m2.cols[ctBrowse].sortCol)
+	require.True(t, m2.cols[ctBrowse].sortDesc)
+	require.NotContains(t, tableHeaderLine(m2), "host")
+	require.Equal(t, "zebra build", m2.rows[0].Cmd, "and the rows arrive in that order")
+}
+
+// TestEveryTablesChoicesPersist: all three tables are remembered, each under its
+// own key, so reshaping the explorer's lists outlives the session too.
+func TestEveryTablesChoicesPersist(t *testing.T) {
+	states := defaultColStates()
+	states[ctBrowse].hidden[colTags] = true
+	states[ctBrowse].sortCol, states[ctBrowse].sortDesc = colExec, false
+	states[ctPrompts].hidden[pcSess] = true
+	states[ctPrompts].sortCol, states[ctPrompts].sortDesc = pcCmds, true
+	states[ctCommands].sortCol, states[ctCommands].sortDesc = dcDur, true
+
+	prefs := colPrefsOf(states)
+	require.Equal(t, []string{"tags"}, prefs["browse"].Hidden)
+	require.Equal(t, "exec", prefs["browse"].Sort)
+	require.Equal(t, []string{"session"}, prefs["prompts"].Hidden)
+	require.Equal(t, "cmds", prefs["prompts"].Sort)
+	require.Equal(t, "dur", prefs["commands"].Sort)
+
+	require.Equal(t, states, colStatesFrom(prefs), "the round trip is lossless")
+}
+
+// TestUnchangedTablesAreNotWrittenDown: a table left alone contributes nothing, so
+// ui.toml stays quiet about it and inherits whatever this build's default becomes.
+func TestUnchangedTablesAreNotWrittenDown(t *testing.T) {
+	require.Empty(t, colPrefsOf(defaultColStates()), "defaults are not choices")
+
+	states := defaultColStates()
+	states[ctPrompts].sortCol = pcCmds
+	prefs := colPrefsOf(states)
+	require.Len(t, prefs, 1, "only the table that changed is written")
+	require.Contains(t, prefs, "prompts")
+}
+
+// TestStaleColumnPrefsAreIgnored: ui.toml outlives releases, so a name this build
+// does not have, an unsortable column, and a hidden entry for a column that must
+// always show are all dropped rather than breaking a table.
+func TestStaleColumnPrefsAreIgnored(t *testing.T) {
+	got := colStatesFrom(map[string]ColumnPrefs{
+		"browse":      {Hidden: []string{"gone", "command"}, Sort: "vanished"},
+		"nosuchtable": {Sort: "time"},
+		"prompts":     {Sort: "prompt", SortDesc: true},
+	})
+	require.Equal(t, defaultColStates()[ctBrowse], got[ctBrowse],
+		"unknown names and an unhidable column leave the table at its defaults")
+	require.Equal(t, pcText, got[ctPrompts].sortCol, "a real column still applies")
+}
+
+// TestSavingAfterADragKeepsTheColumns: ui.toml is rewritten whole, so the drag
+// path and the column path must write the same struct — otherwise moving a seam
+// would silently erase every column choice.
+func TestSavingAfterADragKeepsTheColumns(t *testing.T) {
+	f := &fakeBackend{
+		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 1}}},
+		resp:  mkResp(mkRows("cargo build")),
+	}
+	var saved []Prefs
+	m := NewModel(f, Options{
+		Version:   "v1",
+		Now:       now,
+		SavePrefs: func(p Prefs) error { saved = append(saved, p); return nil },
+	})
+	m, _ = step(t, m, tea.WindowSizeMsg{Width: 120, Height: 30})
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: f.resp})
+
+	m, _ = step(t, m, press("c"))
+	for m.colSel != colExit {
+		m, _ = step(t, m, press("down"))
+	}
+	m, cmd := step(t, m, press(" "))
+	runBatch(cmd)
+	m, _ = step(t, m, press("esc"))
+	require.Equal(t, []string{"exit"}, saved[len(saved)-1].Columns["browse"].Hidden)
+
+	// Now drag a seam. The write that follows must still carry the column.
+	m, _ = step(t, m, click(m.geo.vDiv, 5))
+	m, _ = step(t, m, dragTo(40, 5))
+	_, cmd = step(t, m, mouseUp(40))
+	require.NotNil(t, cmd)
+	cmd()
+	last := saved[len(saved)-1]
+	require.Equal(t, ratioOf(40, 120), last.Splits.BrowseLeft, "the drag was written")
+	require.Equal(t, []string{"exit"}, last.Columns["browse"].Hidden,
+		"and it did not erase the column choice")
+}
+
+// runBatch runs a tea.Cmd that may be a batch, so the writes inside it happen.
+func runBatch(cmd tea.Cmd) {
+	if cmd == nil {
+		return
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, c := range batch {
+			if c != nil {
+				c()
+			}
+		}
+	}
 }
 
 // TestColumnHeaderMatchesTheRow: the header and the cells are one loop over one

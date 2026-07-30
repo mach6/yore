@@ -479,9 +479,10 @@ func assignField(f reflect.Value, value string) error {
 // every time a pane was dragged would be a poor neighbour.
 func UIStatePath(dir string) string { return filepath.Join(dir, "ui.toml") }
 
-// UIState is layout the browser remembers between runs. Every field is a
-// divider position in per-mille of the axis it cuts; zero means "never dragged",
-// so the view falls back to its own default proportions.
+// UIState is what the browser remembers between runs: where the user dragged the
+// pane seams, and what they did to each table's columns. The split fields are
+// divider positions in per-mille of the axis each one cuts; zero means "never
+// dragged", so the view falls back to its own default proportions.
 type UIState struct {
 	BrowseLeftSplit int `toml:"browse_left_split,omitempty"`
 	BrowseTopSplit  int `toml:"browse_top_split,omitempty"`
@@ -489,6 +490,22 @@ type UIState struct {
 	AgentTopSplit   int `toml:"agent_top_split,omitempty"`
 	AgentHostsSplit int `toml:"agent_hosts_split,omitempty"`
 	DevicesTopSplit int `toml:"devices_top_split,omitempty"`
+
+	// Columns is one entry per reshapeable table, keyed by the table's name
+	// ("browse", "prompts", "commands"). A map rather than named fields so this
+	// package does not have to grow a field every time the TUI grows a table.
+	Columns map[string]ColumnPrefs `toml:"columns,omitempty"`
+}
+
+// ColumnPrefs is one table's remembered column choices. Columns are named, not
+// numbered: an index would silently come to mean a different column the moment
+// one is added or the order changes, and this file outlives any given release.
+// An unknown name is ignored on load rather than failing — the same fail-safe
+// redact.yml and risk.toml get.
+type ColumnPrefs struct {
+	Hidden   []string `toml:"hidden,omitempty"`
+	Sort     string   `toml:"sort,omitempty"`
+	SortDesc bool     `toml:"sort_desc,omitempty"`
 }
 
 // LoadUI reads ui.toml. A missing or unreadable file yields the zero state:

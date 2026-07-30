@@ -39,6 +39,29 @@ type layout struct {
 // noDividers is the geometry of a single full-screen pane.
 func noDividers() layout { return layout{vDiv: -1, hDiv: -1, hDiv2: -1} }
 
+// Prefs is everything the browser remembers between runs — the seams the user
+// dragged and the columns they reshaped. It is one struct because ui.toml is one
+// file: saving half of it would erase the other half.
+//
+// It is exported because it is what gets persisted: Options.Prefs restores it and
+// Options.SavePrefs writes it back.
+type Prefs struct {
+	Splits Splits
+
+	// Columns is one entry per reshapeable table, keyed by the table's own name.
+	// Nil means every table opens at its defaults.
+	Columns map[string]ColumnPrefs
+}
+
+// ColumnPrefs is one table's column choices, with columns named rather than
+// numbered — an index in a file that outlives a release would come to mean a
+// different column the moment one is added.
+type ColumnPrefs struct {
+	Hidden   []string
+	Sort     string
+	SortDesc bool
+}
+
 // Splits holds the divider positions the user has dragged to, as a fraction of
 // the axis each one cuts, so the chosen proportions survive a terminal resize.
 // Zero means "auto": the view's own default sizing applies. The browse view

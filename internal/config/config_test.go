@@ -182,6 +182,37 @@ func TestUIStateRoundTrip(t *testing.T) {
 	require.Equal(t, os.FileMode(0o600), fi.Mode().Perm())
 }
 
+// TestUIStateColumnsRoundTrip: a table's column choices persist beside the
+// splits, keyed by table name and naming columns rather than numbering them.
+func TestUIStateColumnsRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	want := UIState{
+		BrowseLeftSplit: 333,
+		Columns: map[string]ColumnPrefs{
+			"browse":  {Hidden: []string{"host", "tags"}, Sort: "dur", SortDesc: true},
+			"prompts": {Sort: "cmds"},
+		},
+	}
+	require.NoError(t, SaveUI(dir, want))
+
+	got, err := LoadUI(dir)
+	require.NoError(t, err)
+	require.Equal(t, want, got)
+
+	// Hand-editable: the names are in the file as written, not as indexes.
+	b, err := os.ReadFile(UIStatePath(dir))
+	require.NoError(t, err)
+	require.Contains(t, string(b), "[columns.browse]")
+	require.Contains(t, string(b), "'host'")
+	require.Contains(t, string(b), "sort = 'dur'")
+
+	// A state with no column choices writes no columns section at all.
+	require.NoError(t, SaveUI(dir, UIState{BrowseLeftSplit: 1}))
+	b, err = os.ReadFile(UIStatePath(dir))
+	require.NoError(t, err)
+	require.NotContains(t, string(b), "columns")
+}
+
 // TestLoadUIMalformed proves a corrupt ui.toml degrades to defaults rather than
 // blocking the browser.
 func TestLoadUIMalformed(t *testing.T) {

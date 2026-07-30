@@ -18,6 +18,51 @@ func riskRules(dir string) *risk.Ruleset {
 	return rs
 }
 
+// prefsFromUI and uiFromPrefs translate between ui.toml's shape and the
+// browser's. They are a pair on purpose: ui.toml is rewritten whole on every
+// save, so anything one of them drops the other silently deletes from the file.
+func prefsFromUI(ui config.UIState) browse.Prefs {
+	p := browse.Prefs{
+		Splits: browse.Splits{
+			BrowseLeft: ui.BrowseLeftSplit,
+			BrowseTop:  ui.BrowseTopSplit,
+			AgentLeft:  ui.AgentLeftSplit,
+			AgentTop:   ui.AgentTopSplit,
+			AgentHosts: ui.AgentHostsSplit,
+			DevicesTop: ui.DevicesTopSplit,
+		},
+	}
+	if len(ui.Columns) > 0 {
+		p.Columns = make(map[string]browse.ColumnPrefs, len(ui.Columns))
+		for table, c := range ui.Columns {
+			p.Columns[table] = browse.ColumnPrefs{
+				Hidden: c.Hidden, Sort: c.Sort, SortDesc: c.SortDesc,
+			}
+		}
+	}
+	return p
+}
+
+func uiFromPrefs(p browse.Prefs) config.UIState {
+	ui := config.UIState{
+		BrowseLeftSplit: p.Splits.BrowseLeft,
+		BrowseTopSplit:  p.Splits.BrowseTop,
+		AgentLeftSplit:  p.Splits.AgentLeft,
+		AgentTopSplit:   p.Splits.AgentTop,
+		AgentHostsSplit: p.Splits.AgentHosts,
+		DevicesTopSplit: p.Splits.DevicesTop,
+	}
+	if len(p.Columns) > 0 {
+		ui.Columns = make(map[string]config.ColumnPrefs, len(p.Columns))
+		for table, c := range p.Columns {
+			ui.Columns[table] = config.ColumnPrefs{
+				Hidden: c.Hidden, Sort: c.Sort, SortDesc: c.SortDesc,
+			}
+		}
+	}
+	return ui
+}
+
 // runBrowse opens the full-screen history browser (the `h` alias target) on the
 // given start view — `yore stats` and `yore agents` are the same program landed
 // on a different screen. The command the user accepts with Enter is delivered
@@ -49,24 +94,8 @@ func runBrowse(acceptFile string, start browse.StartView) int {
 		// explorer is where that work is shown, grouped by the prompt behind it.
 		HideAgents: cfg.HideAgentCommands,
 		Risk:       riskRules(dir),
-		Splits: browse.Splits{
-			BrowseLeft: ui.BrowseLeftSplit,
-			BrowseTop:  ui.BrowseTopSplit,
-			AgentLeft:  ui.AgentLeftSplit,
-			AgentTop:   ui.AgentTopSplit,
-			AgentHosts: ui.AgentHostsSplit,
-			DevicesTop: ui.DevicesTopSplit,
-		},
-		SaveSplits: func(s browse.Splits) error {
-			return config.SaveUI(dir, config.UIState{
-				BrowseLeftSplit: s.BrowseLeft,
-				BrowseTopSplit:  s.BrowseTop,
-				AgentLeftSplit:  s.AgentLeft,
-				AgentTopSplit:   s.AgentTop,
-				AgentHostsSplit: s.AgentHosts,
-				DevicesTopSplit: s.DevicesTop,
-			})
-		},
+		Prefs:      prefsFromUI(ui),
+		SavePrefs:  func(p browse.Prefs) error { return config.SaveUI(dir, uiFromPrefs(p)) },
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "yore browse:", err)

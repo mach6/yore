@@ -291,6 +291,7 @@ var drillSpecs = []colSpec[rec.Record]{
 // between cells, the room its flexible column must keep, the order columns give
 // up width in when the pane is too narrow, and the order it opens in.
 type colTableDef struct {
+	key       string // its name in ui.toml — stable, and not the display label
 	name      string // what the columns pane calls it
 	metas     []colMeta
 	sep       int // columns of gap between cells
@@ -314,21 +315,21 @@ type shedStep struct {
 // column a reader can most easily do without.
 var colTables = [colTableCount]colTableDef{
 	ctBrowse: {
-		name: "browse table", metas: metasOf(browseSpecs), sep: 1, flexFloor: 0,
+		key: "browse", name: "browse table", metas: metasOf(browseSpecs), sep: 1, flexFloor: 0,
 		shed: []shedStep{
 			{colExec, 5}, {colTags, 5}, {colDur, 5}, {colHost, 5}, {colExit, 5}, {colTime, 3},
 		},
 		sortCol: colTime, sortDesc: true,
 	},
 	ctPrompts: {
-		name: "prompt list", metas: metasOf(promptSpecs), sep: 2, flexFloor: 8,
+		key: "prompts", name: "prompt list", metas: metasOf(promptSpecs), sep: 2, flexFloor: 8,
 		shed:    []shedStep{{pcSess, 12}, {pcHost, 12}, {pcDur, 12}, {pcExec, 12}},
 		sortCol: pcWhen, sortDesc: true,
 	},
 	ctCommands: {
 		// Oldest first, and it stays that way by default: this is the agent's
 		// actual working order, which is the reason to look at the list at all.
-		name: "command list", metas: metasOf(drillSpecs), sep: 2, flexFloor: 12,
+		key: "commands", name: "command list", metas: metasOf(drillSpecs), sep: 2, flexFloor: 12,
 		shed:    []shedStep{{dcDur, 12}},
 		sortCol: dcWhen, sortDesc: false,
 	},
@@ -346,6 +347,69 @@ func defaultColStates() [colTableCount]colState {
 	var out [colTableCount]colState
 	for t := range colTableCount {
 		out[t] = colState{sortCol: colTables[t].sortCol, sortDesc: colTables[t].sortDesc}
+	}
+	return out
+}
+
+// colIndex finds a table's column by name, reporting whether it exists. Names are
+// what ui.toml stores, so this is also the tolerance for a file written by another
+// version: a column that no longer exists is simply not found.
+func colIndex(t colTable, name string) (int, bool) {
+	for i, meta := range colTables[t].metas {
+		if meta.title == name {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// colStatesFrom restores remembered column choices, starting from the defaults so
+// anything the file does not mention keeps them. It is fail-safe by construction:
+// a column name this build does not have is ignored, a sort naming a column that
+// cannot sort is dropped, and a hidden entry for a column that must always show is
+// refused — so a stale or hand-mangled ui.toml can never leave a table unusable,
+// only unremembered.
+func colStatesFrom(prefs map[string]ColumnPrefs) [colTableCount]colState {
+	out := defaultColStates()
+	for t := range colTableCount {
+		p, ok := prefs[colTables[t].key]
+		if !ok {
+			continue
+		}
+		for _, name := range p.Hidden {
+			if i, found := colIndex(t, name); found && !colTables[t].metas[i].fixed {
+				out[t].hidden[i] = true
+			}
+		}
+		if i, found := colIndex(t, p.Sort); found && colTables[t].metas[i].sortable {
+			out[t].sortCol, out[t].sortDesc = i, p.SortDesc
+		}
+	}
+	return out
+}
+
+// colPrefsOf is the inverse: every table's choices, by name, ready to write. A
+// table left at its defaults contributes an empty entry that omitempty drops, so
+// an untouched ui.toml grows no columns section at all.
+func colPrefsOf(states [colTableCount]colState) map[string]ColumnPrefs {
+	out := make(map[string]ColumnPrefs, colTableCount)
+	for t := range colTableCount {
+		var p ColumnPrefs
+		for i, meta := range colTables[t].metas {
+			if states[t].hidden[i] {
+				p.Hidden = append(p.Hidden, meta.title)
+			}
+		}
+		// Only a non-default order is worth writing down; the default is whatever
+		// this build says it is, which is the more useful thing to inherit.
+		if states[t].sortCol != colTables[t].sortCol || states[t].sortDesc != colTables[t].sortDesc {
+			p.Sort = colTables[t].metas[states[t].sortCol].title
+			p.SortDesc = states[t].sortDesc
+		}
+		if len(p.Hidden) == 0 && p.Sort == "" {
+			continue
+		}
+		out[colTables[t].key] = p
 	}
 	return out
 }
@@ -695,9 +759,17 @@ func (m Model) handleColumnsKey(s string) (tea.Model, tea.Cmd) {
 		if !ok {
 			return m.flashOnly(title + " cannot be sorted on")
 		}
-		return mm.flashOnly("sort: " + title + " " + sortArrow(mm.cols[mm.colTable].sortDesc))
+		return mm.remember("sort: " + title + " " + sortArrow(mm.cols[mm.colTable].sortDesc))
 	}
 	return m, nil
+}
+
+// remember flashes what changed and writes the choice to ui.toml. Every column
+// change goes through it, so there is one place that cannot forget to persist.
+func (m Model) remember(note string) (tea.Model, tea.Cmd) {
+	m.flash = note
+	m.flashID++
+	return m, tea.Batch(flashTick(m.flashID), m.savePrefsCmd())
 }
 
 // toggleColumn switches one column off or back on. The flexible column stays: a
@@ -711,9 +783,9 @@ func (m Model) toggleColumn(t colTable, c int) (tea.Model, tea.Cmd) {
 	m.applyLayout() // the flexible column just gained or lost that width
 	m.syncDetail()
 	if m.cols[t].hidden[c] {
-		return m.flashOnly(meta.title + " hidden")
+		return m.remember(meta.title + " hidden")
 	}
-	return m.flashOnly(meta.title + " shown")
+	return m.remember(meta.title + " shown")
 }
 
 // colStateNote says why a column is not on screen when the answer is not "you

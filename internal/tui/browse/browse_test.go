@@ -1709,18 +1709,18 @@ func TestAgentsKeyIsOnlyA(t *testing.T) {
 	require.Nil(t, cmd, "`p` must not issue a query")
 }
 
-// TestSplitsPersistAndRestore proves a dragged layout is handed to SaveSplits
-// once the drag settles, and that Options.Splits restores it on the next run.
+// TestSplitsPersistAndRestore proves a dragged layout is handed to SavePrefs once
+// the drag settles, and that Options.Prefs restores it on the next run.
 func TestSplitsPersistAndRestore(t *testing.T) {
 	f := &fakeBackend{
 		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 1}}},
 		resp:  mkResp(mkRows("cargo build")),
 	}
-	var saved []Splits
+	var saved []Prefs
 	m := NewModel(f, Options{
-		Version:    "v1",
-		Now:        now,
-		SaveSplits: func(s Splits) error { saved = append(saved, s); return nil },
+		Version:   "v1",
+		Now:       now,
+		SavePrefs: func(p Prefs) error { saved = append(saved, p); return nil },
 	})
 	m, _ = step(t, m, tea.WindowSizeMsg{Width: 120, Height: 30})
 
@@ -1735,14 +1735,14 @@ func TestSplitsPersistAndRestore(t *testing.T) {
 	require.NotNil(t, cmd, "releasing a drag should persist the layout")
 	cmd()
 	require.Len(t, saved, 1)
-	require.Equal(t, ratioOf(40, 120), saved[0].BrowseLeft)
+	require.Equal(t, ratioOf(40, 120), saved[0].Splits.BrowseLeft)
 
 	// A release that ends no drag writes nothing.
 	_, cmd = step(t, m, mouseUp(40))
 	require.Nil(t, cmd, "a stray release must not persist")
 
 	// A fresh model restores that layout.
-	m2 := NewModel(f, Options{Version: "v1", Now: now, Splits: saved[0]})
+	m2 := NewModel(f, Options{Version: "v1", Now: now, Prefs: saved[0]})
 	m2, _ = step(t, m2, tea.WindowSizeMsg{Width: 120, Height: 30})
 	require.Equal(t, 40, m2.leftW, "the remembered sidebar width was not restored")
 

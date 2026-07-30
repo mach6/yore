@@ -51,13 +51,17 @@ type Options struct {
 	// state it opens in.
 	HideAgents bool
 
-	// Splits restores the pane layout the user last dragged to; the zero value
-	// starts each view at its default proportions. SaveSplits, when set, is
-	// called once a drag finishes so the choice sticks across runs — it runs in
-	// a tea.Cmd, off the render path, and its error is ignored (a layout that
-	// fails to persist must never interrupt browsing).
-	Splits     Splits
-	SaveSplits func(Splits) error
+	// Prefs restores what the user last left the UI looking like; its zero value
+	// starts every view at its own defaults. SavePrefs, when set, is called
+	// whenever a choice changes so it sticks across runs — in a tea.Cmd, off the
+	// render path, with its error ignored, because remembered layout is a
+	// convenience and losing it must never interrupt browsing.
+	//
+	// One struct and one callback because there is one file: a callback that
+	// carried only the splits would rewrite ui.toml without the column choices in
+	// it, erasing them every time a seam moved.
+	Prefs     Prefs
+	SavePrefs func(Prefs) error
 
 	// Start is the screen to open on — how `yore stats` and `yore agents` land
 	// straight where they mean to. An unknown value opens the browse table, so a
@@ -396,14 +400,14 @@ func NewModel(b Backend, opts Options) Model {
 		ti:          ti,
 		tagInput:    tagInput,
 		filterInput: filterInput,
-		cols:        defaultColStates(),
+		cols:        colStatesFrom(opts.Prefs.Columns),
 		afilter:     afilter,
 		detail:      vp,
 		hosts:       []hostItem{{label: "All hosts", scope: proto.ScopeAll}},
 		period:      allPeriod, // open on the widest window; 1..5 narrow it
 		focus:       focusTable,
 		apane:       apPrompts,
-		splits:      opts.Splits.withDefaults(),
+		splits:      opts.Prefs.Splits.withDefaults(),
 		width:       80,
 		height:      24,
 		borderFocus: lipgloss.NewStyle().

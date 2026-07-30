@@ -396,16 +396,35 @@ cannot force a blank one back on, since a column of empty cells costs width and
 answers nothing. The flexible column cannot be hidden at all: a table of metadata
 with no commands or prompts in it is not a history.
 
-Both choices are **session state, not settings**, for the reason `A` is: a
-keystroke that quietly rewrote `config.toml` would make an experiment permanent,
-and reshaping a table is the most experimental thing in the view. Dragged pane
-seams do persist to `ui.toml` — dragging a seam is a deliberate act of layout,
-where cycling a sort to look at something is not. The sorted column carries an
-arrow in its header where the cell is wide enough to hold one, and the sort is
-named in words as well — in the browse status bar, and in the explorer on the pane
-title, which is the only place those panes can say it. `exit` is four columns wide
-with no room for a glyph, and a distinction carried by color alone is no
-distinction.
+Both choices **persist to `ui.toml`**, beside the dragged seams and for the same
+reason: a table you reshaped to read something is a table you want to find that way
+next time, and re-hiding the same three columns every session is exactly the chore
+a remembered layout exists to remove. They go to `ui.toml` and never to
+`config.toml` — the hand-edited settings file is not something a keystroke should
+rewrite, which is the line `A` (a genuine session toggle, seeded by
+`hide_agent_commands`) sits on the other side of.
+
+`ui.toml` is rewritten **whole** on every save, so the seams and every table's
+columns travel in one `Prefs` struct through one callback. An earlier
+splits-only callback would have erased the column choices each time a seam moved;
+`prefsFromUI`/`uiFromPrefs` are a matched pair for that reason, and are tested as
+one, because whatever either drops the other silently deletes from the file.
+
+Columns are stored **by name** under a per-table key (`[columns.browse]`,
+`[columns.prompts]`, `[columns.commands]`), because a file that outlives releases
+cannot hold indexes — index 3 would come to mean a different column the moment one
+is added. Loading is fail-safe the way `redact.yml` and `risk.toml` are: a name
+this build does not have is ignored, a sort naming an unsortable column is dropped,
+a `hidden` entry for a column that must always show is refused. A stale or
+hand-mangled file can leave a table unremembered, never unusable. A table still at
+its defaults writes nothing at all, so an untouched `ui.toml` grows no `[columns]`
+section and inherits whatever the default later becomes.
+
+The sorted column carries an arrow in its header where the cell is wide enough to
+hold one, and the sort is named in words as well — in the browse status bar, and in
+the explorer on the pane title, which is the only place those panes can say it.
+`exit` is four columns wide with no room for a glyph, and a distinction carried by
+color alone is no distinction.
 
 **The two value filters.** The browse table filters on a tag and on an executor,
 both server-side (`QueryReq.Tag` / `.Executor`), and each has two keys. `t` and

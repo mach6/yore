@@ -22,7 +22,7 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		wasDragging := m.drag != dragNone
 		m.drag = dragNone
 		if wasDragging {
-			return m, m.saveSplitsCmd()
+			return m, m.savePrefsCmd()
 		}
 		return m, nil
 	case tea.MouseActionMotion:
@@ -111,16 +111,19 @@ func (m *Model) moveDivider(x, y int) {
 	m.syncDetail()
 }
 
-// saveSplitsCmd persists the current pane layout off the render path. A failure
-// to write is deliberately swallowed: a remembered layout is a convenience, and
-// losing it must never interrupt browsing or steal the status bar.
-func (m Model) saveSplitsCmd() tea.Cmd {
-	save, splits := m.opts.SaveSplits, m.splits
+// savePrefsCmd persists the whole remembered UI state off the render path — the
+// seams and every table's columns together, because they share one file and
+// writing half of it would erase the other half. A failure to write is
+// deliberately swallowed: remembered layout is a convenience, and losing it must
+// never interrupt browsing or steal the status bar.
+func (m Model) savePrefsCmd() tea.Cmd {
+	save := m.opts.SavePrefs
 	if save == nil {
 		return nil
 	}
+	prefs := Prefs{Splits: m.splits, Columns: colPrefsOf(m.cols)}
 	return func() tea.Msg {
-		_ = save(splits)
+		_ = save(prefs)
 		return nil
 	}
 }
