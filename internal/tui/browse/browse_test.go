@@ -830,6 +830,115 @@ func TestTagFilter(t *testing.T) {
 	require.Equal(t, "", m.buildReq().Tag)
 }
 
+// TestTypedFilterReachesValuesNoRowCarries: adopting from the cursor can only
+// find values already in front of you. T and E take a typed one, which is the
+// only way to filter on a tag or executor the visible rows do not mention.
+func TestTypedFilterReachesValuesNoRowCarries(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 40)
+	rows := mkRows("ls", "vim")
+	rows[0].Tags = []string{"refactor"}
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(rows)})
+
+	m, _ = step(t, m, press("T"))
+	require.Equal(t, axisTag, m.axis, "T opens the typed tag box")
+	require.Contains(t, strip(m.View()), "filter tag", "the prompt names the axis")
+	require.Equal(t, "refactor", m.filterInput.Value(),
+		"it opens on the row's own value, so enter alone does what t does")
+
+	// Type a tag no row carries.
+	m = setFilterEntry(t, m, "deploy")
+	m, cmd := step(t, m, press("enter"))
+	require.Equal(t, axisNone, m.axis, "enter closes the box")
+	require.Equal(t, "deploy", m.tagFilter)
+	require.Equal(t, "deploy", m.buildReq().Tag, "the typed tag travels as the tag filter")
+	require.NotNil(t, cmd, "applying a filter should re-issue the query")
+	require.Contains(t, strip(m.View()), "tag: deploy")
+
+	// E is the same on the executor axis, and the two do not cross.
+	m, _ = step(t, m, press("E"))
+	require.Equal(t, axisExec, m.axis)
+	m = setFilterEntry(t, m, "codex")
+	m, _ = step(t, m, press("enter"))
+	require.Equal(t, "codex", m.executorFilter)
+	require.Equal(t, "codex", m.buildReq().Executor)
+	require.Equal(t, "deploy", m.buildReq().Tag, "the tag filter is untouched")
+}
+
+// TestTypedFilterEmptyClears: the box is also how a filter comes off without
+// hunting the table for a row that happens to carry it.
+func TestTypedFilterEmptyClears(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 40)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("ls"))})
+	m.executorFilter = "claude-code"
+
+	m, _ = step(t, m, press("E"))
+	require.Equal(t, "claude-code", m.filterInput.Value(),
+		"the box opens on the filter in force, so it can be edited not just replaced")
+
+	m = setFilterEntry(t, m, "")
+	m, cmd := step(t, m, press("enter"))
+	require.Empty(t, m.executorFilter)
+	require.NotNil(t, cmd)
+	require.Contains(t, strip(m.View()), "executor filter cleared")
+}
+
+// TestTypedFilterEscAbandons: esc leaves the filter exactly as it was — unlike
+// the search field, where the text typed so far IS the filter.
+func TestTypedFilterEscAbandons(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 40)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("ls"))})
+	m.tagFilter = "refactor"
+
+	m, _ = step(t, m, press("T"))
+	m = setFilterEntry(t, m, "deploy")
+	m, cmd := step(t, m, press("esc"))
+	require.Equal(t, axisNone, m.axis)
+	require.Equal(t, "refactor", m.tagFilter, "esc must not apply what was typed")
+	require.Nil(t, cmd, "and must not spend a query")
+
+	// An unchanged value spends no query either.
+	m, _ = step(t, m, press("T"))
+	m, cmd = step(t, m, press("enter"))
+	require.Equal(t, "refactor", m.tagFilter)
+	require.Nil(t, cmd, "re-applying the same value is not a change")
+}
+
+// TestTypedFilterBoxSwallowsViewKeys: while the box has focus its keystrokes are
+// text, so the letters that would switch view or delete a row must type instead.
+func TestTypedFilterBoxSwallowsViewKeys(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 40)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("ls"))})
+
+	m, _ = step(t, m, press("T"))
+	m = setFilterEntry(t, m, "")
+	for _, k := range []string{"s", "a", "D", "d", "q", "?"} {
+		m, _ = step(t, m, press(k))
+	}
+	require.Equal(t, viewBrowse, m.view, "no view key should have fired")
+	require.False(t, m.confirmDelete, "d must not arm a delete")
+	require.False(t, m.showHelp)
+	require.False(t, m.quitting)
+	require.Equal(t, "saDdq?", m.filterInput.Value(), "they should all be text")
+}
+
+// setFilterEntry replaces the typed box's contents, one keystroke at a time so
+// the real Update path does the editing.
+func setFilterEntry(t *testing.T, m Model, s string) Model {
+	t.Helper()
+	for range len(m.filterInput.Value()) {
+		m, _ = step(t, m, press("backspace"))
+	}
+	require.Empty(t, m.filterInput.Value())
+	for _, r := range s {
+		m, _ = step(t, m, press(string(r)))
+	}
+	return m
+}
+
 func TestTagRowPicker(t *testing.T) {
 	f := &fakeBackend{}
 	m := ready(t, f, 120, 40)

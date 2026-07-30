@@ -91,6 +91,11 @@ func (m Model) searchLine(w int) string {
 		// tagInput already carries a "tag: " prompt.
 		return clipW(m.th.Prompt.Render("❯ ")+m.tagInput.View(), w)
 	}
+	if m.axis != axisNone {
+		// The prompt names the axis: this box and the search field share the line,
+		// and a bare ❯ would not say which of the three was taking the keystrokes.
+		return clipW(m.th.Prompt.Render(filterEntryPrompt(m.axis))+m.filterInput.View(), w)
+	}
 	prompt := m.th.Dim.Render("❯ ")
 	if m.searching {
 		prompt = m.th.Prompt.Render("❯ ")

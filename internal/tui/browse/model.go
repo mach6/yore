@@ -94,6 +94,24 @@ const (
 )
 
 // focus identifies which of the three browse panes owns navigation keys.
+// filterAxis names which of the browse table's two value filters the typed value
+// box is editing. axisNone means the box is closed.
+type filterAxis int
+
+const (
+	axisNone filterAxis = iota
+	axisTag
+	axisExec
+)
+
+// noun is the axis's name in the box's prompt and its flash messages.
+func (a filterAxis) noun() string {
+	if a == axisExec {
+		return "executor"
+	}
+	return "tag"
+}
+
 type focus int
 
 const (
@@ -242,12 +260,18 @@ type Model struct {
 	confirmDelete  bool
 	showHelp       bool   // ?: the key panel, over whichever view is beneath it
 	helpTop        int    // first visible row of that panel, when it overflows
-	executorFilter string // active executor filter (the e key); "" = no filter
-	tagFilter      string // active user-tag filter (the t key); "" = no filter
-	flash          string
-	flashID        int
-	quitting       bool
-	accepted       string // command the user chose with enter; read by Run on exit
+	executorFilter string // active executor filter (e / E); "" = no filter
+	tagFilter      string // active user-tag filter (t / T); "" = no filter
+
+	// The typed value box behind T and E, for filtering on a tag or executor the
+	// highlighted row does not happen to carry. axis names which filter it is
+	// editing and doubles as the "box is open" flag.
+	axis        filterAxis
+	filterInput textinput.Model
+	flash       string
+	flashID     int
+	quitting    bool
+	accepted    string // command the user chose with enter; read by Run on exit
 
 	// devices view: the enrolled machines over the enrollment tokens.
 	devices    []proto.DeviceInfo
@@ -335,6 +359,15 @@ func NewModel(b Backend, opts Options) Model {
 	tagInput.Cursor.SetMode(cursor.CursorStatic)
 	tagInput.Cursor.Style = th.Accent
 
+	// The typed filter box draws its own prompt, which names the axis — the box
+	// sits on the search line, where two of them would otherwise look identical.
+	filterInput := textinput.New()
+	filterInput.Prompt = ""
+	filterInput.Placeholder = "name"
+	filterInput.TextStyle = th.Input
+	filterInput.Cursor.SetMode(cursor.CursorStatic)
+	filterInput.Cursor.Style = th.Accent
+
 	vp := viewport.New(0, 0)
 
 	riskRS := opts.Risk
@@ -343,23 +376,24 @@ func NewModel(b Backend, opts Options) Model {
 	}
 
 	m := Model{
-		b:          b,
-		opts:       opts,
-		th:         th,
-		vim:        vim,
-		riskRS:     riskRS,
-		hideAgents: opts.HideAgents,
-		ti:         ti,
-		tagInput:   tagInput,
-		afilter:    afilter,
-		detail:     vp,
-		hosts:      []hostItem{{label: "All hosts", scope: proto.ScopeAll}},
-		period:     allPeriod, // open on the widest window; 1..5 narrow it
-		focus:      focusTable,
-		apane:      apPrompts,
-		splits:     opts.Splits.withDefaults(),
-		width:      80,
-		height:     24,
+		b:           b,
+		opts:        opts,
+		th:          th,
+		vim:         vim,
+		riskRS:      riskRS,
+		hideAgents:  opts.HideAgents,
+		ti:          ti,
+		tagInput:    tagInput,
+		filterInput: filterInput,
+		afilter:     afilter,
+		detail:      vp,
+		hosts:       []hostItem{{label: "All hosts", scope: proto.ScopeAll}},
+		period:      allPeriod, // open on the widest window; 1..5 narrow it
+		focus:       focusTable,
+		apane:       apPrompts,
+		splits:      opts.Splits.withDefaults(),
+		width:       80,
+		height:      24,
 		borderFocus: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(th.Accent.GetForeground()),
@@ -725,6 +759,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	// The typed tag/executor box: esc abandons it, enter applies, the rest edits.
+	if m.axis != axisNone {
+		return m.handleFilterEntryKey(msg, s)
+	}
+
 	// The explorer's filter box: esc/enter leave it, the rest edits and re-filters
 	// as you type.
 	if m.afiltering {
@@ -803,6 +842,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.toggleTagFilter()
 	case "e":
 		return m.toggleExecutorFilter()
+	case "T":
+		return m.openFilterEntry(axisTag)
+	case "E":
+		return m.openFilterEntry(axisExec)
 	case "H":
 		return m.cycleHost()
 	case "A":
@@ -1080,6 +1123,93 @@ func (m Model) toggleTagFilter() (tea.Model, tea.Cmd) {
 	}
 	m.tagFilter = r.Tags[0]
 	return m.afterFilterChange("tag: " + r.Tags[0])
+}
+
+// rowFilterValue is the highlighted row's value on one axis, or "" if it has
+// none — what t and e adopt, and what T and E open pre-filled with.
+func (m Model) rowFilterValue(a filterAxis) string {
+	r, ok := m.selected()
+	if !ok {
+		return ""
+	}
+	if a == axisExec {
+		return r.Executor
+	}
+	if len(r.Tags) == 0 {
+		return ""
+	}
+	return r.Tags[0]
+}
+
+// openFilterEntry opens the typed value box for one axis (T and E). It is
+// pre-filled with the filter in force, or failing that the highlighted row's own
+// value, so T is a strict superset of t: Enter alone does what t does, and typing
+// first reaches a tag or executor no row on screen happens to carry — which is
+// the whole reason the box exists, since adopting from the cursor can only ever
+// find values already in front of you.
+func (m Model) openFilterEntry(a filterAxis) (tea.Model, tea.Cmd) {
+	v := m.tagFilter
+	if a == axisExec {
+		v = m.executorFilter
+	}
+	if v == "" {
+		v = m.rowFilterValue(a)
+	}
+	m.axis = a
+	m.filterInput.SetValue(v)
+	m.filterInput.CursorEnd()
+	m.filterInput.Focus()
+	return m, nil
+}
+
+// closeFilterEntry puts the box away without touching the filter.
+func (m Model) closeFilterEntry() Model {
+	m.axis = axisNone
+	m.filterInput.Blur()
+	return m
+}
+
+// submitFilterEntry applies the typed value: an empty box clears that axis, so
+// the box is also how a filter is dropped without hunting for a row that carries
+// it. An unchanged value spends no query.
+func (m Model) submitFilterEntry() (tea.Model, tea.Cmd) {
+	a := m.axis
+	v := strings.TrimSpace(m.filterInput.Value())
+	m = m.closeFilterEntry()
+
+	cur := &m.tagFilter
+	if a == axisExec {
+		cur = &m.executorFilter
+	} else {
+		v = strings.ToLower(v) // tags are stored lowercased, as ^t writes them
+	}
+	if v == *cur {
+		return m, nil
+	}
+	*cur = v
+	if v == "" {
+		return m.afterFilterChange(a.noun() + " filter cleared")
+	}
+	return m.afterFilterChange(a.noun() + ": " + v)
+}
+
+// handleFilterEntryKey services the typed value box: esc abandons it, enter
+// applies. Unlike the search field it does not filter as you type — each change
+// is a round trip to the daemon, and a half-typed tag matches nothing, so the
+// table would empty out under every prefix on the way to the name you wanted.
+func (m Model) handleFilterEntryKey(msg tea.KeyMsg, s string) (tea.Model, tea.Cmd) {
+	switch s {
+	case "esc":
+		return m.closeFilterEntry(), nil
+	case "enter":
+		return m.submitFilterEntry()
+	case "ctrl+c":
+		m.quitting = true
+		return m, tea.Quit
+	}
+	var cmd tea.Cmd
+	m.filterInput, cmd = m.filterInput.Update(msg)
+	return m, cmd
 }
 
 // afterFilterChange re-issues the query and flashes what changed.
@@ -2014,6 +2144,7 @@ func (m *Model) applyLayout() {
 	// The explorer's filter box shares that line with its own "filter <list> ❯"
 	// prompt, which is longer than the browse view's bare "❯ ".
 	m.afilter.Width = maxInt(4, iw-lipgloss.Width("filter commands "))
+	m.filterInput.Width = maxInt(4, iw-lipgloss.Width(filterEntryPrompt(axisExec)))
 
 	m.clampWindow()
 }

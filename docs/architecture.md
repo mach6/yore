@@ -348,6 +348,24 @@ that rewrote the setting would make an experiment permanent.
 archive and have no status line to be told what was withheld. The rule is that a
 UI may filter only if it can disclose; the scripted path cannot, so it does not.
 
+**The two value filters.** The browse table filters on a tag and on an executor,
+both server-side (`QueryReq.Tag` / `.Executor`), and each has two keys. `t` and
+`e` adopt the highlighted row's value — one keystroke, and the common case, since
+the reason you want a filter is usually the row you are looking at. But adopting
+from the cursor can only ever reach values already on screen, so `T` and `E` open
+a typed box on the search line instead: it starts on the filter in force, or
+failing that the row's own value, which makes `T` a strict superset of `t` (Enter
+alone does what `t` does) and still reaches a tag no visible row carries. An empty
+box clears that axis, so a filter can also come off without hunting for a row that
+happens to carry it.
+
+Unlike the search field it does not filter as you type: every change is a round
+trip to the daemon, and a half-typed tag matches nothing, so the table would empty
+out under each prefix on the way to the name you meant. For the same reason `esc`
+abandons the box and leaves the filter alone, where in the search field the text
+typed so far *is* the filter and there is nothing to abandon. The prompt names the
+axis (`filter tag ❯`) because three different boxes share that one line.
+
 **The time window.** One period (`1`–`5`: Today / 7d / 30d / 90d / All, default
 All) drives every screen, with its tabs pinned to the same top-right corner
 everywhere. "Today" is the **calendar** day in local time, not a rolling 24

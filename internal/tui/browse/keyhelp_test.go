@@ -101,6 +101,8 @@ func describedKeys(t *testing.T) map[string]bool {
 	rows = append(rows, confirmDeviceRows(true)...)
 	rows = append(rows, searchingRows()...)
 	rows = append(rows, taggingRows()...)
+	rows = append(rows, filterEntryRows(axisTag)...)
+	rows = append(rows, filterEntryRows(axisExec)...)
 	rows = append(rows, base.helpOpenRows()...)
 
 	keys := map[string]bool{}

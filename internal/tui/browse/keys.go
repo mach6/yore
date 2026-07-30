@@ -97,8 +97,8 @@ func (m Model) browseGroups() []keyhelp.Group {
 		{Title: "FIND", Rows: []keyhelp.Row{
 			row("/", "search", "/"),
 			row("A", m.agentToggleDesc(), "A"),
-			row("t", "filter by tag", "t"),
-			row("e", "filter by executor", "e"),
+			row("t/e", "filter by this row's tag/executor", "t", "e"),
+			row("T/E", "filter by any tag/executor", "T", "E"),
 			row("H", "cycle the host scope", "H"),
 			row("1-5", "time window", "1", "2", "3", "4", "5"),
 		}},
@@ -216,6 +216,8 @@ func (m Model) footerRows() []keyhelp.Row {
 		return confirmDeleteRows()
 	case m.searching:
 		return searchingRows()
+	case m.axis != axisNone:
+		return filterEntryRows(m.axis)
 	case m.afiltering:
 		return agentFilterRows(m.afilterPane)
 	case m.tagging:
@@ -369,6 +371,21 @@ func taggingRows() []keyhelp.Row {
 	return []keyhelp.Row{
 		row("enter", "save the tag", "enter"),
 		row("esc", "cancel", "esc"),
+	}
+}
+
+// filterEntryPrompt labels the typed value box on the search line.
+func filterEntryPrompt(a filterAxis) string { return "filter " + a.noun() + " ❯ " }
+
+// filterEntryRows is the footer while that box has focus. It says an empty box
+// clears the filter, because that is the one thing the box does that typing a
+// value does not suggest.
+func filterEntryRows(a filterAxis) []keyhelp.Row {
+	return []keyhelp.Row{
+		{Keys: "type", Desc: "a " + a.noun()},
+		row("enter", "apply (empty clears)", "enter"),
+		row("esc", "cancel", "esc"),
+		row("^c", "quit", "ctrl+c"),
 	}
 }
 

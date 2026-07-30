@@ -182,7 +182,8 @@ leaving everything else — including the agent's own auth — exactly as it was
   Today / 7d / 30d / 90d / All) drives every view, including the command table,
   with its tabs in the same top-right corner everywhere. `yore stats` and
   `yore agents` open straight on those two screens. Separate `exec` and `tags`
-  columns, `e` filters by the row's executor and `t` by its tag, `H` cycles the
+  columns, `e`/`t` filter by the row's executor/tag and `E`/`T` by any you type,
+  `H` cycles the
   host scope, `Ctrl+T` tags a row, `S` sync-now; Enter recalls, `y` copies. (yore
   leaves your own `h` alone.) Pane sizes you drag persist to
   `~/.config/yore/ui.toml` — kept out of your hand-edited `config.toml`.
