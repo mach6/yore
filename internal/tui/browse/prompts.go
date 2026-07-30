@@ -21,6 +21,7 @@ type promptStat struct {
 	text     string
 	executor string
 	session  string
+	host     string
 	count    int
 	success  int
 	failures int
@@ -59,7 +60,7 @@ func computePrompts(rows, prompts []rec.Record, now int64, periodDays int, execu
 		}
 		byID[r.ID] = &promptStat{
 			id: r.ID, text: r.Prompt, executor: r.Executor, session: r.Session,
-			firstMs: r.StartMs, lastMs: r.StartMs,
+			host: r.Hostname, firstMs: r.StartMs, lastMs: r.StartMs,
 		}
 	}
 	for _, r := range rows {
@@ -73,7 +74,7 @@ func computePrompts(rows, prompts []rec.Record, now int64, periodDays int, execu
 		if p == nil {
 			p = &promptStat{
 				id: r.PromptID, text: r.Prompt, executor: r.Executor, session: r.Session,
-				firstMs: r.StartMs, lastMs: r.StartMs,
+				host: r.Hostname, firstMs: r.StartMs, lastMs: r.StartMs,
 			}
 			byID[r.PromptID] = p
 		}
@@ -85,6 +86,9 @@ func computePrompts(rows, prompts []rec.Record, now int64, periodDays int, execu
 		}
 		if p.session == "" {
 			p.session = r.Session
+		}
+		if p.host == "" {
+			p.host = r.Hostname
 		}
 		p.count++
 		if r.StartMs > p.lastMs {
@@ -192,11 +196,11 @@ func (m Model) promptListInner(w, h int) string {
 		}, w, h)
 	}
 
-	c := promptLayout(w, m.prompts.hasDur)
+	c := promptLayout(w, m.prompts.hasDur, len(m.agentHosts) > 1)
 	// Lowercase, like every other column header in the UI: uppercase is reserved
 	// for pane names, which now sit in the border above this.
-	lines := []string{promptRow(th.Dim, th.Dim, false, w, th,
-		"when", "session", "executor", "cmds", "status", "dur",
+	lines := []string{promptRow(th.Dim, th.Dim, th.Dim, false, w, th,
+		"when", "host", "session", "executor", "cmds", "status", "dur",
 		plainSegs(th.Dim, "prompt", c.textW), c)}
 
 	rows := m.filteredPrompts
@@ -230,8 +234,8 @@ func (m Model) promptListInner(w, h int) string {
 			segs, used = matchSegments(th, text, q, c.textW)
 			segs = append(segs, padSeg(c.textW-used))
 		}
-		lines = append(lines, promptRow(th.Norm, statusStyle, i == sel, w, th,
-			theme.RelTime(now, p.lastMs), shortSession(p.session), p.executor,
+		lines = append(lines, promptRow(th.Norm, statusStyle, th.Host(p.host), i == sel, w, th,
+			theme.RelTime(now, p.lastMs), p.host, shortSession(p.session), p.executor,
 			strconv.Itoa(p.count), status, promptDur(p), segs, c))
 	}
 	return padLines(lines, w, h)
@@ -394,17 +398,20 @@ func promptStatus(th *theme.Theme, p promptStat) (string, lipgloss.Style) {
 // columns shed (session, then dur, then executor) on a narrow terminal so the
 // prompt text always keeps room.
 type promptCols struct {
-	whenW, sessW, execW, cmdsW, statW, durW, textW int
-	showSess, showExec, showDur                    bool
+	whenW, hostW, sessW, execW, cmdsW, statW, durW, textW int
+	showHost, showSess, showExec, showDur                 bool
 }
 
-func promptLayout(w int, hasDur bool) promptCols {
+func promptLayout(w int, hasDur, multiHost bool) promptCols {
 	c := promptCols{
-		whenW: 7, sessW: 8, execW: 12, cmdsW: 4, statW: 6, durW: 7,
-		showSess: true, showExec: true, showDur: hasDur,
+		whenW: 7, hostW: 10, sessW: 8, execW: 12, cmdsW: 4, statW: 6, durW: 7,
+		showHost: multiHost, showSess: true, showExec: true, showDur: hasDur,
 	}
 	prefix := func() int {
 		p := c.whenW + 2 + c.cmdsW + 2 + c.statW + 2
+		if c.showHost {
+			p += c.hostW + 2
+		}
 		if c.showSess {
 			p += c.sessW + 2
 		}
@@ -418,6 +425,9 @@ func promptLayout(w int, hasDur bool) promptCols {
 	}
 	if prefix()+12 > w {
 		c.showSess = false
+	}
+	if prefix()+12 > w {
+		c.showHost = false
 	}
 	if prefix()+12 > w {
 		c.showDur = false
@@ -449,8 +459,8 @@ func padSeg(n int) styledSeg {
 // styles every cell except status, which takes its own color; a selected row
 // renders as a solid selection bar. The prompt cell arrives as segments because
 // it carries match highlighting, which a single style cannot express.
-func promptRow(base, statusStyle lipgloss.Style, sel bool, w int, th *theme.Theme,
-	when, sess, exec, cmds, status, dur string, text []styledSeg, c promptCols) string {
+func promptRow(base, statusStyle, hostStyle lipgloss.Style, sel bool, w int, th *theme.Theme,
+	when, host, sess, exec, cmds, status, dur string, text []styledSeg, c promptCols) string {
 	var segs []styledSeg
 	sep := func() { segs = append(segs, styledSeg{text: "  ", raw: true}) }
 	cell := func(s string, wdt int, style lipgloss.Style, right bool) {
@@ -465,6 +475,10 @@ func promptRow(base, statusStyle lipgloss.Style, sel bool, w int, th *theme.Them
 
 	cell(when, c.whenW, base, false)
 	sep()
+	if c.showHost {
+		cell(host, c.hostW, hostStyle, false)
+		sep()
+	}
 	if c.showSess {
 		cell(sess, c.sessW, base, false)
 		sep()

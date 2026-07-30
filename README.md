@@ -169,9 +169,11 @@ leaving everything else — including the agent's own auth — exactly as it was
   (`s`: KPIs, top programs/commands/dirs, per-host, and three full-width graphs —
   a contribution heatmap with a month ruler, a daily trend, and an hour-of-day
   histogram, all of which show *more history* on a wider terminal — with period
-  tabs), an **agent explorer** (`a`: four panes — an executor sidebar that
-  filters everything, every prompt, the exact commands the highlighted prompt
-  triggered, and details that follow focus), and **devices** (`D`). Any pane can
+  tabs), an **agent explorer** (`a`: five panes — an executor sidebar and a
+  HOSTS pane that each filter everything, every prompt, the exact commands the
+  highlighted prompt triggered, and details that follow focus; `H` cycles the
+  host filter from anywhere, and multi-host samples get a host column), and
+  **devices** (`D`). Any pane can
   be **expanded to the full terminal** (`z`) or **resized by dragging its
   border** with the mouse — and the sizes you pick are remembered between runs;
   the wheel scrolls whatever the pointer is over. One **time window** (`1`-`5`:
@@ -233,8 +235,9 @@ in [architecture.md](docs/architecture.md)); all state lives under
 | Read your own history without an agent's noise in it | nothing — `hb` and `Ctrl-R` hide agent commands by default (`A` / `⌥a` shows them; `hide_agent_commands` sets the default) |
 | See every key that works on the screen you're on | `?` in `hb` · `⌥/` inside `Ctrl-R` search |
 | Jump straight to stats or the agent explorer | `yore stats` · `yore agents` |
-| See an agent's prompt and the commands it triggered | `yore agents` — `Tab` cycles the four panes, the sidebar filters to one agent |
+| See an agent's prompt and the commands it triggered | `yore agents` — `Tab` cycles the five panes, the sidebar filters to one agent |
 | Find one prompt, or one command an agent ran | `/` in `yore agents` — filters whichever list has focus; `Esc` clears it |
+| See one machine's agent work | the HOSTS pane in `yore agents`, or `H` to cycle the host filter from anywhere |
 | Narrow any view to a time window | `1`-`5` — Today (the calendar day) / 7d / 30d / 90d / All |
 | Give one pane the whole screen | `z` (again to restore) |
 | Resize the panes | drag the border between them with the mouse (remembered in `~/.config/yore/ui.toml`) |

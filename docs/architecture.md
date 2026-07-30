@@ -236,9 +236,9 @@ screen is carved up: it resolves each view's pane rectangles in absolute screen
 cells, plus the draggable seams between them. Renderers size themselves from
 that geometry and `mouse.go` hit-tests against it, so the two can never disagree
 about where a pane is. Browse tiles three panes (host sidebar; the command
-table over the detail pane); the agent explorer tiles four in a 2×2 grid — an
-executor sidebar and a details pane down the left, the prompt list over its
-command pane on the right. Every pane carries a title with its count or cursor
+table over the detail pane); the agent explorer tiles five — the executor
+sidebar over a content-sized host list over the details pane down the left, the
+prompt list over its command pane on the right. Every pane carries a title with its count or cursor
 position, and `Tab` cycles focus within the active view.
 
 - **Zoom** (`z`) expands the focused pane to the whole frame. Focus and zoom move
@@ -360,6 +360,24 @@ follows focus — prompt metadata while the prompt pane is active, the selected
 command's path/time/duration/exit once the command pane is. The command pane's
 exit column is the same 4 wide as the browse table's, so the same value is the
 same width in both.
+
+The explorer's sample is cross-host (the query is scope-all), and the HOSTS
+pane under the executor sidebar filters it by machine: one row per host with
+its agent-command count, an "all hosts" row on top, the bullet on the active
+stop. Picking a host works exactly like picking an executor — the cursor
+selects, and the work panes (executors, prompts, commands, details) narrow to
+that machine — while the stats screen, which shares the sample, stays
+unfiltered. `H` walks the same rows from anywhere in the explorer: all hosts,
+each host in name order, back to all. The filter is held by host*name* with the
+same release rule as the executor filter. The pane's own rows never narrow, and
+its counts ignore the explorer's filters — it is the map of where the filter
+can go, not a view of where it is — and the pane is always present, so the
+layout never depends on the data. It sizes itself to its content until the seam
+above it is dragged; from then on the dragged proportion wins, held as a
+fraction of the top-left region so it survives moving the main seams too. The prompt pane shows a host column only when
+the sample actually spans more than one host (the explorer's analogue of the
+search TUI showing hosts only in scope-all), gated on the sample rather than
+the filter, so the column doesn't appear or vanish while `H` walks the ring.
 
 **Filtering the explorer.** `/` filters the focused pane's list — prompts by
 their text, commands by the command — matching with the same `internal/match`

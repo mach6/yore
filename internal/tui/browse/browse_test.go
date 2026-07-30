@@ -987,14 +987,14 @@ func agentModel(t *testing.T, w, h int) Model {
 	return openAgents(t, ready(t, f, w, h))
 }
 
-// TestAgentsFourPanes proves the explorer shows all four panes at once: the
-// executor sidebar, the prompt list, the highlighted prompt's commands, and the
-// details of whatever is selected.
-func TestAgentsFourPanes(t *testing.T) {
+// TestAgentsPanes proves the explorer shows all five panes at once: the
+// executor sidebar, the host list, the prompt list, the highlighted prompt's
+// commands, and the details of whatever is selected.
+func TestAgentsPanes(t *testing.T) {
 	m := agentModel(t, 140, 40)
 	out := strip(m.View())
 
-	for _, want := range []string{"AGENTS", "PROMPTS", "COMMANDS", "DETAILS"} {
+	for _, want := range []string{"AGENTS", "HOSTS", "PROMPTS", "COMMANDS", "DETAILS"} {
 		require.Containsf(t, out, want, "pane title %q missing:\n%s", want, out)
 	}
 	// The sidebar lists both executors plus the "all agents" row.
@@ -1020,20 +1020,29 @@ func TestAgentsFourPanes(t *testing.T) {
 	require.Equal(t, viewBrowse, m.view, "second `a` did not return to browse")
 }
 
-// TestAgentsPaneFocusCycles walks tab (and shift+tab) around all four panes and
+// TestAgentsPaneFocusCycles walks tab (and shift+tab) around all five panes and
 // checks each pane's cursor keys act on the pane that holds focus.
 func TestAgentsPaneFocusCycles(t *testing.T) {
 	m := agentModel(t, 140, 40)
 	require.Equal(t, apPrompts, m.apane)
 
-	for _, want := range []agentPane{apCommands, apInfo, apAgents, apPrompts} {
+	for _, want := range []agentPane{apCommands, apInfo, apAgents, apHosts, apPrompts} {
 		m, _ = step(t, m, press("tab"))
 		require.Equal(t, want, m.apane, "tab landed on the wrong pane")
 	}
 	m, _ = step(t, m, press("shift+tab"))
-	require.Equal(t, apAgents, m.apane, "shift+tab did not go back")
+	require.Equal(t, apHosts, m.apane, "shift+tab did not go back")
 
-	// On the sidebar, j moves the executor cursor (not the prompt cursor).
+	// On the host pane, j moves the host cursor (not the prompt cursor).
+	m, _ = step(t, m, press("j"))
+	require.Equal(t, 1, m.agentHostSel)
+	require.Equal(t, 0, m.promptSel, "host navigation must not move the prompt cursor")
+	m, _ = step(t, m, press("k"))
+	require.Equal(t, 0, m.agentHostSel)
+
+	// On the sidebar, j moves the executor cursor.
+	m, _ = step(t, m, press("shift+tab"))
+	require.Equal(t, apAgents, m.apane)
 	m, _ = step(t, m, press("j"))
 	require.Equal(t, 1, m.agentSel)
 	require.Equal(t, 0, m.promptSel, "sidebar navigation must not move the prompt cursor")
@@ -1041,6 +1050,7 @@ func TestAgentsPaneFocusCycles(t *testing.T) {
 	// On the command pane, j moves the command cursor.
 	m.agentSel, m.agentFilter = 0, ""
 	m.recomputeStats()
+	m, _ = step(t, m, press("tab")) // -> hosts
 	m, _ = step(t, m, press("tab")) // -> prompts
 	m, _ = step(t, m, press("tab")) // -> commands
 	require.Equal(t, apCommands, m.apane)
@@ -1057,7 +1067,8 @@ func TestAgentsSidebarFilters(t *testing.T) {
 
 	// Focus the sidebar and select the first executor (claude-code: 2 commands,
 	// so it sorts ahead of devin).
-	m, _ = step(t, m, press("shift+tab")) // prompts -> agents
+	m, _ = step(t, m, press("shift+tab")) // prompts -> hosts
+	m, _ = step(t, m, press("shift+tab")) // hosts -> agents
 	require.Equal(t, apAgents, m.apane)
 	m, _ = step(t, m, press("j"))
 	require.Equal(t, "claude-code", m.agentFilter)
@@ -1086,7 +1097,8 @@ func TestAgentsSidebarFilters(t *testing.T) {
 // silently handing it to whichever agent inherits its row.
 func TestAgentsFilterSurvivesPeriodChange(t *testing.T) {
 	m := agentModel(t, 140, 40)
-	m, _ = step(t, m, press("shift+tab"))
+	m, _ = step(t, m, press("shift+tab")) // prompts -> hosts
+	m, _ = step(t, m, press("shift+tab")) // hosts -> agents
 	m, _ = step(t, m, press("j"))
 	m, _ = step(t, m, press("j"))
 	require.Equal(t, "devin", m.agentFilter)

@@ -23,13 +23,14 @@ type agentPane int
 
 const (
 	apAgents agentPane = iota
+	apHosts
 	apPrompts
 	apCommands
 	apInfo
 )
 
 // agentPaneCount is the explorer's pane count (used to cycle focus).
-const agentPaneCount = 4
+const agentPaneCount = 5
 
 // agentStat is one executor's aggregate activity over the selected period.
 type agentStat struct {
@@ -112,6 +113,43 @@ func computeAgents(rows []rec.Record, now int64, periodDays int) *agentsData {
 	return out
 }
 
+// agentHostsIn is the explorer's host cycle: every hostname with agent activity
+// in the period — a tagged command or a prompt record — with its agent-command
+// count, in name order, because the ring must not reshuffle under repeated
+// presses of the key that walks it. The counts ignore the explorer's filters:
+// the block is the map of where H can go, not a view of where it is.
+func agentHostsIn(rows, prompts []rec.Record, now int64, periodDays int) []cmdCount {
+	cutoff := periodCutoff(now, periodDays)
+	seen := map[string]int{}
+	for _, r := range rows {
+		if !r.Deleted() && r.Executor != "" && r.StartMs >= cutoff && r.Hostname != "" {
+			seen[r.Hostname]++
+		}
+	}
+	for _, r := range prompts {
+		if !r.Deleted() && r.ID != "" && r.StartMs >= cutoff && r.Hostname != "" {
+			seen[r.Hostname] += 0 // a prompt that ran nothing still puts its host on the map
+		}
+	}
+	out := make([]cmdCount, 0, len(seen))
+	for h, n := range seen {
+		out = append(out, cmdCount{name: h, n: n})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
+	return out
+}
+
+// hostOnly narrows records to those captured on one hostname.
+func hostOnly(rows []rec.Record, host string) []rec.Record {
+	out := make([]rec.Record, 0, len(rows))
+	for _, r := range rows {
+		if r.Hostname == host {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // --- selection helpers ---------------------------------------------------
 
 // agentRows is the sidebar's row count: every executor plus the leading
@@ -130,6 +168,21 @@ func (m Model) agentAt(i int) (agentStat, bool) {
 		return agentStat{}, false
 	}
 	return m.agents.agents[i-1], true
+}
+
+// hostRows is the host pane's row count: every host plus the leading
+// "all hosts" row.
+func (m Model) hostRows() int {
+	return len(m.agentHosts) + 1
+}
+
+// hostAt returns the host on row i, or false for the "all hosts" row (and for
+// any row past the end).
+func (m Model) hostAt(i int) (cmdCount, bool) {
+	if i <= 0 || i > len(m.agentHosts) {
+		return cmdCount{}, false
+	}
+	return m.agentHosts[i-1], true
 }
 
 // --- title ---------------------------------------------------------------
@@ -152,6 +205,10 @@ func (m Model) agentsTitle(w int) string {
 		scope = m.agentFilter
 	}
 	b.WriteString(th.Accent.Render("  " + scope))
+	if m.agentHostFilter != "" {
+		b.WriteString(th.Dim.Render(" on "))
+		b.WriteString(th.Host(m.agentHostFilter).Render(m.agentHostFilter))
+	}
 	if m.prompts != nil && m.agents != nil {
 		b.WriteString(th.Dim.Render(" · " +
 			plural(m.prompts.total, "prompt") + " · " + plural(m.agents.total, "command")))
@@ -165,10 +222,10 @@ func (m Model) agentsTitle(w int) string {
 	return m.titleWithTabs(b.String(), w)
 }
 
-// --- the four-pane grid --------------------------------------------------
+// --- the five-pane grid --------------------------------------------------
 
 // renderAgentsView draws the explorer. Zoomed, the focused pane alone fills the
-// frame; otherwise the four panes tile the geometry applyLayout resolved, with
+// frame; otherwise the five panes tile the geometry applyLayout resolved, with
 // the focused one carrying the accent border.
 func (m Model) renderAgentsView(w, h int) string {
 	if m.zoom {
@@ -177,6 +234,7 @@ func (m Model) renderAgentsView(w, h int) string {
 	g := m.geo
 	left := lipgloss.JoinVertical(lipgloss.Left,
 		m.agentPaneBox(apAgents, m.apane == apAgents, g.p[apAgents].w-2, g.p[apAgents].h-2),
+		m.agentPaneBox(apHosts, m.apane == apHosts, g.p[apHosts].w-2, g.p[apHosts].h-2),
 		m.agentPaneBox(apInfo, m.apane == apInfo, g.p[apInfo].w-2, g.p[apInfo].h-2),
 	)
 	right := lipgloss.JoinVertical(lipgloss.Left,
@@ -199,6 +257,8 @@ func (m Model) agentPaneBox(p agentPane, focused bool, w, h int) string {
 	switch p {
 	case apAgents:
 		inner = m.agentListInner(w, h)
+	case apHosts:
+		inner = m.agentHostsInner(w, h)
 	case apPrompts:
 		inner = m.promptListInner(w, h)
 	case apCommands:
@@ -218,6 +278,8 @@ func (m Model) agentPaneHeading(p agentPane) (name, suffix string) {
 			return "AGENTS", ""
 		}
 		return "AGENTS", strconv.Itoa(len(m.agents.agents))
+	case apHosts:
+		return "HOSTS", strconv.Itoa(len(m.agentHosts))
 	case apPrompts:
 		return "PROMPTS", countSuffix(m.promptSel, m.promptLen(), m.promptQ)
 	case apCommands:
@@ -285,6 +347,59 @@ func (m Model) agentListInner(w, h int) string {
 	}
 	lines = append(lines, summary...)
 	return padLines(lines, w, h)
+}
+
+// agentHostsInner draws the host pane: an "all hosts" row followed by one row
+// per host with its agent-command count. It is the ring the H key walks, made
+// visible and walkable by cursor — picking a host filters the other panes the
+// way picking an executor does. The counts ignore the explorer's filters: the
+// pane is the map of where the filter can go, not a view of where it is.
+func (m Model) agentHostsInner(w, h int) string {
+	if m.agents == nil {
+		return padLines([]string{"", "  " + m.th.Dim.Render("computing…")}, w, h)
+	}
+	rows := m.hostRows()
+	sel := clampIndex(m.agentHostSel, rows)
+	lines := make([]string, 0, h)
+	top := windowStart(sel, h, rows)
+	for i := top; i < rows && i < top+h; i++ {
+		lines = append(lines, m.agentHostLine(i, i == sel, w))
+	}
+	return padLines(lines, w, h)
+}
+
+// agentHostLine formats one host row in agentLine's "● name    count" shape, so
+// the two left-column lists read the same way — except the hostname keeps its
+// identity color, the one it carries everywhere else in the UI.
+func (m Model) agentHostLine(i int, sel bool, w int) string {
+	th := m.th
+	name, count, active := "all hosts", 0, m.agentHostFilter == ""
+	style := th.Norm
+	if active {
+		style = th.Accent
+	}
+	for _, hc := range m.agentHosts {
+		count += hc.n
+	}
+	if hc, ok := m.hostAt(i); ok {
+		name, count, active = hc.name, hc.n, hc.name == m.agentHostFilter
+		style = th.Host(hc.name)
+	}
+	bullet := " "
+	if active {
+		bullet = "●"
+	}
+	num := strconv.Itoa(count)
+	nameW := w - lipgloss.Width(num) - 3 // bullet + space + gap
+	if nameW < 1 {
+		nameW = 1
+	}
+	segs := []styledSeg{
+		{text: bullet + " " + padRight(truncCols(name, nameW), nameW), style: style},
+		{text: " ", raw: true},
+		{text: num, style: th.Dim},
+	}
+	return composeSegs(segs, sel, w, th)
 }
 
 // agentLine formats one sidebar row: "● name    count".
@@ -406,6 +521,7 @@ func (m Model) promptInfoLines(p promptStat, w int) []string {
 	for _, kv := range [][2]string{
 		{"Executor", dashIfEmpty(p.executor)},
 		{"Session", shortSession(p.session)},
+		{"Host", dashIfEmpty(p.host)},
 		{"Commands", status},
 		{"Duration", promptDur(p)},
 		{"Path", modalCwd(p.cmds)},

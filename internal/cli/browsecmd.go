@@ -44,6 +44,7 @@ func runBrowse(acceptFile string, start browse.StartView) int {
 			BrowseTop:  ui.BrowseTopSplit,
 			AgentLeft:  ui.AgentLeftSplit,
 			AgentTop:   ui.AgentTopSplit,
+			AgentHosts: ui.AgentHostsSplit,
 			DevicesTop: ui.DevicesTopSplit,
 		},
 		SaveSplits: func(s browse.Splits) error {
@@ -52,6 +53,7 @@ func runBrowse(acceptFile string, start browse.StartView) int {
 				BrowseTopSplit:  s.BrowseTop,
 				AgentLeftSplit:  s.AgentLeft,
 				AgentTopSplit:   s.AgentTop,
+				AgentHostsSplit: s.AgentHosts,
 				DevicesTopSplit: s.DevicesTop,
 			})
 		},

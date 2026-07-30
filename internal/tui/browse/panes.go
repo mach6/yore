@@ -14,8 +14,8 @@ func (r rect) contains(x, y int) bool {
 }
 
 // maxPanes is the largest pane count any view lays out (the agent explorer's
-// 2×2 grid).
-const maxPanes = 4
+// five-pane grid).
+const maxPanes = 5
 
 // layout is the active view's pane geometry, recomputed by applyLayout. Panes are
 // stored in the view's own focus order so a focus value indexes straight into p;
@@ -23,18 +23,21 @@ const maxPanes = 4
 // hit test sweeps all of p rather than tracking how many entries are live. (It
 // used to carry a count, and zooming — which parks one full-frame rect at the
 // focused pane's own index — set it to 1, so the wheel stopped hit-testing every
-// pane but the first.) vDiv/hDiv are the draggable seams; -1 means this view has
-// no such seam (or the layout is zoomed to a single pane). hDivFrom is where the
-// horizontal seam starts — the browse view splits only its right-hand column.
+// pane but the first.) vDiv/hDiv/hDiv2 are the draggable seams; -1 means this
+// view has no such seam (or the layout is zoomed to a single pane). hDivFrom is
+// where the horizontal seam starts — the browse view splits only its right-hand
+// column. hDiv2 is the agent explorer's second horizontal seam, between the
+// executor sidebar and the host pane; it spans only the left column.
 type layout struct {
 	p        [maxPanes]rect
 	vDiv     int
 	hDiv     int
 	hDivFrom int
+	hDiv2    int
 }
 
 // noDividers is the geometry of a single full-screen pane.
-func noDividers() layout { return layout{vDiv: -1, hDiv: -1} }
+func noDividers() layout { return layout{vDiv: -1, hDiv: -1, hDiv2: -1} }
 
 // Splits holds the divider positions the user has dragged to, as a fraction of
 // the axis each one cuts, so the chosen proportions survive a terminal resize.
@@ -52,6 +55,7 @@ type Splits struct {
 	BrowseTop  int // results-table height, ‰ of the middle region
 	AgentLeft  int // agent sidebar width, ‰ of the terminal width
 	AgentTop   int // prompt-list height, ‰ of the middle region
+	AgentHosts int // executor-list height, ‰ of the explorer's top-left region
 	DevicesTop int // device-list height, ‰ of the middle region
 }
 
@@ -103,6 +107,7 @@ const (
 	dragNone dragKind = iota
 	dragVert
 	dragHoriz
+	dragHosts // the explorer's left-column seam, between the executor and host panes
 )
 
 // clampRatio bounds a divider ratio to a usable range.
@@ -167,6 +172,7 @@ func browseGeom(w, mid, leftW, tableH int) layout {
 		vDiv:     leftW,
 		hDiv:     1 + tableH,
 		hDivFrom: leftW,
+		hDiv2:    -1,
 	}
 }
 
@@ -181,17 +187,21 @@ func devicesGeom(w, mid, topH int) layout {
 		vDiv:     -1,
 		hDiv:     1 + topH,
 		hDivFrom: 0,
+		hDiv2:    -1,
 	}
 }
 
-// agentGeom lays out the agent explorer's 2×2 grid: the executor sidebar and the
-// details pane down the left, the prompt list over its command pane on the right.
-// Both seams span the full frame, so either can be grabbed anywhere along it.
-func agentGeom(w, mid, leftW, topH int) layout {
+// agentGeom lays out the agent explorer's five panes: the executor sidebar over
+// the host list over the details pane down the left, the prompt list over its
+// command pane on the right. hostsH is carved from the sidebar's share of the
+// top row — the host list is content-sized, so the executor list flexes above
+// it. Both seams span the full frame, so either can be grabbed anywhere along it.
+func agentGeom(w, mid, leftW, topH, hostsH int) layout {
 	right := w - leftW
 	return layout{
 		p: [maxPanes]rect{
-			{x: 0, y: 1, w: leftW, h: topH},
+			{x: 0, y: 1, w: leftW, h: topH - hostsH},
+			{x: 0, y: 1 + topH - hostsH, w: leftW, h: hostsH},
 			{x: leftW, y: 1, w: right, h: topH},
 			{x: leftW, y: 1 + topH, w: right, h: mid - topH},
 			{x: 0, y: 1 + topH, w: leftW, h: mid - topH},
@@ -199,5 +209,6 @@ func agentGeom(w, mid, leftW, topH int) layout {
 		vDiv:     leftW,
 		hDiv:     1 + topH,
 		hDivFrom: 0,
+		hDiv2:    1 + topH - hostsH,
 	}
 }

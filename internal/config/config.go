@@ -482,6 +482,7 @@ type UIState struct {
 	BrowseTopSplit  int `toml:"browse_top_split,omitempty"`
 	AgentLeftSplit  int `toml:"agent_left_split,omitempty"`
 	AgentTopSplit   int `toml:"agent_top_split,omitempty"`
+	AgentHostsSplit int `toml:"agent_hosts_split,omitempty"`
 	DevicesTopSplit int `toml:"devices_top_split,omitempty"`
 }
 

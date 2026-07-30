@@ -189,18 +189,21 @@ type Model struct {
 	top int
 
 	// stats
-	stats       *statsData
-	agents      *agentsData  // per-executor aggregation, from the same sample
-	prompts     *promptsData // prompt aggregation, from the same sample
-	promptSel   int          // selected prompt in the explorer's prompt pane
-	drillSel    int          // selected row within that prompt's command pane
-	hscroll     int          // horizontal column offset for the focused list's selected row
-	agentSel    int          // selected row in the executor sidebar (0 = all agents)
-	agentFilter string       // executor the sidebar is filtering to; "" = all
-	apane       agentPane    // which of the explorer's four panes holds focus
-	statsRows   []rec.Record // the full sample; re-aggregated when the period changes
-	statsTotal  int          // matches the daemon reported for that sample (see statsData.capped)
-	promptRows  []rec.Record // prompt records covering the sample, incl. ones that ran nothing
+	stats           *statsData
+	agents          *agentsData  // per-executor aggregation, from the same sample
+	prompts         *promptsData // prompt aggregation, from the same sample
+	promptSel       int          // selected prompt in the explorer's prompt pane
+	drillSel        int          // selected row within that prompt's command pane
+	hscroll         int          // horizontal column offset for the focused list's selected row
+	agentSel        int          // selected row in the executor sidebar (0 = all agents)
+	agentFilter     string       // executor the sidebar is filtering to; "" = all
+	agentHostFilter string       // hostname the explorer is filtering to; "" = all hosts
+	agentHosts      []cmdCount   // the host pane's rows: hosts with agent activity in the period, name order
+	agentHostSel    int          // selected row in the explorer's host pane (0 = all hosts)
+	apane           agentPane    // which of the explorer's five panes holds focus
+	statsRows       []rec.Record // the full sample; re-aggregated when the period changes
+	statsTotal      int          // matches the daemon reported for that sample (see statsData.capped)
+	promptRows      []rec.Record // prompt records covering the sample, incl. ones that ran nothing
 
 	// The explorer's per-list text filters (the / key). Each list keeps its own
 	// query: tabbing between panes must not silently re-point one pane's filter
@@ -1089,8 +1092,31 @@ func (m *Model) recomputeStats() {
 		return
 	}
 	days := m.periodDays()
+	// The stats screen reads m.stats from this same call, so it aggregates the
+	// unfiltered sample: the explorer's host filter must not bleed into it.
 	m.stats = computeStats(m.statsRows, m.statsTotal, m.now(), days)
-	m.agents = computeAgents(m.statsRows, m.now(), days)
+
+	hostsBefore := len(m.agentHosts)
+	m.agentHosts = agentHostsIn(m.statsRows, m.promptRows, m.now(), days)
+	if len(m.agentHosts) != hostsBefore {
+		m.applyLayout() // the host pane is content-sized, so its height just changed
+	}
+	m.agentHostSel = 0
+	for i, c := range m.agentHosts {
+		if c.name == m.agentHostFilter {
+			m.agentHostSel = i + 1
+		}
+	}
+	if m.agentHostSel == 0 {
+		m.agentHostFilter = "" // the filtered host has no agent activity in this period
+	}
+	rows, prompts := m.statsRows, m.promptRows
+	if m.agentHostFilter != "" {
+		rows = hostOnly(rows, m.agentHostFilter)
+		prompts = hostOnly(prompts, m.agentHostFilter)
+	}
+
+	m.agents = computeAgents(rows, m.now(), days)
 	m.agentSel = 0
 	for i, a := range m.agents.agents {
 		if a.name == m.agentFilter {
@@ -1100,7 +1126,7 @@ func (m *Model) recomputeStats() {
 	if m.agentSel == 0 {
 		m.agentFilter = "" // the filtered executor has no commands in this period
 	}
-	m.prompts = computePrompts(m.statsRows, m.promptRows, m.now(), days, m.agentFilter)
+	m.prompts = computePrompts(rows, prompts, m.now(), days, m.agentFilter)
 	m.applyPromptFilter()
 	m.clampPrompts()
 }
@@ -1161,6 +1187,8 @@ func (m Model) handleAgentsKey(s string) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "/":
 		return m.openAgentFilter()
+	case "H":
+		return m.cycleAgentHost()
 	case "tab":
 		m.focusAgentPane(1)
 		return m, nil
@@ -1307,6 +1335,8 @@ func (m *Model) moveAgentPane(d int) {
 	switch m.apane {
 	case apAgents:
 		m.selectAgent(m.agentSel + d)
+	case apHosts:
+		m.selectAgentHost(m.agentHostSel + d)
 	case apPrompts:
 		m.selectPrompt(m.promptSel + d)
 	default:
@@ -1322,6 +1352,12 @@ func (m *Model) jumpAgentPane(first bool) {
 			m.selectAgent(0)
 		} else {
 			m.selectAgent(m.agentRows() - 1)
+		}
+	case apHosts:
+		if first {
+			m.selectAgentHost(0)
+		} else {
+			m.selectAgentHost(m.hostRows() - 1)
 		}
 	case apPrompts:
 		if first {
@@ -1361,6 +1397,34 @@ func (m *Model) selectAgent(i int) {
 	}
 	m.promptSel, m.drillSel = 0, 0
 	m.recomputeStats()
+}
+
+// selectAgentHost moves the host pane's cursor and re-aggregates: picking a
+// host filters the executor, prompt, command and details panes to that
+// machine's work. Like the executor filter, the host filter is held by
+// hostname, so recomputeStats releases it when the host drops out of the period.
+func (m *Model) selectAgentHost(i int) {
+	next := clampIndex(i, m.hostRows())
+	if next == m.agentHostSel {
+		return
+	}
+	m.agentHostSel = next
+	m.agentHostFilter = ""
+	if hc, ok := m.hostAt(next); ok {
+		m.agentHostFilter = hc.name
+	}
+	m.promptSel, m.drillSel = 0, 0
+	m.recomputeStats()
+}
+
+// cycleAgentHost is the H key: one stop around the host pane's rows — all
+// hosts, each host in name order, back to all — from anywhere in the explorer.
+func (m Model) cycleAgentHost() (tea.Model, tea.Cmd) {
+	if len(m.agentHosts) < 2 {
+		return m.flashOnly("one host in this sample")
+	}
+	m.selectAgentHost((m.agentHostSel + 1) % m.hostRows())
+	return m, nil
 }
 
 // hscrollStep is how many display columns one ←/→ press moves the selected row.
@@ -1414,7 +1478,7 @@ func (m Model) hScrollTarget() (text string, colW int, ok bool) {
 			if !has {
 				return "", 0, false
 			}
-			return oneLine(p.text), promptLayout(iw, m.prompts.hasDur).textW, true
+			return oneLine(p.text), promptLayout(iw, m.prompts.hasDur, len(m.agentHosts) > 1).textW, true
 		case apCommands:
 			r, has := m.drilledCmd()
 			if !has {
@@ -1884,7 +1948,18 @@ func (m *Model) applyGeometry(w, mid int) {
 	case viewAgents:
 		lw := splitAt(m.splits.AgentLeft, w, minPaneCols, w*defaultAgentLeftRatio/ratioFull)
 		topH := splitAt(m.splits.AgentTop, mid, minPaneRows, mid*defaultAgentTopRatio/ratioFull)
-		m.geo = agentGeom(w, mid, lw, topH)
+		// Until its seam is dragged, the host pane is content-sized — you have as
+		// many hosts as you have — and the executor list flexes above it. A drag
+		// stores AgentHosts and that proportion takes over, like every other seam.
+		hostsH := m.hostRows() + 2 // one row per entry plus the two border lines
+		if hostsH > topH/2 {
+			hostsH = topH / 2
+		}
+		if hostsH < 3 {
+			hostsH = 3
+		}
+		hostsH = topH - splitAt(m.splits.AgentHosts, topH, 3, topH-hostsH)
+		m.geo = agentGeom(w, mid, lw, topH, hostsH)
 	case viewDevices:
 		topH := splitAt(m.splits.DevicesTop, mid, minPaneRows, mid*defaultDevicesTopRatio/ratioFull)
 		m.geo = devicesGeom(w, mid, topH)

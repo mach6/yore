@@ -64,6 +64,9 @@ func (m Model) seamAt(x, y int) dragKind {
 	if nearSeam(y, g.hDiv) && x >= g.hDivFrom {
 		return dragHoriz
 	}
+	if nearSeam(y, g.hDiv2) && x < g.vDiv {
+		return dragHosts
+	}
 	return dragNone
 }
 
@@ -92,6 +95,15 @@ func (m *Model) moveDivider(x, y int) {
 		} else {
 			m.splits.BrowseTop = r
 		}
+	case dragHosts:
+		// This seam lives inside the explorer's top-left region, so the ratio is
+		// of that region's height (the main horizontal seam's position), not the
+		// whole frame — dragging the main seam later keeps the proportion.
+		topH := m.geo.hDiv - 1
+		if topH < 1 {
+			return
+		}
+		m.splits.AgentHosts = clampRatio(ratioOf(y-1, topH), minRowRatio, maxRowRatio)
 	default:
 		return
 	}
@@ -154,6 +166,8 @@ func (m Model) wheel(x, y, d int) (tea.Model, tea.Cmd) {
 		switch agentPane(i) {
 		case apAgents:
 			m.selectAgent(m.agentSel + d)
+		case apHosts:
+			m.selectAgentHost(m.agentHostSel + d)
 		case apPrompts:
 			m.selectPrompt(m.promptSel + d)
 		default:
