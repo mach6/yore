@@ -147,6 +147,10 @@ func (m Model) agentsGroups() []keyhelp.Group {
 			row("A", "cycle the agent filter", "A"),
 			row("1-5", "time window", "1", "2", "3", "4", "5"),
 		}},
+		// c aims at the focused list, so it is described where focus can be.
+		{Title: "COLUMNS", Rows: []keyhelp.Row{
+			row("c", "show, hide, and sort this list's columns", "c"),
+		}},
 		// Esc backs out one visible thing at a time. Spelling the order out is
 		// the only way the key is predictable in a view that can be zoomed and
 		// filtered at once.

@@ -61,9 +61,9 @@ func cmds(m Model) []string {
 // nothing about it, because there is nothing yet to explain.
 func TestTableOpensNewestFirst(t *testing.T) {
 	m := sortedTable(t)
-	require.Equal(t, colTime, m.sortCol)
-	require.True(t, m.sortDesc)
-	require.True(t, m.sortedByDefault())
+	require.Equal(t, colTime, m.cols[ctBrowse].sortCol)
+	require.True(t, m.cols[ctBrowse].sortDesc)
+	require.True(t, m.sortedByDefault(ctBrowse))
 	require.Equal(t, []string{"zebra build", "apple test", "mango lint"}, cmds(m),
 		"the rows arrive newest-first and stay that way")
 	require.NotContains(t, strip(m.View()), "sort:", "the default order needs no chip")
@@ -74,7 +74,7 @@ func TestTableOpensNewestFirst(t *testing.T) {
 func TestSortByColumnReorders(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		col  tableCol
+		col  int
 		want []string
 	}{
 		{"host", colHost, []string{"apple test", "mango lint", "zebra build"}},
@@ -87,7 +87,7 @@ func TestSortByColumnReorders(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := sortedTable(t)
-			m, ok := m.sortBy(tc.col)
+			m, ok := m.sortBy(ctBrowse, tc.col)
 			require.True(t, ok, "every column in this table sorts")
 			got := cmds(m)
 			if tc.col == colExec {
@@ -103,19 +103,19 @@ func TestSortByColumnReorders(t *testing.T) {
 // flips it, so there is no second binding to remember.
 func TestSortReversesOnTheSameColumn(t *testing.T) {
 	m := sortedTable(t)
-	m, _ = m.sortBy(colHost)
-	require.False(t, m.sortDesc, "everything but time starts ascending")
+	m, _ = m.sortBy(ctBrowse, colHost)
+	require.False(t, m.cols[ctBrowse].sortDesc, "everything but time starts ascending")
 	require.Equal(t, "apple test", m.rows[0].Cmd)
 
-	m, _ = m.sortBy(colHost)
-	require.True(t, m.sortDesc)
+	m, _ = m.sortBy(ctBrowse, colHost)
+	require.True(t, m.cols[ctBrowse].sortDesc)
 	require.Equal(t, "zebra build", m.rows[0].Cmd, "the same column again reverses it")
 
 	// Time is the exception: it reads newest-first when chosen.
-	m, _ = m.sortBy(colTime)
-	require.True(t, m.sortDesc)
-	m, _ = m.sortBy(colTime)
-	require.False(t, m.sortDesc)
+	m, _ = m.sortBy(ctBrowse, colTime)
+	require.True(t, m.cols[ctBrowse].sortDesc)
+	m, _ = m.sortBy(ctBrowse, colTime)
+	require.False(t, m.cols[ctBrowse].sortDesc)
 	require.Equal(t, "mango lint", m.rows[0].Cmd, "oldest first")
 }
 
@@ -126,7 +126,7 @@ func TestSortKeepsTheCursorOnItsRecord(t *testing.T) {
 	m, _ = step(t, m, press("down")) // onto "apple test"
 	require.Equal(t, "apple test", m.rows[m.sel].Cmd)
 
-	m, _ = m.sortBy(colCmd)
+	m, _ = m.sortBy(ctBrowse, colCmd)
 	require.Equal(t, "apple test", m.rows[m.sel].Cmd, "the cursor followed its record")
 	require.Zero(t, m.sel, "which is now the first row")
 }
@@ -135,7 +135,7 @@ func TestSortKeepsTheCursorOnItsRecord(t *testing.T) {
 // the order the user chose has to be reapplied rather than reverting to recency.
 func TestSortSurvivesARefresh(t *testing.T) {
 	m := sortedTable(t)
-	m, _ = m.sortBy(colCmd)
+	m, _ = m.sortBy(ctBrowse, colCmd)
 	require.Equal(t, "apple test", m.rows[0].Cmd)
 
 	m, _ = step(t, m, queryResultMsg{seq: 2, resp: mkResp(sortFixture())})
@@ -151,11 +151,11 @@ func TestSortSurvivesARefresh(t *testing.T) {
 // header has no room for a glyph, and color alone is not a distinction.
 func TestSortIsNamedOnScreen(t *testing.T) {
 	m := sortedTable(t)
-	m, _ = m.sortBy(colHost)
+	m, _ = m.sortBy(ctBrowse, colHost)
 	require.Contains(t, tableHeaderLine(m), "host▲", "the wide header carries the arrow")
 	require.Contains(t, strip(m.View()), "sort: host ▲", "and the status bar says it in words")
 
-	m, _ = m.sortBy(colExit)
+	m, _ = m.sortBy(ctBrowse, colExit)
 	require.NotContains(t, tableHeaderLine(m), "exit▲", "a 4-wide cell has no room for it")
 	require.Contains(t, tableHeaderLine(m), "exit", "and is not truncated to make room")
 	require.Contains(t, strip(m.View()), "sort: exit ▲")
@@ -176,11 +176,11 @@ func TestColumnsPaneHidesAndShows(t *testing.T) {
 	require.Contains(t, out, "[x] ", "a column that is on reads as on")
 
 	// Down to host, then hide it.
-	for tableCol(m.colSel) != colHost {
+	for m.colSel != colHost {
 		m, _ = step(t, m, press("down"))
 	}
 	m, _ = step(t, m, press(" "))
-	require.True(t, m.colHidden[colHost])
+	require.True(t, m.cols[ctBrowse].hidden[colHost])
 	require.Contains(t, strip(m.View()), "[ ] ", "and off reads as off")
 
 	m, _ = step(t, m, press("esc"))
@@ -193,9 +193,9 @@ func TestColumnsPaneHidesAndShows(t *testing.T) {
 	// And back on again — the pane reopens where it was left, so the same key
 	// undoes it without navigating there a second time.
 	m, _ = step(t, m, press("c"))
-	require.Equal(t, colHost, tableCol(m.colSel), "the cursor stayed where it was left")
+	require.Equal(t, colHost, m.colSel, "the cursor stayed where it was left")
 	m, _ = step(t, m, press(" "))
-	require.False(t, m.colHidden[colHost])
+	require.False(t, m.cols[ctBrowse].hidden[colHost])
 	m, _ = step(t, m, press("esc"))
 	require.Contains(t, tableHeaderLine(m), "host")
 	require.NotContains(t, strip(m.View()), "column hidden")
@@ -207,10 +207,10 @@ func TestCommandColumnCannotBeHidden(t *testing.T) {
 	m := sortedTable(t)
 	m, _ = step(t, m, press("c"))
 	m, _ = step(t, m, press("G"))
-	require.Equal(t, colCmd, tableCol(m.colSel), "the command column is last")
+	require.Equal(t, colCmd, m.colSel, "the command column is last")
 
 	m, _ = step(t, m, press(" "))
-	require.False(t, m.colHidden[colCmd])
+	require.False(t, m.cols[ctBrowse].hidden[colCmd])
 	require.Contains(t, strip(m.View()), "cannot be hidden")
 	require.Positive(t, m.colLayout().w[colCmd])
 }
@@ -220,16 +220,16 @@ func TestCommandColumnCannotBeHidden(t *testing.T) {
 func TestColumnsPaneSortsFromTheCursor(t *testing.T) {
 	m := sortedTable(t)
 	m, _ = step(t, m, press("c"))
-	for tableCol(m.colSel) != colCmd {
+	for m.colSel != colCmd {
 		m, _ = step(t, m, press("down"))
 	}
 	m, _ = step(t, m, press("s"))
-	require.Equal(t, colCmd, m.sortCol)
+	require.Equal(t, colCmd, m.cols[ctBrowse].sortCol)
 	require.Equal(t, "apple test", m.rows[0].Cmd, "the table reordered behind the pane")
 	require.Contains(t, strip(m.View()), "▲ ", "the pane marks the sorted column")
 
 	m, _ = step(t, m, press("s"))
-	require.True(t, m.sortDesc, "s again reverses, as it does from the table")
+	require.True(t, m.cols[ctBrowse].sortDesc, "s again reverses, as it does from the table")
 }
 
 // TestColumnsPaneSaysWhyAColumnIsOff: a data gate and a narrow terminal both take
@@ -247,7 +247,7 @@ func TestColumnsPaneSaysWhyAColumnIsOff(t *testing.T) {
 	require.Contains(t, out, "no agent commands here", "and so does the executor gate")
 
 	// The gates are one-way: the pane cannot force a blank column back on.
-	for tableCol(m.colSel) != colTags {
+	for m.colSel != colTags {
 		m, _ = step(t, m, press("down"))
 	}
 	m, _ = step(t, m, press(" "))
@@ -286,7 +286,7 @@ func TestHiddenColumnDoesNotStopFiltering(t *testing.T) {
 	require.Contains(t, tableHeaderLine(m), "tags")
 
 	m, _ = step(t, m, press("c"))
-	for tableCol(m.colSel) != colTags {
+	for m.colSel != colTags {
 		m, _ = step(t, m, press("down"))
 	}
 	m, _ = step(t, m, press(" "))
@@ -299,6 +299,159 @@ func TestHiddenColumnDoesNotStopFiltering(t *testing.T) {
 	require.Equal(t, "refactor", m.tagFilter, "the tag is still on the record")
 	require.NotNil(t, cmd)
 	require.Contains(t, strip(m.View()), "tag: refactor")
+}
+
+// --- the explorer's two lists --------------------------------------------
+
+// promptHeaderOf is the PROMPTS pane's header row on its own.
+func promptHeaderOf(m Model) string {
+	return strip(composeSegs(m.tableHeaderSegs(
+		m.tableLayout(ctPrompts, maxInt(1, m.geo.p[apPrompts].w-2))), false, 200, m.th))
+}
+
+// cmdHeaderOf is the COMMANDS pane's header row on its own.
+func cmdHeaderOf(m Model) string {
+	return strip(composeSegs(m.tableHeaderSegs(
+		m.tableLayout(ctCommands, maxInt(1, m.geo.p[apCommands].w-2))), false, 200, m.th))
+}
+
+// TestColumnsPaneFollowsTheFocusedList: c reshapes the list you are looking at.
+// The sidebar and the details pane have no columns of their own, so they aim at
+// the prompt list the view hangs off — the same rule / already uses.
+func TestColumnsPaneFollowsTheFocusedList(t *testing.T) {
+	m := agentModel(t, 140, 40)
+	require.Equal(t, apPrompts, m.apane)
+
+	m, _ = step(t, m, press("c"))
+	require.Equal(t, ctPrompts, m.colTable)
+	require.Contains(t, strip(m.View()), "prompt list", "the pane names the table it is aimed at")
+	m, _ = step(t, m, press("esc"))
+
+	m, _ = step(t, m, press("tab")) // -> commands
+	m, _ = step(t, m, press("c"))
+	require.Equal(t, ctCommands, m.colTable)
+	require.Contains(t, strip(m.View()), "command list")
+	m, _ = step(t, m, press("esc"))
+
+	// The sidebar has no columns, so it borrows the prompt list's.
+	for m.apane != apAgents {
+		m, _ = step(t, m, press("tab"))
+	}
+	m, _ = step(t, m, press("c"))
+	require.Equal(t, ctPrompts, m.colTable)
+	m, _ = step(t, m, press("esc"))
+
+	// And the browse view still aims at its own table.
+	m, _ = step(t, m, press("esc")) // leave the explorer
+	require.Equal(t, viewBrowse, m.view)
+	m, _ = step(t, m, press("c"))
+	require.Equal(t, ctBrowse, m.colTable)
+	require.Contains(t, strip(m.View()), "browse table")
+}
+
+// TestPromptListHidesAndSorts: the prompt list reshapes like the browse table,
+// and keeps its own choices — hiding a column here says nothing about there.
+func TestPromptListHidesAndSorts(t *testing.T) {
+	m := agentModel(t, 140, 40)
+	require.Contains(t, promptHeaderOf(m), "session")
+
+	m, _ = step(t, m, press("c"))
+	for m.colSel != pcSess {
+		m, _ = step(t, m, press("down"))
+	}
+	m, _ = step(t, m, press(" "))
+	m, _ = step(t, m, press("esc"))
+	require.NotContains(t, promptHeaderOf(m), "session", "the hidden column is off the list")
+	require.Contains(t, strip(m.View()), "1 col hidden", "the pane title admits it")
+	require.False(t, m.cols[ctBrowse].hidden[colHost], "the browse table is untouched")
+
+	// Sorting by cmds reorders the list: p1 ran two commands, p2 one.
+	require.Equal(t, "add rate limiting", m.filteredPrompts[0].text, "most recent first by default")
+	m, _ = step(t, m, press("c"))
+	for m.colSel != pcCmds {
+		m, _ = step(t, m, press("down"))
+	}
+	m, _ = step(t, m, press("s"))
+	require.Equal(t, pcCmds, m.cols[ctPrompts].sortCol)
+	require.False(t, m.cols[ctPrompts].sortDesc, "ascending first")
+	require.Equal(t, 1, m.filteredPrompts[0].count, "fewest commands first")
+	m, _ = step(t, m, press("s"))
+	require.Equal(t, 2, m.filteredPrompts[0].count, "s again reverses")
+	require.Contains(t, strip(m.View()), "sort: cmds")
+}
+
+// TestPromptSortDoesNotReorderTheAggregate: the unfiltered list IS
+// prompts.prompts, so sorting it in place would reorder the aggregate every other
+// pane reads from.
+func TestPromptSortDoesNotReorderTheAggregate(t *testing.T) {
+	m := agentModel(t, 140, 40)
+	require.Empty(t, m.promptQ, "the unfiltered path is the aliased one")
+	before := make([]string, len(m.prompts.prompts))
+	for i, p := range m.prompts.prompts {
+		before[i] = p.id
+	}
+
+	// cmds ascending puts the one-command prompt first, which recency did not.
+	m, _ = m.sortBy(ctPrompts, pcCmds)
+	after := make([]string, len(m.prompts.prompts))
+	for i, p := range m.prompts.prompts {
+		after[i] = p.id
+	}
+	require.Equal(t, before, after, "the aggregate kept its own order")
+	require.NotEqual(t, before[0], m.filteredPrompts[0].id, "only the view reordered")
+}
+
+// TestCommandListSortsAndKeepsItsDefault: the command list opens oldest-first
+// because that is the agent's working order, and sorting it copies rather than
+// reordering the prompt's own command slice.
+func TestCommandListSortsAndKeepsItsDefault(t *testing.T) {
+	m := agentModel(t, 140, 40)
+	m, _ = step(t, m, press("tab")) // -> commands
+	require.Equal(t, dcWhen, m.cols[ctCommands].sortCol)
+	require.False(t, m.cols[ctCommands].sortDesc, "oldest first")
+	require.Equal(t, "cargo build", m.visibleCmds()[0].Cmd)
+
+	p, ok := m.drilledPrompt()
+	require.True(t, ok)
+	held := append([]rec.Record(nil), p.cmds...)
+
+	m, _ = m.sortBy(ctCommands, dcCmd)
+	require.Equal(t, "cargo add tower", m.visibleCmds()[0].Cmd, "alphabetical now")
+
+	p2, _ := m.drilledPrompt()
+	require.Equal(t, held[0].Cmd, p2.cmds[0].Cmd, "the prompt's own command order is untouched")
+
+	// The pane title says the order is no longer the natural one.
+	require.Contains(t, strip(m.View()), "sort: command")
+}
+
+// TestCommandListDurGate: the dur column is gated on some agent reporting timing,
+// and the pane says so rather than looking switched off.
+func TestCommandListDurGate(t *testing.T) {
+	m := agentModel(t, 140, 40)
+	require.False(t, m.prompts.hasDur, "the sample carries no durations")
+	require.NotContains(t, cmdHeaderOf(m), "dur")
+
+	m, _ = step(t, m, press("tab")) // -> commands
+	m, _ = step(t, m, press("c"))
+	for m.colSel != dcDur {
+		m, _ = step(t, m, press("down"))
+	}
+	require.Contains(t, strip(m.View()), "no agent reports timing")
+}
+
+// TestEachTableKeepsItsOwnSort: three tables, three independent orders — sorting
+// the prompt list must not reorder the browse table underneath it.
+func TestEachTableKeepsItsOwnSort(t *testing.T) {
+	m := sortedTable(t)
+	m, _ = m.sortBy(ctBrowse, colCmd)
+	require.Equal(t, "apple test", m.rows[0].Cmd)
+
+	m, _ = m.sortBy(ctPrompts, pcCmds)
+	require.Equal(t, colCmd, m.cols[ctBrowse].sortCol, "the browse table's order stands")
+	require.Equal(t, "apple test", m.rows[0].Cmd)
+	require.Equal(t, pcCmds, m.cols[ctPrompts].sortCol)
+	require.Equal(t, dcWhen, m.cols[ctCommands].sortCol, "and the command list's default stands")
 }
 
 // TestColumnHeaderMatchesTheRow: the header and the cells are one loop over one
@@ -315,12 +468,12 @@ func TestColumnHeaderMatchesTheRow(t *testing.T) {
 
 		l := m.colLayout()
 		header := tableHeaderLine(m)
-		for c := range tableColCount {
+		for c := range colTables[ctBrowse].metas {
 			// A cell narrower than its own name is truncated, which only the command
 			// column ever is — it takes what is left, down to five columns.
-			if l.shows(c) && l.w[c] >= len(tableSpecs[c].title) {
-				require.Containsf(t, header, tableSpecs[c].title,
-					"w=%d: %s is laid out but not in the header", w, tableSpecs[c].title)
+			if l.shows(c) && l.w[c] >= len(colTables[ctBrowse].metas[c].title) {
+				require.Containsf(t, header, colTables[ctBrowse].metas[c].title,
+					"w=%d: %s is laid out but not in the header", w, colTables[ctBrowse].metas[c].title)
 			}
 		}
 		require.LessOrEqualf(t, runewidth.StringWidth(header), m.tableWidth,

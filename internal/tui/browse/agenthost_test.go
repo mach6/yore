@@ -390,6 +390,11 @@ func TestPromptDetailsShowHost(t *testing.T) {
 // time — session, then host, then duration, then executor — so the prompt text
 // itself is the last thing squeezed.
 func TestPromptLayoutSheds(t *testing.T) {
+	rows, prompts := hostFixture(30)
+	m := explorerHosts(t, rows, prompts)
+	m.prompts.hasDur = true // as if an agent reported timing, so dur is in play
+	require.True(t, m.showPromptHost(), "two hosts and no filter: the column is earned")
+
 	for _, tc := range []struct {
 		w                                     int
 		showSess, showHost, showDur, showExec bool
@@ -400,13 +405,15 @@ func TestPromptLayoutSheds(t *testing.T) {
 		{57, false, false, false, true},
 		{48, false, false, false, false},
 	} {
-		c := promptLayout(tc.w, true, true)
-		require.Equal(t, tc.showSess, c.showSess, "session at w=%d", tc.w)
-		require.Equal(t, tc.showHost, c.showHost, "host at w=%d", tc.w)
-		require.Equal(t, tc.showDur, c.showDur, "dur at w=%d", tc.w)
-		require.Equal(t, tc.showExec, c.showExec, "executor at w=%d", tc.w)
+		l := m.tableLayout(ctPrompts, tc.w)
+		require.Equal(t, tc.showSess, l.shows(pcSess), "session at w=%d", tc.w)
+		require.Equal(t, tc.showHost, l.shows(pcHost), "host at w=%d", tc.w)
+		require.Equal(t, tc.showDur, l.shows(pcDur), "dur at w=%d", tc.w)
+		require.Equal(t, tc.showExec, l.shows(pcExec), "executor at w=%d", tc.w)
 	}
-	require.Equal(t, 10, promptLayout(120, true, true).hostW)
-	require.False(t, promptLayout(120, true, false).showHost,
-		"a one-host sample never shows the column")
+	require.Equal(t, 10, m.tableLayout(ctPrompts, 120).w[pcHost])
+
+	filtered, _ := step(t, m, press("H")) // down to one host
+	require.False(t, filtered.tableLayout(ctPrompts, 120).shows(pcHost),
+		"filtered to one host the column is gone at any width")
 }

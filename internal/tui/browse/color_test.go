@@ -168,27 +168,33 @@ func TestStatLineKinds(t *testing.T) {
 // header is all-dim chrome, and a selected row collapses to the bar.
 func TestPromptRowCellStyles(t *testing.T) {
 	th := truecolorTheme()
-	c := promptLayout(120, true, true)
-	require.True(t, c.showHost && c.showSess && c.showExec && c.showDur)
+	l := colLayout{t: ctPrompts}
+	for i, meta := range colTables[ctPrompts].metas {
+		l.w[i] = meta.width
+	}
+	l.w[pcText] = 40
 
-	row := promptRow(th, false, false, 120,
-		"1h", "boxA", "sessA", "claude-code", "3", "✓", "2s",
-		th.ExitOK, plainSegs(th.Norm, "hello", c.textW), c)
-	require.Contains(t, row, th.Dim.Render(padRight("1h", c.whenW)), "when is metadata: dim")
-	require.Contains(t, row, th.Dim.Render(padRight("sessA", c.sessW)), "session is metadata: dim")
-	require.Contains(t, row, th.Host("boxA").Render(padRight("boxA", c.hostW)), "host keeps its hue")
-	require.Contains(t, row, th.Host("claude-code").Render(padRight("claude-code", c.execW)), "executor gets its hue")
+	p := promptStat{
+		host: "boxA", session: "sessA", executor: "claude-code",
+		count: 3, success: 3, durSum: 2000, durN: 1, lastMs: now - 3_600_000,
+	}
+	segs := rowSegs(th, ctPrompts, promptSpecs, l, p, now)
+	row := composeSegs(segs, false, 120, th)
+	require.Contains(t, row, th.Dim.Render(padRight("sessA", l.w[pcSess])), "session is metadata: dim")
+	require.Contains(t, row, th.Host("boxA").Render(padRight("boxA", l.w[pcHost])), "host keeps its hue")
+	require.Contains(t, row, th.Host("claude-code").Render(padRight("claude-code", l.w[pcExec])),
+		"executor gets its hue")
+	require.Contains(t, row, th.ExitOK.Render(padRight("✓", l.w[pcStat])), "status keeps its outcome color")
 
-	head := promptRow(th, true, false, 120,
-		"when", "host", "session", "executor", "cmds", "status", "dur",
-		th.Dim, plainSegs(th.Dim, "prompt", c.textW), c)
-	require.NotContains(t, head, th.Host("host").Render(padRight("host", c.hostW)), "the header is chrome, not identity")
-	require.Contains(t, head, th.Dim.Render(padRight("host", c.hostW)))
+	// The header is chrome: every cell dim, no identity hue.
+	m := Model{th: th, cols: defaultColStates()}
+	head := composeSegs(m.tableHeaderSegs(l), false, 120, th)
+	require.NotContains(t, head, th.Host("host").Render(padRight("host", l.w[pcHost])),
+		"the header is chrome, not identity")
+	require.Contains(t, head, th.Dim.Render(padRight("host", l.w[pcHost])))
 
-	sel := promptRow(th, false, true, 120,
-		"1h", "boxA", "sessA", "claude-code", "3", "✓", "2s",
-		th.ExitOK, plainSegs(th.Norm, "hello", c.textW), c)
-	require.NotContains(t, sel, th.Host("boxA").Render(padRight("boxA", c.hostW)),
+	sel := composeSegs(segs, true, 120, th)
+	require.NotContains(t, sel, th.Host("boxA").Render(padRight("boxA", l.w[pcHost])),
 		"the selection bar overrides every cell ink")
 	require.Contains(t, strip(sel), "boxA", "the text itself survives selection")
 }

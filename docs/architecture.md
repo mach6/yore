@@ -348,42 +348,64 @@ that rewrote the setting would make an experiment permanent.
 archive and have no status line to be told what was withheld. The rule is that a
 UI may filter only if it can disclose; the scripted path cannot, so it does not.
 
-**The table's columns** are one table of specs (`columns.go`): what each column is
-called, how wide it is, how it draws a cell, and how it orders two records. The
-layout, the header, the row renderer and the columns pane are all loops over it.
-They used to be three hand-kept lists — a width struct, a header builder, a row
-builder — that had to agree about the set and the order, which is the kind of
-agreement that lasts until someone adds a column.
+**Columns** (`columns.go`). The TUI has three row tables — the browse view's
+results, the explorer's prompt list, and that prompt's command list — and each is
+one list of specs saying what a column is called, how wide it is, how it draws a
+cell, and how it orders two rows. The layout, the header, the row renderers and
+the columns pane are loops over those specs. Each table used to carry its own
+hand-kept trio (a width struct, a header builder, a row builder) that had to agree
+about the set and the order, which is the kind of agreement that lasts until
+someone adds a column — and there were three such trios drifting independently.
 
-`c` raises the **COLUMNS pane** over the table, where `space` shows or hides a
-column and `s` sorts by it (`s` again reverses, so the key that picks a column is
-the key that flips it). Sorting is client-side: every matching row is already in
-memory (`proto.LimitAll`), and the rows arrive newest-first, so a **stable** sort
-leaves recency as the tiebreak underneath whatever was asked for on top — equal
-durations stay in time order. Exit status sorts unknown below every known code: a
-row still running has no outcome, and ranking it as a 0 would file it with the
-successes, which is the one thing that column exists to prevent. The sort is
-reapplied wherever `m.rows` is rebuilt, so it survives a background refetch and a
-period change, and the cursor is carried by record ID across a re-sort — the row's
-index moves, the user's place in their history does not.
+They generalize because they are the same shape underneath: some fixed metadata
+columns, then one **flexible** column at the end taking what is left and carrying
+the text (a command, or a prompt). `colTableDef` captures that, so the width
+arithmetic and the shedding rules are written once rather than three times in three
+slightly different ways. What stays per-table is what genuinely differs: the cell
+gap (1 column in the browse table, 2 in the explorer), the flexible column's
+floor, the order columns give up width in, and the order the table opens in.
+
+`c` raises the **COLUMNS pane** over the table it is aimed at — in the explorer,
+whichever list pane has focus, with the sidebar and details pane aiming at the
+prompt list the view hangs off, the same rule `/` uses. `space` shows or hides a
+column; `s` sorts by it, and `s` again reverses, so the key that picks a column is
+the key that flips it. Each table keeps its **own** choices: hiding the session in
+the prompt list says nothing about the browse table's host.
+
+Sorting is client-side — every matching row is already in memory
+(`proto.LimitAll`) — and **stable** over a slice that arrives in the table's
+natural order, so that order stays the tiebreak underneath whatever was asked for
+on top: equal durations keep their time order. Unknown sorts below every known
+value for both exit status and duration: a row still running has no outcome, and a
+command whose timing was never reported is not a fast command. Each table's default
+*is* its natural order, which makes the sort free until it is changed — and means
+any other order must be applied to a **copy**, because the unfiltered prompt list
+is `prompts.prompts` itself and a prompt's command list is `p.cmds` itself.
+Reordering those in place would rewrite the aggregate every other pane reads from.
+`applyPromptFilter` and `visibleCmds` own that copy, and the re-sort path goes
+through them rather than sorting behind their backs. The cursor is carried by
+record ID across a re-sort: the row's index moves, the user's place in their
+history does not.
 
 Three things can take a column off screen and they are not the same thing: the
 user hid it, the rows have nothing to put in it (no executor, no tags, one host in
-scope), or the terminal is too narrow and it was shed. The pane names which,
-because pressing `space` on a column the data gate closed would otherwise look
-broken. Those gates are one-way — the pane can hide a column but cannot force a
-blank one back on, since a column of empty cells costs width and answers nothing.
-The command column cannot be hidden at all: a table of metadata with no commands
-in it is not a shell history.
+scope, no agent reporting timing), or the pane is too narrow and it was shed. The
+pane names which, because pressing `space` on a column the data gate closed would
+otherwise look broken. Those gates are one-way — the pane can hide a column but
+cannot force a blank one back on, since a column of empty cells costs width and
+answers nothing. The flexible column cannot be hidden at all: a table of metadata
+with no commands or prompts in it is not a history.
 
 Both choices are **session state, not settings**, for the reason `A` is: a
 keystroke that quietly rewrote `config.toml` would make an experiment permanent,
 and reshaping a table is the most experimental thing in the view. Dragged pane
 seams do persist to `ui.toml` — dragging a seam is a deliberate act of layout,
 where cycling a sort to look at something is not. The sorted column carries an
-arrow in its header where the cell is wide enough to hold one, and the status bar
-names the sort in words either way: `exit` is four columns wide with no room for a
-glyph, and a distinction carried by color alone is no distinction.
+arrow in its header where the cell is wide enough to hold one, and the sort is
+named in words as well — in the browse status bar, and in the explorer on the pane
+title, which is the only place those panes can say it. `exit` is four columns wide
+with no room for a glyph, and a distinction carried by color alone is no
+distinction.
 
 **The two value filters.** The browse table filters on a tag and on an executor,
 both server-side (`QueryReq.Tag` / `.Executor`), and each has two keys. `t` and

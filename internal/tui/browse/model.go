@@ -269,20 +269,20 @@ type Model struct {
 	axis        filterAxis
 	filterInput textinput.Model
 
-	// The results table's columns. Both are session state, not settings, for the
-	// reason toggleHideAgents gives: a keystroke that quietly rewrote config would
-	// make an experiment permanent, and reordering or hiding a column is the most
-	// experimental thing in the view. An array, not a map, because the Model is
-	// copied on every update and a map would be shared between the copies.
-	colHidden [tableColCount]bool
-	sortCol   tableCol
-	sortDesc  bool
-	showCols  bool // the columns pane, over the view it describes
-	colSel    int  // cursor within that pane
-	flash     string
-	flashID   int
-	quitting  bool
-	accepted  string // command the user chose with enter; read by Run on exit
+	// Each reshapeable table's column choices — which are hidden and which one it
+	// is ordered by. They are session state, not settings, for the reason
+	// toggleHideAgents gives: a keystroke that quietly rewrote config would make an
+	// experiment permanent, and reshaping a table is the most experimental thing in
+	// the view. Arrays, not maps, because the Model is copied on every update and a
+	// map would be shared between the copies.
+	cols     [colTableCount]colState
+	showCols bool     // the columns pane, over the table it reshapes
+	colTable colTable // which table that pane is aimed at
+	colSel   int      // cursor within it
+	flash    string
+	flashID  int
+	quitting bool
+	accepted string // command the user chose with enter; read by Run on exit
 
 	// devices view: the enrolled machines over the enrollment tokens.
 	devices    []proto.DeviceInfo
@@ -396,8 +396,7 @@ func NewModel(b Backend, opts Options) Model {
 		ti:          ti,
 		tagInput:    tagInput,
 		filterInput: filterInput,
-		sortCol:     defaultSort.col,
-		sortDesc:    defaultSort.desc,
+		cols:        defaultColStates(),
 		afilter:     afilter,
 		detail:      vp,
 		hosts:       []hostItem{{label: "All hosts", scope: proto.ScopeAll}},
@@ -1052,7 +1051,7 @@ func (m *Model) applyPeriodFilter() {
 		}
 	}
 	// The rows arrive newest-first; put the chosen column's order on top of that.
-	m.sortRows()
+	sortRows(browseSpecs, m.cols[ctBrowse], m.rows)
 	m.clampWindow()
 }
 
@@ -1361,6 +1360,8 @@ func (m Model) handleAgentsKey(s string) (tea.Model, tea.Cmd) {
 		return m.cycleAgentHost()
 	case "A":
 		return m.cycleAgent()
+	case "c":
+		return m.toggleColumns()
 	case "tab":
 		m.focusAgentPane(1)
 		return m, nil
@@ -1703,13 +1704,13 @@ func (m Model) hScrollTarget() (text string, colW int, ok bool) {
 			if !has {
 				return "", 0, false
 			}
-			return oneLine(p.text), promptLayout(iw, m.prompts.hasDur, m.showPromptHost()).textW, true
+			return oneLine(p.text), m.tableLayout(ctPrompts, iw).flexW(), true
 		case apCommands:
 			r, has := m.drilledCmd()
 			if !has {
 				return "", 0, false
 			}
-			return oneLine(r.Cmd), promptCmdCols(iw, m.prompts.hasDur).cmdW, true
+			return oneLine(r.Cmd), m.tableLayout(ctCommands, iw).flexW(), true
 		}
 		return "", 0, false
 	case viewBrowse:
@@ -1749,15 +1750,24 @@ func (m *Model) applyPromptFilter() {
 	q := match.Parse(m.promptQ)
 	if q.Empty() {
 		m.filteredPrompts = m.prompts.prompts
-		return
-	}
-	kept := make([]promptStat, 0, len(m.prompts.prompts))
-	for _, p := range m.prompts.prompts {
-		if q.Match(p.text) {
-			kept = append(kept, p)
+	} else {
+		kept := make([]promptStat, 0, len(m.prompts.prompts))
+		for _, p := range m.prompts.prompts {
+			if q.Match(p.text) {
+				kept = append(kept, p)
+			}
 		}
+		m.filteredPrompts = kept
 	}
-	m.filteredPrompts = kept
+	// computePrompts left the aggregate most-recent-first, which is also the
+	// default sort — so any other order is applied to a COPY. The unfiltered slice
+	// above is m.prompts.prompts itself, and sorting that in place would reorder
+	// the aggregate every pane reads from.
+	if !m.sortedByDefault(ctPrompts) {
+		sorted := append([]promptStat(nil), m.filteredPrompts...)
+		sortRows(promptSpecs, m.cols[ctPrompts], sorted)
+		m.filteredPrompts = sorted
+	}
 }
 
 // visibleCmds is the drilled prompt's commands narrowed by cmdQ. The prompt's
@@ -1770,16 +1780,24 @@ func (m Model) visibleCmds() []rec.Record {
 		return nil
 	}
 	q := match.Parse(m.cmdQ)
-	if q.Empty() {
-		return p.cmds
-	}
-	kept := make([]rec.Record, 0, len(p.cmds))
-	for _, r := range p.cmds {
-		if q.Match(r.Cmd) {
-			kept = append(kept, r)
+	out := p.cmds
+	if !q.Empty() {
+		kept := make([]rec.Record, 0, len(p.cmds))
+		for _, r := range p.cmds {
+			if q.Match(r.Cmd) {
+				kept = append(kept, r)
+			}
 		}
+		out = kept
 	}
-	return kept
+	// computePrompts left p.cmds chronological, which is this list's default sort,
+	// so any other order goes on a COPY — p.cmds belongs to the prompt aggregate.
+	if !m.sortedByDefault(ctCommands) {
+		sorted := append([]rec.Record(nil), out...)
+		sortRows(drillSpecs, m.cols[ctCommands], sorted)
+		out = sorted
+	}
+	return out
 }
 
 // promptLen / drillLen are the row counts of the two prompt-explorer lists,

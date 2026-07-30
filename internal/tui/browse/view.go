@@ -367,54 +367,15 @@ func (m Model) tableInner(w, h int) string {
 	return padLines(lines, w, h)
 }
 
-// tableHeader names each visible column, with the sort arrow on the one the table
-// is ordered by — where the cell is wide enough to hold it. Narrow columns leave
-// it to the status bar rather than truncating the name to make room for a glyph.
+// tableHeader names each visible column of the results table; the shared builder
+// puts the sort arrow on the ordered one where its cell can hold it.
 func (m Model) tableHeader(l colLayout, w int) string {
-	var segs []styledSeg
-	for c := range tableColCount {
-		width := l.w[c]
-		if width <= 0 {
-			continue
-		}
-		spec := tableSpecs[c]
-		title := spec.title
-		if m.sortCol == c && runewidth.StringWidth(title)+1 <= width {
-			title += sortArrow(m.sortDesc)
-		}
-		segs = append(segs, styledSeg{text: alignCell(title, width, spec.right), style: m.th.Dim})
-		if c != colCmd {
-			segs = append(segs, styledSeg{text: " ", raw: true})
-		}
-	}
-	return composeSegs(segs, false, w, m.th)
-}
-
-// alignCell pads text into a cell of exactly width columns, right-aligned for the
-// quantities and left-aligned (truncating) for the names.
-func alignCell(text string, width int, right bool) string {
-	if right {
-		return padLeft(text, width)
-	}
-	return padRight(truncCols(text, width), width)
+	return composeSegs(m.tableHeaderSegs(l), false, w, m.th)
 }
 
 func (m Model) renderRow(r rec.Record, l colLayout, q match.Query, selected bool, w int, now int64) string {
 	th := m.th
-	var segs []styledSeg
-
-	for c := range colCmd {
-		width := l.w[c]
-		if width <= 0 {
-			continue
-		}
-		spec := tableSpecs[c]
-		text, style := spec.cell(th, r, now)
-		segs = append(segs,
-			styledSeg{text: alignCell(text, width, spec.right), style: style},
-			styledSeg{text: " ", raw: true},
-		)
-	}
+	segs := rowSegs(th, ctBrowse, browseSpecs, l, r, now)
 	if l.w[colCmd] > 0 {
 		if selected && m.focus == focusTable && m.hscroll > 0 {
 			// The selected row scrolls horizontally to reveal a truncated command
@@ -646,11 +607,10 @@ func (m Model) statusBar(w int) string {
 		}
 		// The sort, named only when it is not the order the table opens in — and
 		// named in words, since a narrow column's header has no room for the arrow.
-		if !m.sortedByDefault() {
-			pieces = append(pieces, th.Accent.Render(
-				"sort: "+tableSpecs[m.sortCol].title+" "+sortArrow(m.sortDesc)))
+		if note := m.sortNote(ctBrowse); note != "" {
+			pieces = append(pieces, th.Accent.Render(note))
 		}
-		if n := m.hiddenColCount(); n > 0 {
+		if n := m.hiddenColCount(ctBrowse); n > 0 {
 			pieces = append(pieces, th.Dim.Render(plural(n, "column")+" hidden"))
 		}
 		// A filter that drops a whole category of history has to say so. Without

@@ -196,12 +196,10 @@ func (m Model) promptListInner(w, h int) string {
 		}, w, h)
 	}
 
-	c := promptLayout(w, m.prompts.hasDur, m.showPromptHost())
+	l := m.tableLayout(ctPrompts, w)
 	// Lowercase, like every other column header in the UI: uppercase is reserved
 	// for pane names, which now sit in the border above this.
-	lines := []string{promptRow(th, true, false, w,
-		"when", "host", "session", "executor", "cmds", "status", "dur",
-		th.Dim, plainSegs(th.Dim, "prompt", c.textW), c)}
+	lines := []string{composeSegs(m.tableHeaderSegs(l), false, w, th)}
 
 	rows := m.filteredPrompts
 	if len(rows) == 0 {
@@ -216,27 +214,25 @@ func (m Model) promptListInner(w, h int) string {
 	if visible < 1 {
 		visible = 1
 	}
+	textW := l.flexW()
 	q := match.Parse(m.promptQ)
 	sel := clampIndex(m.promptSel, len(rows))
 	top := windowStart(sel, visible, len(rows))
 	now := m.now()
 	for i := top; i < len(rows) && i < top+visible; i++ {
 		p := rows[i]
-		status, statusStyle := promptStatus(th, p)
+		segs := rowSegs(th, ctPrompts, promptSpecs, l, p, now)
 		text := oneLine(p.text)
-		var segs []styledSeg
 		// The selected row scrolls horizontally to reveal a long prompt, but only
 		// when this pane holds focus — else the command pane owns ←/→.
 		if i == sel && m.apane == apPrompts && m.hscroll > 0 {
-			segs = plainSegs(th.Norm, hOffset(text, m.hscroll, c.textW), c.textW)
+			segs = append(segs, plainSegs(th.Norm, hOffset(text, m.hscroll, textW), textW)...)
 		} else {
-			var used int
-			segs, used = matchSegments(th, text, q, c.textW)
-			segs = append(segs, padSeg(c.textW-used))
+			tsegs, used := matchSegments(th, text, q, textW)
+			segs = append(segs, tsegs...)
+			segs = append(segs, padSeg(textW-used))
 		}
-		lines = append(lines, promptRow(th, false, i == sel, w,
-			theme.RelTime(now, p.lastMs), p.host, shortSession(p.session), p.executor,
-			strconv.Itoa(p.count), status, promptDur(p), statusStyle, segs, c))
+		lines = append(lines, composeSegs(segs, i == sel, w, th))
 	}
 	return padLines(lines, w, h)
 }
@@ -251,8 +247,8 @@ func (m Model) promptCmdInner(w, h int) string {
 	if !ok {
 		return padLines([]string{"", "  " + th.Dim.Render(m.noPromptMsg())}, w, h)
 	}
-	dc := promptCmdCols(w, m.prompts.hasDur)
-	lines := []string{drillHeader(th, dc, w)}
+	l := m.tableLayout(ctCommands, w)
+	lines := []string{composeSegs(m.tableHeaderSegs(l), false, w, th)}
 	if len(p.cmds) == 0 {
 		lines = append(lines, "  "+th.Dim.Render("no commands recorded for this prompt"))
 		return padLines(lines, w, h)
@@ -281,31 +277,22 @@ func (m Model) promptCmdInner(w, h int) string {
 	sel := clampIndex(m.drillSel, len(cmds))
 	top := windowStart(sel, visible, len(cmds))
 	q := match.Parse(m.cmdQ)
+	cmdW := l.flexW()
 	for i := top; i < len(cmds) && i < top+visible; i++ {
-		lines = append(lines, drillRow(th, cmds[i], i == sel, now, q, dc, w, hs))
+		r := cmds[i]
+		segs := rowSegs(th, ctCommands, drillSpecs, l, r, now)
+		if i == sel && hs > 0 {
+			segs = append(segs, styledSeg{text: hOffset(oneLine(r.Cmd), hs, cmdW), raw: true})
+		} else {
+			cmdSegs, used := commandSegments(th, r.Cmd, q, cmdW)
+			segs = append(segs, cmdSegs...)
+			if pad := cmdW - used; pad > 0 {
+				segs = append(segs, styledSeg{text: strings.Repeat(" ", pad), raw: true})
+			}
+		}
+		lines = append(lines, composeSegs(segs, i == sel, w, th))
 	}
 	return padLines(lines, w, h)
-}
-
-// promptCmdCols resolves the command pane's column layout for content width w.
-// The DUR column is dropped when no agent in view reports timing (hasDur), and
-// the command column claims whatever is left.
-func promptCmdCols(w int, hasDur bool) drillCols {
-	// statW matches the browse table's exit column (4: "✗255" is the widest
-	// marker), so the same value is the same width in both tables.
-	dc := drillCols{whenW: 7, statW: 4, durW: 7}
-	if !hasDur {
-		dc.durW = 0
-	}
-	seps := 4 // two two-space gaps: WHEN|ST and ST|COMMAND
-	if dc.durW > 0 {
-		seps = 6 // plus the ST|DUR gap
-	}
-	dc.cmdW = w - (dc.whenW + dc.statW + dc.durW + seps)
-	if dc.cmdW < 12 {
-		dc.cmdW = 12
-	}
-	return dc
 }
 
 // modalCwd returns the most common non-empty cwd across a prompt's commands.
@@ -328,57 +315,6 @@ func modalCwd(cmds []rec.Record) string {
 	return best
 }
 
-// drillCols is the column layout for the command pane's list.
-type drillCols struct{ whenW, statW, durW, cmdW int }
-
-// drillHeader draws the dim column header for the command pane's list. The DUR
-// column is present only when dc.durW > 0 (some agent reported timing).
-func drillHeader(th *theme.Theme, dc drillCols, w int) string {
-	segs := []styledSeg{
-		{text: padLeft("when", dc.whenW), style: th.Dim}, {text: "  ", raw: true},
-		{text: padRight("st", dc.statW), style: th.Dim}, {text: "  ", raw: true},
-	}
-	if dc.durW > 0 {
-		segs = append(segs,
-			styledSeg{text: padLeft("dur", dc.durW), style: th.Dim},
-			styledSeg{text: "  ", raw: true})
-	}
-	segs = append(segs, styledSeg{text: padRight("command", dc.cmdW), style: th.Dim})
-	return composeSegs(segs, false, w, th)
-}
-
-// drillRow formats one command row in the command pane, syntax-highlighting the
-// command and coloring the exit marker (or a full selection bar when selected).
-// A selected row with hscroll>0 scrolls horizontally to reveal a long command.
-func drillRow(th *theme.Theme, r rec.Record, sel bool, now int64, q match.Query, dc drillCols, w, hscroll int) string {
-	var segs []styledSeg
-	sep := func() { segs = append(segs, styledSeg{text: "  ", raw: true}) }
-
-	segs = append(segs, styledSeg{text: padLeft(theme.RelTime(now, r.StartMs), dc.whenW), style: th.Dim})
-	sep()
-	mark, mStyle := exitMarker(th, r)
-	segs = append(segs, styledSeg{text: padRight(truncCols(mark, dc.statW), dc.statW), style: mStyle})
-	sep()
-	if dc.durW > 0 {
-		dur := "—" // this agent didn't report timing, though a sibling did
-		if r.DurMs != nil {
-			dur = theme.Duration(*r.DurMs)
-		}
-		segs = append(segs, styledSeg{text: padLeft(dur, dc.durW), style: th.Dim})
-		sep()
-	}
-	if sel && hscroll > 0 {
-		segs = append(segs, styledSeg{text: hOffset(oneLine(r.Cmd), hscroll, dc.cmdW), raw: true})
-	} else {
-		cmdSegs, used := commandSegments(th, r.Cmd, q, dc.cmdW)
-		segs = append(segs, cmdSegs...)
-		if pad := dc.cmdW - used; pad > 0 {
-			segs = append(segs, styledSeg{text: strings.Repeat(" ", pad), raw: true})
-		}
-	}
-	return composeSegs(segs, sel, w, th)
-}
-
 // promptStatus summarizes a prompt's command outcomes as a compact glyph/label
 // and the style for its status cell. The CMDS column already carries the total,
 // so a clean run is just a green ✓ (not "✓N", which read as an exit code and
@@ -394,54 +330,6 @@ func promptStatus(th *theme.Theme, p promptStat) (string, lipgloss.Style) {
 	}
 }
 
-// promptCols is the resolved column layout for the prompt table; optional
-// columns shed (session, then dur, then executor) on a narrow terminal so the
-// prompt text always keeps room.
-type promptCols struct {
-	whenW, hostW, sessW, execW, cmdsW, statW, durW, textW int
-	showHost, showSess, showExec, showDur                 bool
-}
-
-func promptLayout(w int, hasDur, multiHost bool) promptCols {
-	c := promptCols{
-		whenW: 7, hostW: 10, sessW: 8, execW: 12, cmdsW: 4, statW: 6, durW: 7,
-		showHost: multiHost, showSess: true, showExec: true, showDur: hasDur,
-	}
-	prefix := func() int {
-		p := c.whenW + 2 + c.cmdsW + 2 + c.statW + 2
-		if c.showHost {
-			p += c.hostW + 2
-		}
-		if c.showSess {
-			p += c.sessW + 2
-		}
-		if c.showExec {
-			p += c.execW + 2
-		}
-		if c.showDur {
-			p += c.durW + 2
-		}
-		return p
-	}
-	if prefix()+12 > w {
-		c.showSess = false
-	}
-	if prefix()+12 > w {
-		c.showHost = false
-	}
-	if prefix()+12 > w {
-		c.showDur = false
-	}
-	if prefix()+12 > w {
-		c.showExec = false
-	}
-	c.textW = w - prefix()
-	if c.textW < 8 {
-		c.textW = 8
-	}
-	return c
-}
-
 // plainSegs is one unhighlighted cell, truncated and padded to width.
 func plainSegs(style lipgloss.Style, s string, w int) []styledSeg {
 	return []styledSeg{{text: padRight(truncCols(s, w), w), style: style}}
@@ -453,64 +341,6 @@ func padSeg(n int) styledSeg {
 		return styledSeg{raw: true}
 	}
 	return styledSeg{text: strings.Repeat(" ", n), raw: true}
-}
-
-// promptRow formats one fixed-width prompt table row (header or data). Cell
-// styles follow the table's conventions — metadata (when/session/dur) dim,
-// identities (host, executor) in their stable hues, status in its outcome
-// color — and a header row is all dim, like every column header in the UI. A
-// selected row renders as a solid selection bar. The prompt cell arrives as
-// segments because it carries match highlighting, which a single style cannot
-// express.
-func promptRow(th *theme.Theme, header, sel bool, w int,
-	when, host, sess, exec, cmds, status, dur string,
-	statusStyle lipgloss.Style, text []styledSeg, c promptCols) string {
-	meta, norm := th.Dim, th.Norm
-	hostStyle, execStyle := th.Host(host), th.Host(exec)
-	if exec == "" {
-		execStyle = th.Dim
-	}
-	if header {
-		meta, norm, statusStyle = th.Dim, th.Dim, th.Dim
-		hostStyle, execStyle = th.Dim, th.Dim
-	}
-
-	var segs []styledSeg
-	sep := func() { segs = append(segs, styledSeg{text: "  ", raw: true}) }
-	cell := func(s string, wdt int, style lipgloss.Style, right bool) {
-		t := truncCols(s, wdt)
-		if right {
-			t = padLeft(t, wdt)
-		} else {
-			t = padRight(t, wdt)
-		}
-		segs = append(segs, styledSeg{text: t, style: style})
-	}
-
-	cell(when, c.whenW, meta, false)
-	sep()
-	if c.showHost {
-		cell(host, c.hostW, hostStyle, false)
-		sep()
-	}
-	if c.showSess {
-		cell(sess, c.sessW, meta, false)
-		sep()
-	}
-	if c.showExec {
-		cell(exec, c.execW, execStyle, false)
-		sep()
-	}
-	cell(cmds, c.cmdsW, norm, true)
-	sep()
-	cell(status, c.statW, statusStyle, false)
-	sep()
-	if c.showDur {
-		cell(dur, c.durW, meta, true)
-		sep()
-	}
-	segs = append(segs, text...)
-	return composeSegs(segs, sel, w, th)
 }
 
 // windowStart returns the first visible index so that sel stays on screen within

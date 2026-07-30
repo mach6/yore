@@ -296,9 +296,9 @@ func (m Model) agentPaneHeading(p agentPane) (name, suffix string) {
 	case apHosts:
 		return "HOSTS", strconv.Itoa(len(m.agentHosts))
 	case apPrompts:
-		return "PROMPTS", countSuffix(m.promptSel, m.promptLen(), m.promptQ)
+		return "PROMPTS", m.listSuffix(ctPrompts, countSuffix(m.promptSel, m.promptLen(), m.promptQ))
 	case apCommands:
-		return "COMMANDS", countSuffix(m.drillSel, m.drillLen(), m.cmdQ)
+		return "COMMANDS", m.listSuffix(ctCommands, countSuffix(m.drillSel, m.drillLen(), m.cmdQ))
 	default:
 		// The title says what the pane is describing, since the pane can outlive
 		// the focus that chose it, and "↓ more" when its body runs past the
