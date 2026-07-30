@@ -172,7 +172,8 @@ leaving everything else — including the agent's own auth — exactly as it was
   tabs), an **agent explorer** (`a`: five panes — an executor sidebar and a
   HOSTS pane that each filter everything, every prompt, the exact commands the
   highlighted prompt triggered, and details that follow focus; `H` cycles the
-  host filter from anywhere, and multi-host samples get a host column), and
+  host filter from anywhere and `A` the agent, and the host column appears only
+  when the rows can disagree about it), and
   **devices** (`D`). Any pane can
   be **expanded to the full terminal** (`z`) or **resized by dragging its
   border** with the mouse — and the sizes you pick are remembered between runs;
@@ -180,8 +181,8 @@ leaving everything else — including the agent's own auth — exactly as it was
   Today / 7d / 30d / 90d / All) drives every view, including the command table,
   with its tabs in the same top-right corner everywhere. `yore stats` and
   `yore agents` open straight on those two screens. Separate `exec` and `tags`
-  columns, `e` filters by the row's executor and `t` by its tag, `Ctrl+T` tags a
-  row, `S` sync-now; Enter recalls, `y` copies. (yore
+  columns, `e` filters by the row's executor and `t` by its tag, `H` cycles the
+  host scope, `Ctrl+T` tags a row, `S` sync-now; Enter recalls, `y` copies. (yore
   leaves your own `h` alone.) Pane sizes you drag persist to
   `~/.config/yore/ui.toml` — kept out of your hand-edited `config.toml`.
   Commands are **syntax-highlighted everywhere they appear** — the table, both
@@ -244,7 +245,7 @@ in [architecture.md](docs/architecture.md)); all state lives under
 | Jump straight to stats or the agent explorer | `yore stats` · `yore agents` |
 | See an agent's prompt and the commands it triggered | `yore agents` — `Tab` cycles the five panes, the sidebar filters to one agent |
 | Find one prompt, or one command an agent ran | `/` in `yore agents` — filters whichever list has focus; `Esc` clears it |
-| See one machine's agent work | the HOSTS pane in `yore agents`, or `H` to cycle the host filter from anywhere |
+| See one machine's agent work | the HOSTS pane in `yore agents`, or `H` to cycle the host filter from anywhere (`A` cycles the agent) |
 | Narrow any view to a time window | `1`-`5` — Today (the calendar day) / 7d / 30d / 90d / All |
 | Give one pane the whole screen | `z` (again to restore) |
 | Resize the panes | drag the border between them with the mouse (remembered in `~/.config/yore/ui.toml`) |

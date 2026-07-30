@@ -187,6 +187,19 @@ func (m Model) hostAt(i int) (cmdCount, bool) {
 	return m.agentHosts[i-1], true
 }
 
+// showPromptHost reports whether the prompt table should spend a column on the
+// host. It earns one only when the rows can actually differ: several machines in
+// the sample and no host filter up. Filtered to one, every cell would repeat a
+// name the pane title, the HOSTS pane's bullet, and the header line all already
+// carry, and those ten columns are worth more to the prompt text.
+//
+// So the table does reshape as H walks the ring, which it deliberately did not
+// before. The reshape is the point: the column is there to tell hosts apart, and
+// once one is chosen there are none to tell apart.
+func (m Model) showPromptHost() bool {
+	return m.agentHostFilter == "" && len(m.agentHosts) > 1
+}
+
 // --- title ---------------------------------------------------------------
 
 // agentsTitle is the header shown in place of the search bar: the period tabs

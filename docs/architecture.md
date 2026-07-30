@@ -374,10 +374,20 @@ its counts ignore the explorer's filters — it is the map of where the filter
 can go, not a view of where it is — and the pane is always present, so the
 layout never depends on the data. It sizes itself to its content until the seam
 above it is dragged; from then on the dragged proportion wins, held as a
-fraction of the top-left region so it survives moving the main seams too. The prompt pane shows a host column only when
-the sample actually spans more than one host (the explorer's analogue of the
-search TUI showing hosts only in scope-all), gated on the sample rather than
-the filter, so the column doesn't appear or vanish while `H` walks the ring.
+fraction of the top-left region so it survives moving the main seams too. `A` is
+the same ring on the other axis, walking the executor sidebar — all agents, each
+executor in turn, back to all. Either key on a sample with only one stop says so
+rather than appearing to do nothing, since "all" and the single child describe the
+same work. (`A` means this only here. In the browse table it hides and shows
+agent commands, that view's one agent-shaped question; in the explorer every row
+is agent work already, so the useful question is *which* agent.)
+
+The prompt pane spends a column on the host only when its rows can disagree about
+it: several machines in the sample *and* no host filter up. Filtered to one, every
+cell would repeat a name the pane title, the HOSTS bullet, and the header line all
+already carry, so those ten columns go to the prompt text instead. The table does
+therefore reshape as `H` walks the ring — that is the point, since the column
+exists to tell hosts apart and a chosen host leaves none to tell apart.
 
 **Filtering the explorer.** `/` filters the focused pane's list — prompts by
 their text, commands by the command — matching with the same `internal/match`

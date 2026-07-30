@@ -190,10 +190,11 @@ func TestHostCycleReleasesExecutorAbsentOnHost(t *testing.T) {
 	require.Equal(t, 2, m.agents.total)
 }
 
-// TestHostColumnOnlyOnMultiHostSamples: the prompt pane spends a column on the
-// host only when the sample spans more than one — and keeps it while filtered
-// to one, so the one key being pressed does not reshape the table under it.
-func TestHostColumnOnlyOnMultiHostSamples(t *testing.T) {
+// TestHostColumnOnlyWhenHostsCanDiffer: the prompt pane spends a column on the
+// host only when its rows can disagree about it — several machines in the sample
+// and no host filter up. One machine, or one filtered to, and the column would
+// print the same name on every row.
+func TestHostColumnOnlyWhenHostsCanDiffer(t *testing.T) {
 	single := explorer(t) // the one-host fixture from the filter tests
 	require.NotContains(t, promptHeaderLine(t, single), "host")
 
@@ -211,8 +212,50 @@ func TestHostColumnOnlyOnMultiHostSamples(t *testing.T) {
 
 	multi, _ = step(t, multi, press("H"))
 	require.Equal(t, "boxA", multi.agentHostFilter)
-	require.Contains(t, promptHeaderLine(t, multi), "host",
-		"the column must not vanish while H walks the ring")
+	require.NotContains(t, promptHeaderLine(t, multi), "host",
+		"filtered to one host, the column has nothing left to distinguish")
+	require.Contains(t, strip(multi.View()), "boxA",
+		"which host it is stays on screen — the pane title and the HOSTS bullet carry it")
+
+	// All the way around the ring and the column comes back with the choice.
+	for range multi.hostRows() - 1 {
+		multi, _ = step(t, multi, press("H"))
+	}
+	require.Empty(t, multi.agentHostFilter, "the ring returns to all hosts")
+	require.Contains(t, promptHeaderLine(t, multi), "host")
+}
+
+// TestAgentCycleWalksExecutorsAndReturnsToAll: A is H's mirror on the other
+// axis — one stop around the executor sidebar from anywhere in the explorer,
+// driving the same selection its cursor does.
+func TestAgentCycleWalksExecutorsAndReturnsToAll(t *testing.T) {
+	rows, prompts := hostFixture(30)
+	m := explorerHosts(t, rows, prompts)
+	require.Empty(t, m.agentFilter, "the explorer opens on all agents")
+
+	seen := make([]string, 0, m.agentRows())
+	for range m.agentRows() {
+		m, _ = step(t, m, press("A"))
+		seen = append(seen, m.agentFilter)
+	}
+	require.Equal(t, []string{"claude-code", "codex", ""}, seen,
+		"A walks each executor in sidebar order and back to all agents")
+
+	// It shares the sidebar's selection, so the cursor lands where A left it.
+	m, _ = step(t, m, press("A"))
+	require.Equal(t, "claude-code", m.agentFilter)
+	require.Equal(t, 1, m.agentSel, "A and the sidebar cursor are one selection")
+	require.Equal(t, 1, m.prompts.total, "picking an executor narrows the work panes")
+}
+
+// TestAgentCycleOnASingleAgentSample: with one executor the "all agents" row and
+// its one child describe the same work, so A says so rather than appearing to do
+// nothing — the same courtesy H pays on a one-host sample.
+func TestAgentCycleOnASingleAgentSample(t *testing.T) {
+	m := explorer(t)
+	m, _ = step(t, m, press("A"))
+	require.Empty(t, m.agentFilter)
+	require.Contains(t, strip(m.View()), "one agent in this sample")
 }
 
 // TestHostPaneShowsTheRing: the HOSTS pane is the visible state of the ring H

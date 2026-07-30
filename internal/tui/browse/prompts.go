@@ -196,7 +196,7 @@ func (m Model) promptListInner(w, h int) string {
 		}, w, h)
 	}
 
-	c := promptLayout(w, m.prompts.hasDur, len(m.agentHosts) > 1)
+	c := promptLayout(w, m.prompts.hasDur, m.showPromptHost())
 	// Lowercase, like every other column header in the UI: uppercase is reserved
 	// for pane names, which now sit in the border above this.
 	lines := []string{promptRow(th, true, false, w,

@@ -99,6 +99,7 @@ func (m Model) browseGroups() []keyhelp.Group {
 			row("A", m.agentToggleDesc(), "A"),
 			row("t", "filter by tag", "t"),
 			row("e", "filter by executor", "e"),
+			row("H", "cycle the host scope", "H"),
 			row("1-5", "time window", "1", "2", "3", "4", "5"),
 		}},
 		{Title: "ACT", Rows: act},
@@ -137,6 +138,7 @@ func (m Model) agentsGroups() []keyhelp.Group {
 		{Title: "FIND", Rows: []keyhelp.Row{
 			row("/", "filter this pane's list", "/"),
 			row("H", "cycle the host filter", "H"),
+			row("A", "cycle the agent filter", "A"),
 			row("1-5", "time window", "1", "2", "3", "4", "5"),
 		}},
 		// Esc backs out one visible thing at a time. Spelling the order out is
@@ -240,6 +242,7 @@ func (m Model) footerRows() []keyhelp.Row {
 			row("z", "zoom", "z"),
 			row("1-5", "window", "1", "2", "3", "4", "5"),
 			row("H", "host", "H"),
+			row("A", "agent", "A"),
 		}
 		// With a filter up, esc means "drop it" before it means "leave" — say the
 		// one that will actually happen next.

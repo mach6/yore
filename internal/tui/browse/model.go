@@ -801,6 +801,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.toggleTagFilter()
 	case "e":
 		return m.toggleExecutorFilter()
+	case "H":
+		return m.cycleHost()
 	case "A":
 		return m.toggleHideAgents()
 	case "ctrl+t":
@@ -1202,6 +1204,8 @@ func (m Model) handleAgentsKey(s string) (tea.Model, tea.Cmd) {
 		return m.openAgentFilter()
 	case "H":
 		return m.cycleAgentHost()
+	case "A":
+		return m.cycleAgent()
 	case "tab":
 		m.focusAgentPane(1)
 		return m, nil
@@ -1440,6 +1444,22 @@ func (m Model) cycleAgentHost() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// cycleAgent is the A key: H's mirror on the other axis, one stop around the
+// executor sidebar — all agents, each executor in turn, back to all. With a
+// single executor in the sample the "all agents" row and its one child show the
+// same work, so there is nothing to cycle between and the key says so instead.
+//
+// A means this only in the explorer. In the browse table the same key hides and
+// shows agent commands, which is that view's one agent-shaped question; here
+// every row is agent work already, so the useful question is which agent.
+func (m Model) cycleAgent() (tea.Model, tea.Cmd) {
+	if m.agents == nil || len(m.agents.agents) < 2 {
+		return m.flashOnly("one agent in this sample")
+	}
+	m.selectAgent((m.agentSel + 1) % m.agentRows())
+	return m, nil
+}
+
 // hscrollStep is how many display columns one ←/→ press moves the selected row.
 const hscrollStep = 8
 
@@ -1491,7 +1511,7 @@ func (m Model) hScrollTarget() (text string, colW int, ok bool) {
 			if !has {
 				return "", 0, false
 			}
-			return oneLine(p.text), promptLayout(iw, m.prompts.hasDur, len(m.agentHosts) > 1).textW, true
+			return oneLine(p.text), promptLayout(iw, m.prompts.hasDur, m.showPromptHost()).textW, true
 		case apCommands:
 			r, has := m.drilledCmd()
 			if !has {
@@ -1624,6 +1644,22 @@ func (m Model) moveHost(d int) (tea.Model, tea.Cmd) {
 	if m.hostSel >= n {
 		m.hostSel = n - 1
 	}
+	return m.issueQuery()
+}
+
+// cycleHost is the H key: one stop down the sidebar — all hosts, then each
+// machine in the order the sidebar lists them, and around again — from anywhere
+// in the browse view, the mirror of the explorer's H. It wraps where ↑/↓ clamp:
+// a key you press repeatedly to sweep the machines has to come back around,
+// while an arrow key that jumped from the last row to the first would be a
+// cursor that lost its place. The header's scope word reports where it landed,
+// so it needs no flash of its own — but with only the aggregate row there is
+// nothing to cycle through, and saying so beats a keypress that looks broken.
+func (m Model) cycleHost() (tea.Model, tea.Cmd) {
+	if len(m.hosts) < 2 {
+		return m.flashOnly("one host in this store")
+	}
+	m.hostSel = (m.hostSel + 1) % len(m.hosts)
 	return m.issueQuery()
 }
 
