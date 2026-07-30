@@ -208,6 +208,8 @@ type Model struct {
 	agentHosts      []cmdCount   // the host pane's rows: hosts with agent activity in the period, name order
 	agentHostSel    int          // selected row in the explorer's host pane (0 = all hosts)
 	apane           agentPane    // which of the explorer's five panes holds focus
+	infoCmd         bool         // the details pane is describing the selected command, not its prompt
+	infoTop         int          // the details pane's scroll offset, in body lines
 	statsRows       []rec.Record // the full sample; re-aggregated when the period changes
 	statsTotal      int          // matches the daemon reported for that sample (see statsData.capped)
 	promptRows      []rec.Record // prompt records covering the sample, incl. ones that ran nothing
@@ -997,7 +999,7 @@ func (m Model) setPeriod(p int) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.period = p
-	m.drillSel = 0
+	m.drillSel, m.infoTop = 0, 0
 	m.applyPeriodFilter()
 	if m.sel >= len(m.rows) {
 		m.sel = maxInt(0, len(m.rows)-1)
@@ -1161,6 +1163,7 @@ func (m Model) toggleAgents() (tea.Model, tea.Cmd) {
 	m.zoom = false
 	m.promptSel = 0
 	m.drillSel = 0
+	m.infoCmd, m.infoTop = false, 0 // opening on the prompt list, details describes its prompt
 	m.applyLayout()
 	if m.statsRows != nil {
 		m.recomputeStats()
@@ -1267,6 +1270,7 @@ func (m Model) filterFor(p agentPane) string {
 // long only looks like the filter misfired.
 func (m *Model) setFilter(p agentPane, q string) {
 	m.hscroll = 0 // the row under the cursor is a different row now
+	m.infoTop = 0 // and the details pane is describing a different one
 	if p == apCommands {
 		m.cmdQ = q
 		m.drillSel = 0
@@ -1326,28 +1330,37 @@ func (m *Model) clearFocusedFilter() bool {
 	return true
 }
 
-// focusAgentPane moves focus around the explorer's four panes. Zoom follows
+// focusAgentPane moves focus around the explorer's five panes. Zoom follows
 // focus, so tabbing while zoomed swaps which pane fills the frame rather than
 // dropping back to the tiled layout.
 func (m *Model) focusAgentPane(d int) {
-	m.apane = agentPane((int(m.apane) + d + agentPaneCount) % agentPaneCount)
-	m.hscroll = 0
-	m.applyLayout()
+	m.setAgentPane(agentPane((int(m.apane) + d + agentPaneCount) % agentPaneCount))
 }
 
-// setAgentPane focuses a specific pane (the mouse path).
+// setAgentPane focuses a specific pane — the mouse path, and where tabbing ends
+// up. Landing on a list pane points the details pane at what that list selects;
+// landing on the details pane itself changes nothing, so tabbing over to read or
+// zoom a command's record cannot swap the prompt's in on the way.
 func (m *Model) setAgentPane(p agentPane) {
 	if m.apane == p {
 		return
 	}
 	m.apane = p
 	m.hscroll = 0
+	switch p {
+	case apCommands:
+		m.infoCmd, m.infoTop = true, 0
+	case apPrompts, apAgents, apHosts:
+		m.infoCmd, m.infoTop = false, 0
+	}
 	m.applyLayout()
 }
 
 // moveAgentPane moves the focused pane's cursor by d rows. The details pane has
-// no cursor of its own — it mirrors whatever the command pane is on — so it
-// drives that instead of going dead.
+// no cursor, but it does have more body than fits, so there it scrolls — the same
+// thing ↑/↓ do in the browse view's detail pane. Moving the command cursor from
+// here instead, as it once did, meant the keys drove a list the focused pane was
+// not even showing.
 func (m *Model) moveAgentPane(d int) {
 	switch m.apane {
 	case apAgents:
@@ -1356,12 +1369,15 @@ func (m *Model) moveAgentPane(d int) {
 		m.selectAgentHost(m.agentHostSel + d)
 	case apPrompts:
 		m.selectPrompt(m.promptSel + d)
+	case apInfo:
+		m.scrollInfo(d)
 	default:
-		m.drillSel = clampIndex(m.drillSel+d, m.drillLen())
+		m.setDrill(m.drillSel + d)
 	}
 }
 
-// jumpAgentPane sends the focused pane's cursor to the first or last row.
+// jumpAgentPane sends the focused pane's cursor to the first or last row, or the
+// details pane to the top or bottom of its body.
 func (m *Model) jumpAgentPane(first bool) {
 	switch m.apane {
 	case apAgents:
@@ -1382,13 +1398,37 @@ func (m *Model) jumpAgentPane(first bool) {
 		} else {
 			m.selectPrompt(m.promptLen() - 1)
 		}
+	case apInfo:
+		if first {
+			m.infoTop = 0
+		} else {
+			m.infoTop = m.infoMaxTop()
+		}
 	default:
 		if first {
-			m.drillSel = 0
+			m.setDrill(0)
 		} else {
-			m.drillSel = clampIndex(m.drillLen()-1, m.drillLen())
+			m.setDrill(m.drillLen() - 1)
 		}
 	}
+}
+
+// setDrill moves the command cursor. The details pane describes that command
+// whenever it is the pane's subject, so its scroll offset belongs to the old row
+// and goes back to the top.
+func (m *Model) setDrill(i int) {
+	next := clampIndex(i, m.drillLen())
+	if next == m.drillSel {
+		return
+	}
+	m.drillSel = next
+	m.infoTop = 0
+}
+
+// scrollInfo moves the details pane's body under its window, clamped so the last
+// line stops at the bottom rather than scrolling off into blank space.
+func (m *Model) scrollInfo(d int) {
+	m.infoTop = clampIndex(m.infoTop+d, m.infoMaxTop()+1)
 }
 
 // agentPaneRows is the focused pane's visible row count, for page scrolling.
@@ -1412,7 +1452,7 @@ func (m *Model) selectAgent(i int) {
 	if a, ok := m.agentAt(next); ok {
 		m.agentFilter = a.name
 	}
-	m.promptSel, m.drillSel = 0, 0
+	m.promptSel, m.drillSel, m.infoTop = 0, 0, 0
 	m.recomputeStats()
 }
 
@@ -1430,7 +1470,7 @@ func (m *Model) selectAgentHost(i int) {
 	if hc, ok := m.hostAt(next); ok {
 		m.agentHostFilter = hc.name
 	}
-	m.promptSel, m.drillSel = 0, 0
+	m.promptSel, m.drillSel, m.infoTop = 0, 0, 0
 	m.recomputeStats()
 }
 
@@ -1539,7 +1579,7 @@ func (m Model) hScrollTarget() (text string, colW int, ok bool) {
 func (m *Model) selectPrompt(i int) {
 	next := clampIndex(i, m.promptLen())
 	if next != m.promptSel {
-		m.drillSel = 0
+		m.drillSel, m.infoTop = 0, 0
 	}
 	m.promptSel = next
 }

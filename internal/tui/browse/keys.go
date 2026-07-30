@@ -236,8 +236,14 @@ func (m Model) footerRows() []keyhelp.Row {
 			row("q", "quit", "q"),
 		}
 	case viewAgents:
+		// ↑↓ move a cursor in the four list panes and scroll the body in the
+		// details pane, so the hint follows focus rather than naming one of them.
+		move := "move"
+		if m.apane == apInfo {
+			move = "scroll"
+		}
 		rows := []keyhelp.Row{
-			row("↑↓", "move", "up", "down"),
+			row("↑↓", move, "up", "down"),
 			row("tab", "pane", "tab"),
 			row("/", "filter "+filterNoun(m.filterTarget()), "/"),
 			row("z", "zoom", "z"),

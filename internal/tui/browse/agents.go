@@ -300,7 +300,21 @@ func (m Model) agentPaneHeading(p agentPane) (name, suffix string) {
 	case apCommands:
 		return "COMMANDS", countSuffix(m.drillSel, m.drillLen(), m.cmdQ)
 	default:
-		return "DETAILS", ""
+		// The title says what the pane is describing, since the pane can outlive
+		// the focus that chose it, and "↓ more" when its body runs past the
+		// bottom — the pane has no scrollbar, and a record silently cut off at
+		// the last visible row reads as a record that ends there.
+		suffix := "prompt"
+		if m.infoCmd {
+			suffix = "command"
+		}
+		if m.infoTop > 0 {
+			suffix += "  ↑"
+		}
+		if m.infoTop < m.infoMaxTop() {
+			suffix += "  ↓ more"
+		}
+		return "DETAILS", suffix
 	}
 }
 
@@ -501,30 +515,74 @@ func (m Model) agentSummary(i, w int) []string {
 // label so every value starts in the same column.
 const infoLabelW = 9
 
-// agentInfoInner draws the details pane. It follows focus: with the command pane
-// active it describes the selected command, otherwise the selected prompt — so
-// the pane always explains whatever the cursor is on.
-func (m Model) agentInfoInner(w, h int) string {
-	th := m.th
+// infoBodyCap bounds the details pane's wrapped command or prompt text while the
+// pane is only being glanced at, so a long one cannot push the metadata rows out
+// of a short pane. Focused, the pane is being read rather than glanced at: the
+// cap lifts and scrolling reaches the rest.
+const infoBodyCap = 8
+
+// infoCap is the wrapped-body cap for the pane's current state — 0 (uncapped)
+// once it has focus, where an ellipsis would hide the very text the user tabbed
+// over to read.
+func (m Model) infoCap() int {
+	if m.apane == apInfo {
+		return 0
+	}
+	return infoBodyCap
+}
+
+// agentInfoLines is the details pane's body: the selected command's record when
+// that is what the pane is describing, otherwise the selected prompt's.
+//
+// The subject is m.infoCmd, set when focus lands on a list pane and left alone
+// when focus lands on DETAILS itself — so tabbing onto the pane to read or zoom
+// it does not change what it is showing. Reading the focused pane instead (as
+// this did) made the one route to a command's full record — focus it, then z —
+// swap in the prompt's on the way.
+func (m Model) agentInfoLines(w int) []string {
 	p, ok := m.drilledPrompt()
 	if !ok {
-		return padLines([]string{"", "  " + th.Dim.Render(m.noPromptMsg())}, w, h)
+		return []string{"", "  " + m.th.Dim.Render(m.noPromptMsg())}
 	}
-	if m.apane == apCommands {
+	if m.infoCmd {
 		if r, has := m.drilledCmd(); has {
-			return padLines(m.cmdInfoLines(r, w), w, h)
+			return m.cmdInfoLines(r, w, m.infoCap())
 		}
 	}
-	return padLines(m.promptInfoLines(p, w), w, h)
+	return m.promptInfoLines(p, w, m.infoCap())
+}
+
+// agentInfoInner draws the details pane, windowed at its scroll offset.
+func (m Model) agentInfoInner(w, h int) string {
+	lines := m.agentInfoLines(w)
+	if top := clampIndex(m.infoTop, len(lines)); top > 0 {
+		lines = lines[top:]
+	}
+	return padLines(lines, w, h)
+}
+
+// infoBody is the details pane's body and how many of its lines fit, both at the
+// pane's current geometry. The scroll clamp goes through this so it cannot
+// disagree with the renderer about how far there is left to scroll.
+func (m Model) infoBody() (lines []string, visible int) {
+	r := m.geo.p[apInfo]
+	return m.agentInfoLines(maxInt(1, r.w-2)), maxInt(1, r.h-2)
+}
+
+// infoMaxTop is the furthest the details pane scrolls: far enough to bring its
+// last line into view, and no further.
+func (m Model) infoMaxTop() int {
+	lines, visible := m.infoBody()
+	return maxInt(0, len(lines)-visible)
 }
 
 // promptInfoLines is the details body for a prompt: its full text wrapped, then
 // the aggregate of the commands it triggered.
-func (m Model) promptInfoLines(p promptStat, w int) []string {
+func (m Model) promptInfoLines(p promptStat, w, bodyCap int) []string {
 	th := m.th
 	lines := make([]string, 0, 16)
 	lines = append(lines, th.Section.Render(fitPlain("Prompt", w)))
-	for _, l := range wrapPlain(p.text, w-1) {
+	for _, l := range wrapPlain(p.text, w-1, bodyCap) {
 		lines = append(lines, " "+th.Norm.Render(l))
 	}
 	lines = append(lines, strings.Repeat(" ", w))
@@ -559,11 +617,11 @@ func commandsSegs(th *theme.Theme, p promptStat) []styledSeg {
 }
 
 // cmdInfoLines is the details body for one captured command.
-func (m Model) cmdInfoLines(r rec.Record, w int) []string {
+func (m Model) cmdInfoLines(r rec.Record, w, bodyCap int) []string {
 	th := m.th
 	lines := make([]string, 0, 16)
 	lines = append(lines, th.Section.Render(fitPlain("Command", w)))
-	for _, l := range wrapHighlighted(th, oneLine(r.Cmd), match.Parse(""), w-1, 8) {
+	for _, l := range wrapHighlighted(th, oneLine(r.Cmd), match.Parse(""), w-1, bodyCap) {
 		lines = append(lines, " "+l)
 	}
 	lines = append(lines, strings.Repeat(" ", w))
@@ -615,9 +673,11 @@ func dashIfEmpty(s string) string {
 	return s
 }
 
-// wrapPlain word-wraps an unstyled single-line string to width w, capping the
-// result so a huge prompt cannot push the metadata off the details pane.
-func wrapPlain(s string, w int) []string {
+// wrapPlain word-wraps an unstyled single-line string to width w. maxLines > 0
+// caps the result so a huge prompt cannot push the metadata off the details
+// pane, ending the last kept line with an ellipsis; 0 leaves it uncapped, the
+// same contract wrapHighlighted uses.
+func wrapPlain(s string, w, maxLines int) []string {
 	if w < 1 {
 		w = 1
 	}
@@ -626,7 +686,7 @@ func wrapPlain(s string, w int) []string {
 		return []string{"—"}
 	}
 	var out []string
-	for s != "" && len(out) < 8 {
+	for s != "" && (maxLines <= 0 || len(out) < maxLines) {
 		if lipgloss.Width(s) <= w {
 			out = append(out, s)
 			break

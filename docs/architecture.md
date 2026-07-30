@@ -363,10 +363,30 @@ it hides.
 executor in the sidebar filters the prompt,
 command, and details panes to its work; the filter is held by executor *name*,
 not row index, so an agent that drops out of the period releases the filter
-rather than silently handing it to whoever inherits its row. The details pane
-follows focus — prompt metadata while the prompt pane is active, the selected
-command's path/time/duration/exit once the command pane is. The command pane's
-exit column is the same 4 wide as the browse table's, so the same value is the
+rather than silently handing it to whoever inherits its row.
+
+**What the details pane is describing** is chosen by the list pane focus last
+landed on — the prompt's aggregate from the prompt list or the sidebar, the
+selected command's path/time/duration/exit from the command pane — and it *sticks*
+when focus lands on the details pane itself. Reading the focused pane instead, as
+it first did, meant the pane's own two reasons to exist worked against each other:
+the only route to a command's full record is to focus the pane and press `z`, and
+focusing it swapped the prompt's record in on the way. It also left the arrows
+driving the command cursor while the prompt was on screen. The title names the
+subject (`DETAILS  command`) so a pane that outlives the focus that chose it still
+says what it is holding.
+
+The pane scrolls, because it holds a whole record and a tiled pane is shorter than
+one: focused, `↑`/`↓`/`g`/`G` move its body — the same keys that scroll the browse
+view's detail pane — and the title carries `↓ more` while there is more below,
+since the pane has no scrollbar and a record cut off at the last visible row reads
+as a record that ends there. The wrapped command or prompt text is capped at
+`infoBodyCap` lines while the pane is only being glanced at, so a long one cannot
+push the metadata rows out; focused, the cap lifts, because an ellipsis would hide
+the very text the user came to read. A scroll offset belongs to the record it was
+scrolled into, so moving to another command or prompt rewinds it.
+
+The command pane's exit column is the same 4 wide as the browse table's, so the same value is the
 same width in both.
 
 The explorer's sample is cross-host (the query is scope-all), and the HOSTS

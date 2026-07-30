@@ -170,8 +170,10 @@ func (m Model) wheel(x, y, d int) (tea.Model, tea.Cmd) {
 			m.selectAgentHost(m.agentHostSel + d)
 		case apPrompts:
 			m.selectPrompt(m.promptSel + d)
+		case apInfo:
+			m.scrollInfo(d)
 		default:
-			m.drillSel = clampIndex(m.drillSel+d, m.drillLen())
+			m.setDrill(m.drillSel + d)
 		}
 		return m, nil
 	}

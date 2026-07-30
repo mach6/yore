@@ -1136,6 +1136,151 @@ func TestAgentsDetailsFollowFocus(t *testing.T) {
 	require.Containsf(t, out, "/work/1", "command details should carry the selected command's cwd:\n%s", out)
 }
 
+// TestAgentsDetailsKeepsItsSubjectOnFocus: tabbing onto the details pane must not
+// change what it is describing. It used to read the focused pane, so the one
+// route to a command's full record — focus the pane, then z — swapped the
+// prompt's in on the way, and the arrows still drove the command cursor while
+// the prompt was on screen.
+func TestAgentsDetailsKeepsItsSubjectOnFocus(t *testing.T) {
+	m := agentModel(t, 140, 40)
+
+	m, _ = step(t, m, press("tab")) // prompts -> commands
+	require.Equal(t, apCommands, m.apane)
+	require.True(t, m.infoCmd)
+
+	m, _ = step(t, m, press("tab")) // commands -> details
+	require.Equal(t, apInfo, m.apane)
+	body := detailsBody(m)
+	require.Containsf(t, body, "cargo build", "details must still describe the command:\n%s", body)
+	require.Containsf(t, body, "Exit", "and still be the command's record:\n%s", body)
+	require.NotContainsf(t, body, "add rate limiting",
+		"the prompt's text must not have replaced it:\n%s", body)
+	require.Contains(t, strip(m.View()), "DETAILS  command",
+		"the title says which record it is holding")
+
+	// Zooming it — the reason to focus it at all — keeps the command too.
+	m, _ = step(t, m, press("z"))
+	out := strip(m.View())
+	require.Containsf(t, out, "cargo build", "zoomed details must hold the command:\n%s", out)
+	require.NotContains(t, out, "PROMPTS", "z fills the frame with the focused pane")
+}
+
+// detailsBody is the explorer details pane's own text, without the rest of the
+// frame — the prompt list is on screen too, so a view-wide assertion cannot tell
+// which pane a prompt's text came from.
+func detailsBody(m Model) string {
+	return strip(strings.Join(m.agentInfoLines(maxInt(1, m.geo.p[apInfo].w-2)), "\n"))
+}
+
+// TestAgentsDetailsSubjectFollowsTheListPanes: the subject is chosen by the list
+// pane focus last landed on, so arriving at DETAILS from the prompt side shows
+// the prompt and from the command side shows the command.
+func TestAgentsDetailsSubjectFollowsTheListPanes(t *testing.T) {
+	m := agentModel(t, 140, 40)
+	require.False(t, m.infoCmd, "the explorer opens on the prompt list")
+
+	// shift+tab from prompts reaches DETAILS the long way round, via the panes
+	// that select a prompt — so it is a prompt that is being described.
+	for range 3 {
+		m, _ = step(t, m, press("shift+tab"))
+	}
+	require.Equal(t, apInfo, m.apane)
+	require.False(t, m.infoCmd)
+	body := detailsBody(m)
+	require.Containsf(t, body, "add rate limiting", "details should hold the prompt:\n%s", body)
+	require.Contains(t, strip(m.View()), "DETAILS  prompt")
+
+	// Landing on the command pane repoints it, and it stays repointed.
+	m, _ = step(t, m, press("tab")) // -> agents
+	require.False(t, m.infoCmd, "the sidebar selects a prompt, not a command")
+	for m.apane != apCommands {
+		m, _ = step(t, m, press("tab"))
+	}
+	require.True(t, m.infoCmd)
+}
+
+// TestAgentsDetailsScrolls: the pane holds a whole record, which on a tiled pane
+// is taller than the pane. Focused, ↑/↓ move its body rather than a list it is
+// not showing, it says when there is more below, and it clamps at both ends.
+func TestAgentsDetailsScrolls(t *testing.T) {
+	m := agentModel(t, 140, 14) // short enough that a record overflows
+	for m.apane != apInfo {
+		m, _ = step(t, m, press("tab"))
+	}
+	require.Positive(t, m.infoMaxTop(), "140x14 should not fit a whole record")
+	require.Contains(t, strip(m.View()), "↓ more", "an overflowing pane should say so")
+	require.Contains(t, footerText(m), "↑↓ scroll", "the hint follows focus into the pane")
+
+	before := m.drillSel
+	m, _ = step(t, m, press("down"))
+	require.Equal(t, 1, m.infoTop, "↓ scrolls the body")
+	require.Equal(t, before, m.drillSel, "and no longer drags the command cursor with it")
+
+	// It clamps at the bottom, and G/g jump to each end.
+	for range 40 {
+		m, _ = step(t, m, press("down"))
+	}
+	require.Equal(t, m.infoMaxTop(), m.infoTop, "scrolling clamps to the last line")
+	require.NotContains(t, strip(m.View()), "↓ more", "at the end there is nothing more")
+
+	m, _ = step(t, m, press("g"))
+	require.Zero(t, m.infoTop)
+	m, _ = step(t, m, press("G"))
+	require.Equal(t, m.infoMaxTop(), m.infoTop)
+}
+
+// TestAgentsDetailsScrollResetsOnANewSubject: an offset belongs to the record it
+// was scrolled into, so moving to another command or prompt starts at the top
+// rather than part-way down a different record.
+func TestAgentsDetailsScrollResetsOnANewSubject(t *testing.T) {
+	m := agentModel(t, 140, 14)
+	for m.apane != apInfo {
+		m, _ = step(t, m, press("tab"))
+	}
+	m, _ = step(t, m, press("down"))
+	require.Positive(t, m.infoTop)
+
+	// Back to the command pane and onto the next command.
+	m, _ = step(t, m, press("shift+tab"))
+	require.Equal(t, apCommands, m.apane)
+	require.Zero(t, m.infoTop, "leaving the pane for a list repoints and rewinds it")
+
+	m, _ = step(t, m, press("tab")) // -> details
+	m, _ = step(t, m, press("down"))
+	require.Positive(t, m.infoTop)
+	m, _ = step(t, m, press("shift+tab")) // -> commands
+	m, _ = step(t, m, press("down"))      // a different command
+	require.Zero(t, m.infoTop)
+}
+
+// TestAgentsDetailsLiftsTheBodyCapWhenFocused: the wrapped command is capped
+// while the pane is glanced at, so a long one cannot push the metadata rows out.
+// Focused, the cap would hide the very text the user tabbed over to read.
+func TestAgentsDetailsLiftsTheBodyCapWhenFocused(t *testing.T) {
+	long := strings.Repeat("cargo build --features one,two,three ", 40)
+	rows := mkRows(long)
+	rows[0].Executor, rows[0].PromptID, rows[0].Prompt = "claude-code", "p1", "add rate limiting"
+	f := &fakeBackend{
+		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 1}}},
+		resp:  mkResp(rows),
+	}
+	m := openAgents(t, ready(t, f, 100, 40))
+	for m.apane != apCommands {
+		m, _ = step(t, m, press("tab"))
+	}
+	require.Len(t, wrapPlain(long, 60, infoBodyCap), infoBodyCap, "the glanced-at body is capped")
+	capped := len(m.agentInfoLines(60))
+
+	m, _ = step(t, m, press("tab")) // -> details
+	require.Equal(t, apInfo, m.apane)
+	lines := m.agentInfoLines(60)
+	require.Greater(t, len(lines), capped,
+		"focusing the pane should uncap the body so scrolling can reach all of it")
+	require.NotContains(t, strip(strings.Join(lines, "\n")), "…",
+		"the cap's truncation marker would hide what the pane was focused to show")
+	require.Positive(t, m.infoMaxTop(), "and the rest is reachable by scrolling")
+}
+
 // TestAgentsZoom expands the focused pane to the whole frame and restores it.
 func TestAgentsZoom(t *testing.T) {
 	m := agentModel(t, 140, 40)

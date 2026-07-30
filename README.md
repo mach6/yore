@@ -171,7 +171,8 @@ leaving everything else — including the agent's own auth — exactly as it was
   histogram, all of which show *more history* on a wider terminal — with period
   tabs), an **agent explorer** (`a`: five panes — an executor sidebar and a
   HOSTS pane that each filter everything, every prompt, the exact commands the
-  highlighted prompt triggered, and details that follow focus; `H` cycles the
+  highlighted prompt triggered, and a details pane that keeps whichever record
+  you pointed it at — focus it to scroll or `z` it to read the whole thing; `H` cycles the
   host filter from anywhere and `A` the agent, and the host column appears only
   when the rows can disagree about it), and
   **devices** (`D`). Any pane can
