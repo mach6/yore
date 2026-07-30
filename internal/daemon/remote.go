@@ -196,6 +196,13 @@ type syncConf struct {
 // configured reports whether there is enough configuration to sync at all.
 func (sc syncConf) configured() bool { return sc.url != "" }
 
+// sameServerAs reports whether sc points at the same server as prev — the test
+// that decides whether the warm remote cache survives a configuration change.
+// Only the URL identifies the server; every other field describes how to reach
+// it (pin) or what to do once there (epoch, prompts, retention). A field added
+// later that changes WHICH archive this machine syncs with belongs here too.
+func (sc syncConf) sameServerAs(prev syncConf) bool { return sc.url == prev.url }
+
 // loadSyncConf resolves the sync-relevant configuration from config.toml.
 func loadSyncConf(dir string) syncConf {
 	cfg, _ := config.Load(dir)
@@ -401,32 +408,51 @@ func (rc *remoteCache) online() bool {
 }
 
 // attach installs (or, with nil, clears) the syncer after the sync-relevant
-// configuration changed, and applies the new retention bound. Cached remote
-// history and pull cursors are dropped — in RAM and on disk both: they belong
-// to the previous server, whose key hierarchy has nothing to do with the new
-// one's, and must never be mixed with it.
+// configuration changed, and applies the new retention bound.
 //
-// A revocation is forgotten here, marker and all: it was this device's standing
-// in the OLD group, and the new configuration points somewhere else. Keeping it
-// would leave a device that has legitimately moved servers deleting its cache on
-// every start.
-func (rc *remoteCache) attach(sy *syncer.Syncer, keep int) {
+// sameServer says whether the new configuration still points at the server the
+// cache was filled from, and it decides the cache's fate:
+//
+//   - false — a different server (or none). Cached history and pull cursors are
+//     dropped, in RAM and on disk both: they belong to the previous server, whose
+//     key hierarchy has nothing to do with the new one's, and must never be mixed
+//     with it. A revocation goes with them, marker and all — it was this device's
+//     standing in the OLD group, and keeping it would leave a device that has
+//     legitimately moved servers deleting its cache on every start.
+//   - true — the same server, reached differently: a certificate pin added or
+//     cleared, a rotation cadence, a retention bound. None of that invalidates
+//     one byte of the ciphertext already cached, so throwing it away would cost a
+//     full re-pull of every machine's archive for a transport edit — exactly what
+//     the cache exists to avoid. It is kept, cursors and all, and so is any
+//     revocation, which the same group's server would only tell us again.
+//
+// The cache is still self-correcting either way: ciphertext that turns out not to
+// open (a re-enrollment the config never mentioned) is dropped by hydrate.
+func (rc *remoteCache) attach(sy *syncer.Syncer, keep int, sameServer bool) {
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
 	rc.sy = sy
-	rc.records = nil
-	rc.cmds = nil
-	rc.cursors = map[string]uint64{}
-	rc.lastMs = 0
 	rc.keep = keep
-	rc.hydrated = false
-	if rc.rs != nil {
-		_ = rc.rs.Reset()
+	if !sameServer {
+		rc.records = nil
+		rc.cmds = nil
+		rc.cursors = map[string]uint64{}
+		rc.lastMs = 0
+		rc.hydrated = false
+		if rc.rs != nil {
+			_ = rc.rs.Reset()
+		}
+		rc.revokedLatch = false
+		setRevokedMeta(rc.st, false)
 	}
-	rc.revokedLatch = false
-	setRevokedMeta(rc.st, false)
 	if sy == nil {
 		rc.state = proto.RemoteOff
+		return
+	}
+	// A revocation this run already acted on outlives a mere transport edit: the
+	// ciphertext is off the disk and must not come back, and no cycle may run.
+	if rc.revokedLatch {
+		rc.state = proto.RemoteRevoked
 		return
 	}
 	rc.state = proto.RemoteUnavailable
@@ -771,20 +797,23 @@ func (s *server) syncLoop() {
 	defer first.Stop()
 	defer tick.Stop()
 
-	// reload re-reads config.toml and re-attaches the syncer when the server or
-	// identity changed, so `yore setup` (or a hand edit) takes effect live.
+	// reload re-reads config.toml and re-attaches the syncer when the sync-relevant
+	// configuration changed, so `yore setup` (or a hand edit) takes effect live.
+	// Only a changed server URL invalidates the warm cache — everything else in
+	// syncConf describes how to reach the same server, not which one.
 	reload := func() {
 		sc := loadSyncConf(s.dir)
 		if sc == s.syncConf {
 			return
 		}
+		sameServer := sc.sameServerAs(s.syncConf)
 		s.syncConf = sc
 		cfg, _ := config.Load(s.dir)
 		pushDebounce = cfg.PushDebounceD()
-		s.remote.attach(newSyncer(s.dir, s.store, sc), sc.keep)
+		s.remote.attach(newSyncer(s.dir, s.store, sc), sc.keep, sameServer)
 		enabled := s.remote.enabled()
 		tick.Reset(syncTick(enabled, cfg.SyncIntervalD()))
-		s.logf("config changed: sync enabled=%v server=%q", enabled, sc.url)
+		s.logf("config changed: sync enabled=%v server=%q cache_kept=%v", enabled, sc.url, sameServer)
 	}
 
 	// One-shot debounce timer for experimental push-on-record; starts idle.

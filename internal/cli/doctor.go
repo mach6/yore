@@ -131,9 +131,27 @@ func runDoctor() int {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := http.Health(ctx); err != nil {
-			fail(fmt.Sprintf("server %s unreachable: %v", cfg.ServerURL, err))
+			// A stale pin is indistinguishable from a dead server in the error text,
+			// and it fails quietly: this host's own history keeps working, so the only
+			// symptom is other machines' history going stale. Name it, and give the
+			// two remedies without choosing between them — from an intercepted
+			// network, re-pinning would pin the interceptor.
+			if pe, ok := syncer.PinMismatch(err); ok {
+				fail("server certificate pin mismatch — refusing to connect, so nothing syncs")
+				u.note("pinned      " + pe.Want)
+				u.note("server sent " + pe.Got)
+				u.note("if the server's certificate changed (a renewal with a new key does this):")
+				u.note("  re-pin from a network you trust — `yore setup --pin`")
+				u.note("if it did not, a TLS-inspecting proxy is in the path:")
+				u.note("  do NOT re-pin from this network — the pin is doing its job")
+			} else {
+				fail(fmt.Sprintf("server %s unreachable: %v", cfg.ServerURL, err))
+			}
 		} else {
 			ok("server reachable: " + cfg.ServerURL)
+			if cfg.ServerPin != "" {
+				u.step("certificate pin matches", "SPKI "+pinLabel(cfg.ServerPin))
+			}
 			if devices, err := http.ListDevices(ctx); err == nil {
 				active := 0
 				for _, d := range devices {

@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -67,6 +68,34 @@ func ErrRevoked(err error) bool {
 	return errors.As(err, &ae) && ae.Code == wire.CodeDeviceRevoked
 }
 
+// PinError is a TLS certificate pin mismatch: the server presented a leaf key
+// that is not the pinned one. Want is the configured pin, Got what the server
+// sent — both base64 SHA-256 of the certificate's SubjectPublicKeyInfo.
+//
+// It is a distinct type because the two things that cause it need opposite
+// advice. A routine certificate rotation wants a re-pin; an interception attempt
+// is the exact case the pin exists to refuse, and re-pinning would pin the
+// interceptor. Callers report both digests and let the user decide — nothing
+// re-pins on its own.
+type PinError struct {
+	Want string
+	Got  string
+}
+
+func (e *PinError) Error() string {
+	return fmt.Sprintf("syncer: server certificate pin mismatch (pinned %s, got %s) — refusing (certificate rotation or TLS interception?)", e.Want, e.Got)
+}
+
+// PinMismatch reports whether err is a pin mismatch, returning the details. It
+// unwraps, so it still matches through the *url.Error that net/http wraps a
+// failed handshake in. Every other transport failure looks alike to a caller;
+// this is the one with a specific remedy, so it is worth telling apart.
+func PinMismatch(err error) (*PinError, bool) {
+	var pe *PinError
+	ok := errors.As(err, &pe)
+	return pe, ok
+}
+
 // HTTPClient is a thin transport over the sync server's HTTP JSON API.
 //
 // There is no bearer token: EVERY authenticated request — reads included — is
@@ -86,7 +115,8 @@ type HTTPClient struct {
 // baseURL should have no trailing slash. If pin is
 // non-empty (base64 SHA-256 of the server's SubjectPublicKeyInfo), the client
 // pins the server's TLS certificate and refuses any other — defeating a
-// TLS-inspecting proxy at the cost of not syncing through one.
+// TLS-inspecting proxy at the cost of not syncing through one. A refusal is a
+// *PinError, distinguishable with PinMismatch.
 func NewHTTPClient(baseURL, pin string) *HTTPClient {
 	// Mirror http.DefaultTransport's proxy behaviour; only the dial timeout (and
 	// optionally the pin) differ from the stdlib default.
@@ -111,19 +141,28 @@ func (c *HTTPClient) SetSigner(deviceID string, sign func([]byte) []byte) {
 }
 
 // pinVerifier returns a TLS VerifyConnection callback enforcing that the leaf
-// certificate's SPKI SHA-256 equals the pinned value.
+// certificate's SPKI SHA-256 equals the pinned value. It runs in ADDITION to the
+// standard chain verification, not instead of it (InsecureSkipVerify stays
+// false), so a pinned certificate must still be issued by a trusted CA.
 func pinVerifier(pin string) func(tls.ConnectionState) error {
 	return func(cs tls.ConnectionState) error {
 		if len(cs.PeerCertificates) == 0 {
 			return errors.New("syncer: no server certificate to pin")
 		}
-		sum := sha256.Sum256(cs.PeerCertificates[0].RawSubjectPublicKeyInfo)
-		got := base64.StdEncoding.EncodeToString(sum[:])
+		got := spkiPin(cs.PeerCertificates[0])
 		if got != pin {
-			return fmt.Errorf("syncer: server certificate pin mismatch (got %s) — refusing (TLS interception or changed cert?)", got)
+			return &PinError{Want: pin, Got: got}
 		}
 		return nil
 	}
+}
+
+// spkiPin is the pin for one certificate: base64 SHA-256 of its
+// SubjectPublicKeyInfo. Keyed on the public key rather than the whole
+// certificate so a renewal that reuses the key keeps the same pin.
+func spkiPin(cert *x509.Certificate) string {
+	sum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
+	return base64.StdEncoding.EncodeToString(sum[:])
 }
 
 // ServerPin fetches the server's current certificate SPKI pin (base64 SHA-256),
@@ -149,8 +188,7 @@ func ServerPin(baseURL string) (string, error) {
 	if len(certs) == 0 {
 		return "", errors.New("no server certificate")
 	}
-	sum := sha256.Sum256(certs[0].RawSubjectPublicKeyInfo)
-	return base64.StdEncoding.EncodeToString(sum[:]), nil
+	return spkiPin(certs[0]), nil
 }
 
 // do performs one request: it marshals body (if non-nil) as JSON, applies hdrs,

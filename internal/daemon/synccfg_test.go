@@ -50,6 +50,31 @@ func TestLoadSyncConfChange(t *testing.T) {
 	assert.NotEqual(t, loadSyncConf(dir), first, "a new certificate pin must register as a change")
 }
 
+// TestSameServerAs pins which field identifies the server. Everything else in
+// syncConf is about how to reach it, and must not cost a re-pull of every
+// machine's archive when it is edited.
+func TestSameServerAs(t *testing.T) {
+	base := syncConf{url: "https://a.example", pin: "p1", epoch: time.Hour, keep: 100}
+	tests := []struct {
+		name string
+		cur  syncConf
+		want bool
+	}{
+		{name: "identical", cur: base, want: true},
+		{name: "pin added", cur: syncConf{url: base.url, pin: "p2", epoch: base.epoch, keep: base.keep}, want: true},
+		{name: "pin cleared", cur: syncConf{url: base.url, epoch: base.epoch, keep: base.keep}, want: true},
+		{name: "epoch and retention", cur: syncConf{url: base.url, pin: base.pin, epoch: time.Minute, keep: 5}, want: true},
+		{name: "prompts toggled", cur: syncConf{url: base.url, pin: base.pin, epoch: base.epoch, keep: base.keep, syncPrompts: true}, want: true},
+		{name: "different server", cur: syncConf{url: "https://b.example", pin: base.pin, epoch: base.epoch, keep: base.keep}, want: false},
+		{name: "sync disabled", cur: syncConf{}, want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, tc.cur.sameServerAs(base))
+		})
+	}
+}
+
 func TestNewSyncerUnconfigured(t *testing.T) {
 	tests := []struct {
 		name string
@@ -88,24 +113,36 @@ func TestRemoteAttach(t *testing.T) {
 	require.False(t, rc.enabled(), "fresh cache should be disabled")
 	require.Equal(t, proto.RemoteOff, rc.info().State)
 
-	rc.attach(newTestSyncer(t), 0)
+	rc.attach(newTestSyncer(t), 0, false)
 	assert.True(t, rc.enabled(), "attaching a syncer must enable the cache")
 	assert.Equal(t, proto.RemoteUnavailable, rc.info().State, "newly attached sync is unavailable until it succeeds")
 
 	// Warm the cache, then re-attach: the previous server's records and cursors
 	// must not leak into the new one's view.
-	rc.mu.Lock()
-	rc.records = []rec.Record{{ID: "1", Cmd: "echo hi", HostID: "h1", Hostname: "other"}}
-	rc.cmds = []string{"echo hi"}
-	rc.cursors["h1"] = 42
-	rc.mu.Unlock()
+	warm := func() {
+		rc.mu.Lock()
+		defer rc.mu.Unlock()
+		rc.records = []rec.Record{{ID: "1", Cmd: "echo hi", HostID: "h1", Hostname: "other"}}
+		rc.cmds = []string{"echo hi"}
+		rc.cursors["h1"] = 42
+		rc.hydrated = true
+	}
+	warm()
 	require.Len(t, rc.search("echo", ""), 1, "cache should be warm before re-attach")
 
-	rc.attach(newTestSyncer(t), 0)
+	// Same server, different transport (a pin added or cleared): re-pulling every
+	// machine's archive over a certificate edit is what the cache exists to avoid.
+	rc.attach(newTestSyncer(t), 0, true)
+	assert.Len(t, rc.search("echo", ""), 1, "the same server's records must survive")
+	assert.Equal(t, uint64(42), rc.cursors["h1"], "the same server's pull cursors must survive")
+	assert.True(t, rc.hydrated, "a surviving cache must not be re-hydrated from scratch")
+
+	rc.attach(newTestSyncer(t), 0, false)
 	assert.Empty(t, rc.search("echo", ""), "records from the previous server must be dropped")
 	assert.Empty(t, rc.cursors, "pull cursors from the previous server must be dropped")
+	assert.False(t, rc.hydrated, "a dropped cache must hydrate again")
 
-	rc.attach(nil, 0)
+	rc.attach(nil, 0, false)
 	assert.False(t, rc.enabled(), "detaching must disable the cache")
 	assert.Equal(t, proto.RemoteOff, rc.info().State)
 }

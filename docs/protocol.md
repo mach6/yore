@@ -34,7 +34,14 @@ device public keys — and can never read history. Design rationale is in
 - **Certificate pinning (optional)**: a client enrolled with `yore setup --pin`
   pins the server's TLS SPKI (base64 SHA-256 of `RawSubjectPublicKeyInfo`) and
   refuses any other certificate — defeating a TLS-inspecting proxy, at the cost
-  of not syncing through one.
+  of not syncing through one. The pin is checked *in addition to* normal chain
+  validation, so a pinned certificate must still be issued by a trusted CA. It is
+  keyed on the public key, not the certificate, so a renewal that reuses the key
+  keeps the same pin — but an ACME client that generates a fresh key per renewal
+  (certbot's default) invalidates the pin on every renewal. A mismatch fails
+  closed and quietly: this host's own history is unaffected, so the only symptom
+  is other machines' history going stale. `yore doctor` reports it as a pin
+  mismatch, printing both digests, rather than as an unreachable server.
 - **Encoding**: request and response bodies are JSON. Binary fields (`blob`,
   `pub_key`, `sign_key`) are Go `[]byte`, i.e. **base64** (std, padded) in JSON.
   Request bodies are capped at **10 MiB**.

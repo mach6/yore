@@ -134,13 +134,36 @@ func TestAttachForgetsRevocation(t *testing.T) {
 		cursors: map[string]uint64{}, dir: dir, st: st,
 	}
 
-	rc.attach(newTestSyncer(t), 0)
+	rc.attach(newTestSyncer(t), 0, false)
 
 	require.Equal(t, proto.RemoteUnavailable, rc.info().State)
 	require.False(t, rc.revoked())
 	require.False(t, rc.latched())
 	require.False(t, wasRevoked(st), "pointing at a new server must clear the old revocation")
 	require.NotNil(t, rc.rs, "the new server's cache should be opened")
+	t.Cleanup(rc.close)
+}
+
+// TestAttachKeepsRevocationOnSameServer is the other half: editing the transport
+// (a certificate pin) does not move this device to another group, so the
+// revocation stands. Forgetting it here would re-open the cache the revocation
+// deleted and start pulling the group's ciphertext back onto the disk.
+func TestAttachKeepsRevocationOnSameServer(t *testing.T) {
+	dir := t.TempDir()
+	st := openStore(t, dir)
+	setRevokedMeta(st, true)
+	rc := &remoteCache{
+		state: proto.RemoteRevoked, revokedLatch: true,
+		cursors: map[string]uint64{}, dir: dir, st: st,
+	}
+
+	rc.attach(newTestSyncer(t), 0, true)
+
+	require.Equal(t, proto.RemoteRevoked, rc.info().State)
+	require.True(t, rc.revoked())
+	require.True(t, rc.latched())
+	require.True(t, wasRevoked(st), "the same server's revocation must stand")
+	require.Nil(t, rc.rs, "no cache may be re-opened for a revoked device")
 	t.Cleanup(rc.close)
 }
 

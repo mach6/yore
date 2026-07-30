@@ -16,31 +16,30 @@ import (
 	"yore/internal/daemon"
 	"yore/internal/redact"
 	"yore/internal/secret"
+	"yore/internal/store"
 	"yore/internal/syncer"
 	"yore/internal/wire"
 )
 
-// resolveServer returns the server URL and the single-use enrollment token for
-// this setup, from flags, then config (URL only), then $YORE_TOKEN, prompting
-// on the tty for anything still missing.
+// resolveToken returns the single-use enrollment token, from the flag, then
+// $YORE_TOKEN, then a tty prompt.
 //
-// The token is NOT persisted anywhere: it authorizes exactly one enrollment
-// and is spent by it. Whatever credential a machine needs afterwards is its own
+// It is called only once a run has established that this machine actually needs
+// to enroll — an already-enrolled machine re-running `yore setup` (to pin a
+// certificate, say) must not be asked for a credential it has no use for.
+//
+// The token is NOT persisted anywhere: it authorizes exactly one enrollment and
+// is spent by it. Whatever credential a machine needs afterwards is its own
 // device key.
-func resolveServer(dir, serverFlag, tokenFlag string) (url, token string, err error) {
-	url, err = resolveServerURL(dir, serverFlag)
-	if err != nil {
-		return "", "", err
-	}
-
-	token = strings.TrimSpace(firstNonEmpty(tokenFlag, os.Getenv("YORE_TOKEN")))
+func resolveToken(tokenFlag string) (string, error) {
+	token := strings.TrimSpace(firstNonEmpty(tokenFlag, os.Getenv("YORE_TOKEN")))
 	if token == "" {
 		token = strings.TrimSpace(prompt("Enrollment token (server token for the first machine): "))
 	}
 	if token == "" {
-		return "", "", errors.New("no enrollment token given")
+		return "", errors.New("no enrollment token given")
 	}
-	return url, token, nil
+	return token, nil
 }
 
 // resolveServerURL returns the server URL from the flag, then config, then a
@@ -70,17 +69,54 @@ func ensureDeviceKey(dir string) error {
 
 // syncerFor builds a Syncer against an explicit server, for enrollment paths
 // that must not persist configuration until the server has accepted them.
-func syncerFor(dir, url, pin string) (*syncer.Syncer, error) {
+//
+// The store it opened comes back with it: the store is held under an exclusive
+// file lock, so the caller has to release it rather than leave it to process
+// exit — a second setup in one process would otherwise find its own lock in the
+// way.
+func syncerFor(dir, url, pin string) (*syncer.Syncer, *store.Store, error) {
 	cfg, _ := config.Load(dir)
 	key, err := secret.Open(dir).LoadDeviceKey()
 	if err != nil {
-		return nil, fmt.Errorf("device key: %w", err)
+		return nil, nil, fmt.Errorf("device key: %w", err)
 	}
 	st, err := openStoreExclusive(dir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return syncer.New(st, syncer.NewHTTPClient(url, pin), key, cfg.KeyEpochD()), nil
+	return syncer.New(st, syncer.NewHTTPClient(url, pin), key, cfg.KeyEpochD()), st, nil
+}
+
+// isActiveMember reports whether id is an ACTIVE device in devs — the test for
+// "this machine is already enrolled", which only an enrolled machine can make in
+// the first place (a newcomer cannot read the device list at all).
+func isActiveMember(devs []wire.Device, id string) bool {
+	for _, d := range devs {
+		if d.ID == id && d.Status == wire.DeviceActive {
+			return true
+		}
+	}
+	return false
+}
+
+// setupChanged reports whether a setup run altered any of the three fields it
+// can touch. Nothing else in config.toml belongs to setup, and an enrolled
+// machine re-running plain `yore setup` should leave the file — including
+// anything hand-written in it — alone.
+func setupChanged(prev, cur config.Config) bool {
+	return prev.ServerURL != cur.ServerURL ||
+		prev.ServerPin != cur.ServerPin ||
+		prev.Integration != cur.Integration
+}
+
+// pinLabel abbreviates a pin for a one-line report: pins are 44 characters of
+// base64 and only the leading few are read off a screen. A shorter value (a
+// hand-edited config) is printed whole rather than sliced.
+func pinLabel(pin string) string {
+	if len(pin) <= 12 {
+		return pin
+	}
+	return pin[:12] + "…"
 }
 
 // runSetup enrolls this machine using a single-use enrollment token.
@@ -96,7 +132,7 @@ func runSetup(server, token, name, integration string, pin, clearPin bool) int {
 		u.fail("--pin and --clear-pin are mutually exclusive")
 		return 1
 	}
-	url, tkt, err := resolveServer(dir, server, token)
+	url, err := resolveServerURL(dir, server)
 	if err != nil {
 		u.fail(err.Error())
 		return 1
@@ -106,6 +142,7 @@ func runSetup(server, token, name, integration string, pin, clearPin bool) int {
 	// Assemble the config in memory; it is written only after enrollment
 	// succeeds. The token is never written anywhere — it is spent by this run.
 	cfg, _ := config.Load(dir)
+	prev := cfg
 	cfg.ServerURL = url
 
 	// Shell integration mode (how deeply yore takes over history). Ask only when
@@ -134,8 +171,17 @@ func runSetup(server, token, name, integration string, pin, clearPin bool) int {
 			return 1
 		}
 		cfg.ServerPin = p
-		u.step("pinned server certificate", "SPKI "+p[:12]+"… — sync will refuse any other cert")
+		u.step("pinned server certificate", "SPKI "+pinLabel(p)+" — sync will refuse any other cert")
 	case clearPin:
+		// Cleared BEFORE the reachability check below, which uses cfg.ServerPin:
+		// the reason to clear a pin is usually that the pinned certificate is gone
+		// and sync is refusing to connect, so the old pin must not gate the run
+		// that removes it.
+		if cfg.ServerPin == "" {
+			u.step("no certificate pin set", "nothing to clear")
+		} else {
+			u.step("cleared certificate pin", "SPKI "+pinLabel(cfg.ServerPin)+" — sync accepts any valid cert")
+		}
 		cfg.ServerPin = ""
 	}
 
@@ -165,11 +211,12 @@ func runSetup(server, token, name, integration string, pin, clearPin bool) int {
 	// after the server has actually accepted this machine. A rejected token or
 	// an unreachable server must leave no configuration behind to wedge the next
 	// run.
-	sy, err := syncerFor(dir, url, cfg.ServerPin)
+	sy, st, err := syncerFor(dir, url, cfg.ServerPin)
 	if err != nil {
 		u.fail(err.Error())
 		return 1
 	}
+	defer func() { _ = st.Close() }()
 	if name == "" {
 		name, _ = os.Hostname()
 	}
@@ -177,16 +224,31 @@ func runSetup(server, token, name, integration string, pin, clearPin bool) int {
 	// If this machine is already an active member it can read the device list;
 	// a newcomer cannot. That distinguishes "already enrolled" from a genuine
 	// failure, which would otherwise surface as a bare 401.
-	if devs, derr := sy.Devices(ctx); derr == nil {
-		for _, d := range devs {
-			if d.ID == sy.DeviceID() && d.Status == wire.DeviceActive {
-				u.step("already enrolled and active", "nothing to do")
-				fmt.Fprintln(os.Stderr)
-				return 0
-			}
+	if devs, derr := sy.Devices(ctx); derr == nil && isActiveMember(devs, sy.DeviceID()) {
+		// Nothing to ENROLL — but this run's flags (--pin/--clear-pin, --server,
+		// --integration) still have to be persisted. Returning without saving made
+		// `setup --pin` and `--clear-pin` print success and change nothing, which is
+		// the worst way for a security control to behave: it is the already-enrolled
+		// machine you run them on.
+		if !setupChanged(prev, cfg) {
+			u.step("already enrolled and active", "nothing to do")
+			fmt.Fprintln(os.Stderr)
+			return 0
 		}
+		if err := config.Save(dir, cfg); err != nil {
+			u.fail(err.Error())
+			return 1
+		}
+		u.step("already enrolled and active", "configuration updated")
+		fmt.Fprintln(os.Stderr)
+		return 0
 	}
 
+	tkt, err := resolveToken(token)
+	if err != nil {
+		u.fail(err.Error())
+		return 1
+	}
 	formed, code, err := sy.Enroll(ctx, name, tkt)
 	if err != nil {
 		u.fail("enrollment refused by the server")
@@ -390,11 +452,12 @@ func runRecover(server string) int {
 		u.fail(err.Error())
 		return 1
 	}
-	sy, err := syncerFor(dir, url, cfg.ServerPin)
+	sy, st, err := syncerFor(dir, url, cfg.ServerPin)
 	if err != nil {
 		u.fail(err.Error())
 		return 1
 	}
+	defer func() { _ = st.Close() }()
 	name, _ := os.Hostname()
 	if _, _, err := sy.Enroll(ctx, name, tktResp.Token); err != nil {
 		u.fail("enroll: " + err.Error())

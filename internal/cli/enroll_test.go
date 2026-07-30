@@ -120,3 +120,38 @@ func TestRunSetup(t *testing.T) {
 		})
 	}
 }
+
+// TestRunSetupOnEnrolledMachineSavesPinChange is the regression test for a setup
+// run that had nothing to enroll silently discarding its flags: `--clear-pin` (or
+// `--pin`) reported success and left config.toml alone, because the
+// already-enrolled path returned before config.Save.
+//
+// The already-enrolled machine is the ONLY one you can run these flags on — a
+// pin is changed long after enrollment — so this was the whole feature.
+//
+// It also pins the token handling: clearing a pin needs no enrollment token, so
+// the run must succeed with an empty one rather than prompting for a credential
+// it will not spend.
+func TestRunSetupOnEnrolledMachineSavesPinChange(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("YORE_DIR", dir)
+	base := newSetupServer(t)
+
+	require.Equal(t, 0, runSetup(base, setupTestToken, "test-device", "takeover", false, false),
+		"first setup should bootstrap the group")
+
+	// Stand in for a pin whose certificate has since been replaced. Written by
+	// hand because capturing one needs a TLS server, while clearing one does not.
+	cfg, err := config.Load(dir)
+	require.NoError(t, err, "load config.toml")
+	cfg.ServerPin = "c3RhbGUtcGluLXRoYXQtbm8tbG9uZ2VyLW1hdGNoZXM="
+	require.NoError(t, config.Save(dir, cfg), "seed a stale pin")
+
+	require.Equal(t, 0, runSetup(base, "", "test-device", "takeover", false, true),
+		"clearing a pin on an enrolled machine should succeed without a token")
+
+	cfg, err = config.Load(dir)
+	require.NoError(t, err, "reload config.toml")
+	require.Empty(t, cfg.ServerPin, "--clear-pin must persist the cleared pin")
+	require.Equal(t, base, cfg.ServerURL, "clearing a pin must not disturb the server URL")
+}

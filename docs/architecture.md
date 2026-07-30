@@ -134,7 +134,13 @@ local bbolt store and the authority for all search.
   caps how much of each host's tail is retained, in the cache and in RAM both,
   so neither grows without bound as years of history accumulate. The cache is
   derived: deleting it costs one full re-pull and nothing else, and it is reset
-  whenever the configured server changes.
+  whenever the configured **server URL** changes — the cached ciphertext then
+  belongs to a stranger whose key hierarchy has nothing to do with the new one's.
+  Nothing else in `syncConf` (`sameServerAs`) invalidates it: a certificate pin
+  added or cleared, a rotation cadence, a retention bound all describe how to
+  reach the same archive, and dropping the cache for one of those would spend a
+  full re-pull of every machine's history on a transport edit — the exact cost the
+  cache exists to avoid.
 - **Prompt index.** Agent prompt text is stored once, on its own record (see
   below), so the daemon keeps a `promptID → prompt` index — fed by the local
   store scan at startup, local ingest, and remote pull — and rejoins each query
@@ -696,7 +702,13 @@ device X25519 + Ed25519 keypairs   per machine; private halves never leave it
   can decrypt history.
 - **Request signing** (`reqsign`) means a captured request can't push
   garbage or revoke a device; optional TLS cert pinning (`yore setup --pin`)
-  hardens against a TLS-inspecting proxy, fail-closed.
+  hardens against a TLS-inspecting proxy, fail-closed. Fail-closed is the right
+  default and a bad failure mode to diagnose blind — the pin outlives only the
+  server's *key*, not its certificate, so an ACME renewal with a fresh key breaks
+  sync while local history keeps working. A mismatch is therefore a typed
+  `syncer.PinError` carrying both digests, and `yore doctor` reports it as its own
+  diagnosis (with both remedies, since re-pinning from an intercepted network
+  would pin the interceptor) instead of a generic connection failure.
 
 Exact byte layouts, domain-separation strings, and the device.key format are in
 `protocol.md`.
@@ -782,7 +794,9 @@ nothing in the enrollment path can reach into `data.db` (the daemon owns the
 lock), so the only evidence that can retire a revocation is the server serving
 this device again. Enroll the machine afresh and the next cycle clears it;
 a still-revoked one is simply refused again and stops. Re-pointing at a different
-server clears it too — that revocation described the old group. See
+server clears it too — that revocation described the old group. Editing the
+*transport* to the same server (a certificate pin) does not: the group is
+unchanged, so the revocation stands and no cache is re-opened for it. See
 docs/protocol.md for why the server only reveals revocation to a caller whose
 signature verified.
 
