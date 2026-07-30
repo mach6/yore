@@ -17,6 +17,7 @@ import (
 	"yore/internal/match"
 	"yore/internal/proto"
 	"yore/internal/rec"
+	"yore/internal/risk"
 	"yore/internal/tui/keyhelp"
 	"yore/internal/tui/theme"
 )
@@ -62,6 +63,11 @@ type Options struct {
 	// straight where they mean to. An unknown value opens the browse table, so a
 	// bad string costs nothing. Esc still drops through to browse from either.
 	Start StartView
+
+	// Risk is the ruleset behind the detail panes' Risk row — risk.Load's
+	// result, so the user's risk.toml applies here exactly as it does to the
+	// MCP assess_risk tool. Nil falls back to the built-in rules.
+	Risk *risk.Ruleset
 }
 
 // StartView names the screen Options.Start opens on.
@@ -149,9 +155,10 @@ type syncDoneMsg struct{ err error }
 // Model is the Bubble Tea model backing the browser. Exported so tests can
 // drive Update directly.
 type Model struct {
-	b    Backend
-	opts Options
-	th   *theme.Theme
+	b      Backend
+	opts   Options
+	th     *theme.Theme
+	riskRS *risk.Ruleset // never nil; the detail panes' Risk row asks it
 
 	// child components
 	ti     textinput.Model
@@ -328,11 +335,17 @@ func NewModel(b Backend, opts Options) Model {
 
 	vp := viewport.New(0, 0)
 
+	riskRS := opts.Risk
+	if riskRS == nil {
+		riskRS = risk.DefaultRuleset()
+	}
+
 	m := Model{
 		b:          b,
 		opts:       opts,
 		th:         th,
 		vim:        vim,
+		riskRS:     riskRS,
 		hideAgents: opts.HideAgents,
 		ti:         ti,
 		tagInput:   tagInput,

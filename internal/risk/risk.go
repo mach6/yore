@@ -41,6 +41,23 @@ func (l Level) String() string {
 	}
 }
 
+// Glyph is the one-column severity marker, shared by MCP output and the TUI so
+// the same level reads the same everywhere.
+func (l Level) Glyph() string {
+	switch l {
+	case Critical:
+		return "⛔"
+	case High:
+		return "⚠"
+	case Medium:
+		return "▲"
+	case Low:
+		return "•"
+	default:
+		return "✓"
+	}
+}
+
 // ParseLevel maps a label back to a Level (for --fail-on). Unknown => None.
 func ParseLevel(s string) Level {
 	switch strings.ToLower(strings.TrimSpace(s)) {
@@ -108,23 +125,10 @@ var rules = []rule{
 	{Low, "vcs", "pushes to a remote", re(`(?i)\bgit\s+push\b`)},
 }
 
-// Assess classifies a command. A command that only reads or prints (a comment,
-// a bare echo/printf, an alias definition) is None.
+// Assess classifies a command against the built-in rules alone. Callers that
+// honor the user's risk.toml hold a Ruleset from Load and call its Assess.
 func Assess(cmd string) Assessment {
-	c := strings.TrimSpace(cmd)
-	if isNonExecuting(c) {
-		return Assessment{Level: None, Category: "safe", Reason: "no side effects"}
-	}
-	best := Assessment{Level: None, Category: "safe", Reason: "no risky pattern matched"}
-	for _, r := range rules {
-		if r.level > best.Level && r.match(c) {
-			best = Assessment{Level: r.level, Category: r.category, Reason: r.reason}
-			if best.Level == Critical {
-				break // nothing outranks critical
-			}
-		}
-	}
-	return best
+	return DefaultRuleset().Assess(cmd)
 }
 
 // isNonExecuting reports commands that cannot cause harm: comments, a bare

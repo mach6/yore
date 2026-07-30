@@ -9,7 +9,6 @@ import (
 
 	"yore/internal/proto"
 	"yore/internal/rec"
-	"yore/internal/risk"
 )
 
 // sampleCap bounds how many rows an aggregating tool pulls from the daemon in
@@ -617,8 +616,8 @@ func (s *Server) toolAssessRisk(raw json.RawMessage) (any, *rpcError) {
 	}
 	var b strings.Builder
 	for _, c := range cmds {
-		v := risk.Assess(c)
-		fmt.Fprintf(&b, "%s  [%s / %s]  %s\n    %s\n", riskGlyph(v.Level), v.Level, v.Category, oneLine(c, 100), v.Reason)
+		v := s.opts.Risk.Assess(c)
+		fmt.Fprintf(&b, "%s  [%s / %s]  %s\n    %s\n", v.Level.Glyph(), v.Level, v.Category, oneLine(c, 100), v.Reason)
 		// History-aware context (the cross-machine edge): how has this exact
 		// command fared before, anywhere? Best-effort; ignore query errors.
 		if rows, err := s.fetch(proto.QueryReq{Q: c, Scope: proto.ScopeAll, Limit: 500}); err == nil {

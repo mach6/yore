@@ -449,6 +449,37 @@ A command's outcome gets a distinct **glyph** per state (`·` unknown, `✓` ok,
 differed by color alone, which put the distinction out of reach of anyone who
 cannot separate dim grey from green, and out of reach of a screenshot.
 
+**Identity is a hue.** Hostnames and executor names hash into the same fixed
+8-hue palette (red and green excluded — those belong to exit status), so the
+same *who* is the same color everywhere it appears: the sidebar, the prompt
+table, the ranked stats lists, the details rows. `(you)` stays plain — the user
+is not an agent identity to pick out of a lineup.
+
+**Command text is syntax-lit wherever it is command text** — the table rows,
+the explorer's command pane, both details panes' wrapped command body, and the
+"Top commands"/"Top programs" stats lists all classify through the same
+`tui/hl` pass, with match highlighting layered on top (matches always win).
+Never over prose: a prompt is English, and shell coloring over English paints
+arbitrary words as flags. Paths dim their directory and keep the leaf normal,
+so the eye lands on the name rather than the prefix.
+
+**Risk is a glyph-first ramp** shared verbatim with the MCP output (`⛔`
+critical, `⚠` high, `▲` medium, `•` low), shown as a `Risk` row in the two
+command-level details panes only when a rule matched. Critical borrows the exit
+red and medium the match amber; high is the palette's one ink of its own, an
+orange seated between them — so the ramp reads as four levels without spending
+four new colors, and red/green stay reserved for outcomes.
+
+**Risk rules are the user's.** The built-in table ships compiled in;
+`~/.config/yore/risk.toml` extends it — `[[rule]]` entries with a Go regexp, a
+level, and an optional category/reason, plus a top-level `ignore` list that
+neutralizes false positives by naming them. Loading is fail-safe exactly like
+`redact.yml`: a missing file is silent, a broken file or entry is skipped with
+a warning, and the built-ins are never lost. `yore doctor` is where a skipped
+rule gets named (the browser's alt-screen and the MCP server's stdout-owned
+transport have nowhere to say it), and the browser and `assess_risk` load the
+same file, so the TUI and an agent asking about the same command always agree.
+
 **Sample honesty.** The stats and agent screens aggregate the whole archive, so
 the header normally reads "all history". It derives that from the response
 itself — `Total > len(Rows)` means the daemon returned less than it matched — not

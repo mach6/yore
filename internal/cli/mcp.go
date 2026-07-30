@@ -6,6 +6,7 @@ import (
 
 	"yore/internal/daemon"
 	"yore/internal/mcp"
+	"yore/internal/risk"
 )
 
 // runMcpServe runs the Model Context Protocol server on stdio: it ensures the
@@ -21,7 +22,13 @@ func runMcpServe() int {
 	defer func() { _ = c.Close() }()
 
 	host, _ := os.Hostname()
-	srv := mcp.New(c, mcp.Options{Version: Version, LocalHost: host})
+	// The transport owns stdout, so ruleset warnings go to stderr; yore doctor
+	// repeats them for anyone who never sees this process's stderr.
+	rs, rerrs := risk.Load(stateDir())
+	for _, e := range rerrs {
+		fmt.Fprintln(os.Stderr, "yore mcp-serve:", e)
+	}
+	srv := mcp.New(c, mcp.Options{Version: Version, LocalHost: host, Risk: rs})
 	if err := srv.Serve(os.Stdin, os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, "yore mcp-serve:", err)
 		return 1

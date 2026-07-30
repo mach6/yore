@@ -64,7 +64,7 @@ func (s *Server) buildResources() []resourceDef {
 				if err != nil {
 					return "", &rpcError{Code: codeInternal, Message: err.Error()}
 				}
-				return formatRiskSummary(rows), nil
+				return formatRiskSummary(rows, s.opts.Risk), nil
 			},
 		},
 		{
@@ -190,7 +190,7 @@ func resultText(res any) string {
 
 // formatRiskSummary tallies recent agent commands by risk level and lists the
 // most severe ones — the pre-run safety picture for the current fleet.
-func formatRiskSummary(rows []rec.Record) string {
+func formatRiskSummary(rows []rec.Record, rs *risk.Ruleset) string {
 	counts := map[risk.Level]int{}
 	var flagged []struct {
 		a risk.Assessment
@@ -201,7 +201,7 @@ func formatRiskSummary(rows []rec.Record) string {
 		if r.Deleted() || r.Executor == "" {
 			continue
 		}
-		a := risk.Assess(r.Cmd)
+		a := rs.Assess(r.Cmd)
 		counts[a.Level]++
 		if a.Level >= risk.High {
 			flagged = append(flagged, struct {

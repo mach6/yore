@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 
+	"yore/internal/match"
 	"yore/internal/rec"
 	"yore/internal/tui/theme"
 )
@@ -471,13 +472,14 @@ func (m Model) statColumns(s *statsData, w, bodyH int) []string {
 	type col struct {
 		title string
 		items []cmdCount
+		kind  statNameKind
 	}
 	all := []col{
-		{"Top programs", s.topPrograms},
-		{"Top commands", s.topCommands},
-		{"Top directories", s.topDirs},
-		{"By executor", s.byExecutor},
-		{"By host", s.byHost},
+		{"Top programs", s.topPrograms, statNameProgram},
+		{"Top commands", s.topCommands, statNameCommand},
+		{"Top directories", s.topDirs, statNamePath},
+		{"By executor", s.byExecutor, statNameExecutor},
+		{"By host", s.byHost, statNameHost},
 	}
 
 	const gap, minCol = 2, 16
@@ -496,7 +498,7 @@ func (m Model) statColumns(s *statsData, w, bodyH int) []string {
 
 	rendered := make([]string, 0, n)
 	for i := 0; i < n; i++ {
-		lines := statColumn(m.th, all[i].title, all[i].items, colW, rows)
+		lines := statColumn(m.th, all[i].title, all[i].items, colW, rows, all[i].kind)
 		rendered = append(rendered, padLines(lines, colW, bodyH))
 	}
 	joined := make([]string, 0, 2*n-1)
@@ -509,9 +511,49 @@ func (m Model) statColumns(s *statsData, w, bodyH int) []string {
 	return strings.Split(lipgloss.JoinHorizontal(lipgloss.Top, joined...), "\n")
 }
 
+// statNameKind says what a ranked list's names ARE, so each column can ink
+// them the way the rest of the UI inks the same thing: commands get syntax,
+// paths keep their leaf, executors and hosts get their identity hue.
+type statNameKind int
+
+const (
+	statNamePlain    statNameKind = iota
+	statNameProgram               // a bare program token: the command hue
+	statNameCommand               // a full command line: syntax segments
+	statNamePath                  // a directory: dim prefix, normal leaf
+	statNameExecutor              // an agent identity hue; "(you)" stays plain
+	statNameHost                  // a hostname identity hue
+)
+
+// statNameSegs renders one ranked-list name in its kind's ink, truncated to w.
+func statNameSegs(th *theme.Theme, name string, w int, kind statNameKind) (segs []styledSeg, used int) {
+	switch kind {
+	case statNameCommand:
+		return commandSegments(th, name, match.Parse(""), w)
+	case statNamePath:
+		segs = pathSegs(th, name, w)
+		for _, s := range segs {
+			used += runewidth.StringWidth(s.text)
+		}
+		return segs, used
+	case statNameProgram, statNameExecutor, statNameHost:
+		style := th.Host(name)
+		if kind == statNameProgram {
+			style = th.SynCommand
+		} else if name == "(you)" {
+			style = th.Norm // the user is not an agent identity
+		}
+		t := truncCols(name, w)
+		return []styledSeg{{text: t, style: style}}, runewidth.StringWidth(t)
+	default:
+		t := truncCols(name, w)
+		return []styledSeg{{text: t, style: th.Norm}}, runewidth.StringWidth(t)
+	}
+}
+
 // statColumn renders a titled list column of name/count pairs, each line padded
 // to exactly colW columns.
-func statColumn(th *theme.Theme, title string, items []cmdCount, colW, rows int) []string {
+func statColumn(th *theme.Theme, title string, items []cmdCount, colW, rows int, kind statNameKind) []string {
 	lines := []string{th.Section.Render(fitPlain(title, colW))}
 	if len(items) == 0 {
 		lines = append(lines, th.Dim.Render(fitPlain("  —", colW)))
@@ -524,14 +566,14 @@ func statColumn(th *theme.Theme, title string, items []cmdCount, colW, rows int)
 		}
 	}
 	for i := 0; i < len(items) && i < rows; i++ {
-		lines = append(lines, statLine(th, items[i], maxN, colW))
+		lines = append(lines, statLine(th, items[i], maxN, colW, kind))
 	}
 	return lines
 }
 
 // statLine is "name  ▬▬▬▬   count", padded to exactly colW columns. The bar is a
 // proportional gauge; it is dropped when the column is too narrow.
-func statLine(th *theme.Theme, it cmdCount, maxN, colW int) string {
+func statLine(th *theme.Theme, it cmdCount, maxN, colW int, kind statNameKind) string {
 	count := strconv.Itoa(it.n)
 	cntW := runewidth.StringWidth(count)
 
@@ -547,11 +589,12 @@ func statLine(th *theme.Theme, it cmdCount, maxN, colW int) string {
 	if nameW < 1 {
 		nameW = 1
 	}
-	name := truncCols(it.name, nameW)
+	segs, used := statNameSegs(th, it.name, nameW, kind)
 
 	var b strings.Builder
-	b.WriteString(th.Norm.Render(name))
-	used := runewidth.StringWidth(name)
+	for _, s := range segs {
+		b.WriteString(s.style.Render(s.text))
+	}
 
 	if barW > 0 {
 		filled := 0
@@ -560,8 +603,8 @@ func statLine(th *theme.Theme, it cmdCount, maxN, colW int) string {
 		}
 		// A gauge is proportional by length, so one step of the ramp, not a scale.
 		bar := strings.Repeat("▬", filled) + strings.Repeat(" ", barW-filled)
-		b.WriteString(" " + th.Data(theme.DataLevels-1).Render(bar))
-		used += 1 + barW
+		b.WriteString(strings.Repeat(" ", nameW-used+1) + th.Data(theme.DataLevels-1).Render(bar))
+		used = nameW + 1 + barW
 	}
 
 	gap := colW - used - cntW

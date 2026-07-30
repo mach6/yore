@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"yore/internal/proto"
+	"yore/internal/risk"
 )
 
 // protocolVersion is the MCP revision we implement. We echo the client's
@@ -49,6 +50,11 @@ type Options struct {
 	ExcludeDirs       []string // cwd prefixes excluded from every query result
 	Version           string   // reported in serverInfo.version
 	LocalHost         string   // this machine's hostname, for labeling
+
+	// Risk is the ruleset behind assess_risk and the risk-summary resource —
+	// risk.Load's result, so the user's risk.toml applies here exactly as it
+	// does to the browse detail panes. Nil falls back to the built-in rules.
+	Risk *risk.Ruleset
 }
 
 func (o *Options) normalize() {
@@ -57,6 +63,9 @@ func (o *Options) normalize() {
 	}
 	if o.DefaultDays <= 0 {
 		o.DefaultDays = 7
+	}
+	if o.Risk == nil {
+		o.Risk = risk.DefaultRuleset()
 	}
 }
 

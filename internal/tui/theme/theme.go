@@ -24,9 +24,13 @@ type Theme struct {
 	Match   lipgloss.Style // highlighted matched substrings
 	ExitOK  lipgloss.Style // exit status 0 (green)
 	ExitErr lipgloss.Style // non-zero exit status (red)
-	Status  lipgloss.Style // the bottom status bar
-	Border  lipgloss.Style // pane borders
-	Help    lipgloss.Style // the key-hints help line
+	// RiskHigh is the risk ramp's one ink of its own: critical borrows ExitErr
+	// and medium borrows Match, so high sits between them — an orange that is
+	// neither the amber of a match nor the red reserved for failure.
+	RiskHigh lipgloss.Style
+	Status   lipgloss.Style // the bottom status bar
+	Border   lipgloss.Style // pane borders
+	Help     lipgloss.Style // the key-hints help line
 
 	// Three ranks of heading, and only three. A terminal has very few levers for
 	// hierarchy — color, weight, case, indent — so each rank gets its own and no
@@ -59,6 +63,7 @@ var (
 	cMatch  = lipgloss.AdaptiveColor{Light: "#b35a00", Dark: "#ffb454"} // amber, not red/green
 	cOK     = lipgloss.AdaptiveColor{Light: "#207520", Dark: "#5fd75f"} // green
 	cErr    = lipgloss.AdaptiveColor{Light: "#c02020", Dark: "#ff6b6b"} // red
+	cRisk   = lipgloss.AdaptiveColor{Light: "#c2410c", Dark: "#ff9e4a"} // orange, between cMatch and cErr
 	cBorder = lipgloss.AdaptiveColor{Light: "#c6c6c6", Dark: "#3a3a3a"}
 	cStatBg = lipgloss.AdaptiveColor{Light: "#eeeeee", Dark: "#1c1c1c"}
 
@@ -123,16 +128,17 @@ func NewWithRenderer(r *lipgloss.Renderer) *Theme {
 		// Reverse video (terminal-native) so the selected row is unmistakable
 		// even when adaptive light/dark detection is wrong or the terminal does
 		// not render truecolor backgrounds. Paired with a ❯ marker in the rows.
-		Sel:     base.Reverse(true).Bold(true),
-		Dim:     base.Foreground(cDim),
-		Match:   base.Foreground(cMatch).Bold(true),
-		ExitOK:  base.Foreground(cOK),
-		ExitErr: base.Foreground(cErr).Bold(true),
-		Status:  base.Foreground(cDim).Background(cStatBg),
-		Border:  base.Foreground(cBorder).BorderForeground(cBorder).Border(lipgloss.RoundedBorder()),
-		Title:   base.Foreground(cAccent).Bold(true),
-		Section: base.Foreground(cNorm).Bold(true),
-		Help:    base.Foreground(cDim),
+		Sel:      base.Reverse(true).Bold(true),
+		Dim:      base.Foreground(cDim),
+		Match:    base.Foreground(cMatch).Bold(true),
+		ExitOK:   base.Foreground(cOK),
+		ExitErr:  base.Foreground(cErr).Bold(true),
+		RiskHigh: base.Foreground(cRisk).Bold(true),
+		Status:   base.Foreground(cDim).Background(cStatBg),
+		Border:   base.Foreground(cBorder).BorderForeground(cBorder).Border(lipgloss.RoundedBorder()),
+		Title:    base.Foreground(cAccent).Bold(true),
+		Section:  base.Foreground(cNorm).Bold(true),
+		Help:     base.Foreground(cDim),
 
 		SynCommand:  base.Foreground(cSynCmd),
 		SynFlag:     base.Foreground(cSynFlg),

@@ -8,7 +8,9 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"yore/internal/match"
 	"yore/internal/rec"
+	"yore/internal/risk"
 	"yore/internal/tui/theme"
 )
 
@@ -515,22 +517,32 @@ func (m Model) promptInfoLines(p promptStat, w int) []string {
 	lines = append(lines, strings.Repeat(" ", w))
 
 	now := m.now()
-	status := fmt.Sprintf("%d   ✓%d ✗%d", p.count, p.success, p.failures)
+	vw := maxInt(1, w-infoLabelW)
 	// Ordered by what a short pane should keep: on a squeezed layout the tail
 	// (the timestamps) is what gets clipped, not the identity of the prompt.
-	for _, kv := range [][2]string{
-		{"Executor", dashIfEmpty(p.executor)},
-		{"Session", shortSession(p.session)},
-		{"Host", dashIfEmpty(p.host)},
-		{"Commands", status},
-		{"Duration", promptDur(p)},
-		{"Path", modalCwd(p.cmds)},
-		{"First", theme.RelTime(now, p.firstMs)},
-		{"Last", theme.RelTime(now, p.lastMs)},
-	} {
-		lines = append(lines, m.infoRow(kv[0], kv[1], w))
-	}
+	lines = append(lines,
+		m.infoRowSegs("Executor", hueSeg(th, p.executor), w),
+		m.infoRow("Session", shortSession(p.session), w),
+		m.infoRowSegs("Host", hueSeg(th, p.host), w),
+		m.infoRowSegs("Commands", commandsSegs(th, p), w),
+		m.infoRow("Duration", promptDur(p), w),
+		m.infoRowSegs("Path", pathSegs(th, modalCwd(p.cmds), vw), w),
+		m.infoRow("First", theme.RelTime(now, p.firstMs), w),
+		m.infoRow("Last", theme.RelTime(now, p.lastMs), w),
+	)
 	return lines
+}
+
+// commandsSegs is the prompt's outcome tally with the table's outcome colors
+// on the same glyphs: "3   ✓2 ✗1", count normal, successes green, failures red.
+func commandsSegs(th *theme.Theme, p promptStat) []styledSeg {
+	return []styledSeg{
+		{text: strconv.Itoa(p.count), style: th.Norm},
+		{text: "   ", raw: true},
+		{text: "✓" + strconv.Itoa(p.success), style: th.ExitOK},
+		{text: " ", raw: true},
+		{text: "✗" + strconv.Itoa(p.failures), style: th.ExitErr},
+	}
 }
 
 // cmdInfoLines is the details body for one captured command.
@@ -538,8 +550,8 @@ func (m Model) cmdInfoLines(r rec.Record, w int) []string {
 	th := m.th
 	lines := make([]string, 0, 16)
 	lines = append(lines, th.Section.Render(fitPlain("Command", w)))
-	for _, l := range wrapPlain(oneLine(r.Cmd), w-1) {
-		lines = append(lines, " "+th.Norm.Render(l))
+	for _, l := range wrapHighlighted(th, oneLine(r.Cmd), match.Parse(""), w-1, 8) {
+		lines = append(lines, " "+l)
 	}
 	lines = append(lines, strings.Repeat(" ", w))
 
@@ -547,28 +559,32 @@ func (m Model) cmdInfoLines(r rec.Record, w int) []string {
 	if r.DurMs != nil {
 		dur = theme.Duration(*r.DurMs)
 	}
-	for _, kv := range [][2]string{
-		{"Path", dashIfEmpty(r.Cwd)},
-		{"Host", dashIfEmpty(r.Hostname)},
-		{"Session", shortSession(r.Session)},
-		{"Executor", dashIfEmpty(r.Executor)},
-		{"Time", theme.AbsTime(r.StartMs)},
-		{"Duration", dur},
-		{"Exit", exitWord(r)},
-	} {
-		lines = append(lines, m.infoRow(kv[0], kv[1], w))
+	vw := maxInt(1, w-infoLabelW)
+	lines = append(lines,
+		m.infoRowSegs("Path", pathSegs(th, dashIfEmpty(r.Cwd), vw), w),
+		m.infoRowSegs("Host", hueSeg(th, r.Hostname), w),
+		m.infoRow("Session", shortSession(r.Session), w),
+		m.infoRowSegs("Executor", hueSeg(th, r.Executor), w),
+		m.infoRow("Time", theme.AbsTime(r.StartMs), w),
+		m.infoRow("Duration", dur, w),
+		m.infoRowSegs("Exit", exitSegs(th, r), w),
+	)
+	if a := m.riskRS.Assess(r.Cmd); a.Level > risk.None {
+		lines = append(lines, m.infoRowSegs("Risk", riskSegs(th, a), w))
 	}
 	return lines
 }
 
-// infoRow formats one "Label   value" line of the details pane.
+// infoRowSegs formats one "Label   value" line of the details pane, with the
+// value arriving as styled segments so a row can carry outcome or identity ink.
+func (m Model) infoRowSegs(label string, segs []styledSeg, w int) string {
+	all := append([]styledSeg{{text: padRight(label, infoLabelW), style: m.th.Dim}}, segs...)
+	return padTo(composeSegs(all, false, w, m.th), w)
+}
+
+// infoRow is infoRowSegs for the plain rows: one normal-ink value.
 func (m Model) infoRow(label, value string, w int) string {
-	vw := w - infoLabelW
-	if vw < 1 {
-		vw = 1
-	}
-	return m.th.Dim.Render(padRight(label, infoLabelW)) +
-		m.th.Norm.Render(padRight(truncCols(value, vw), vw))
+	return m.infoRowSegs(label, []styledSeg{{text: value, style: m.th.Norm}}, w)
 }
 
 // plural renders "1 prompt" / "3 prompts" for the title's counters.

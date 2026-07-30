@@ -12,6 +12,7 @@ import (
 	"yore/internal/match"
 	"yore/internal/proto"
 	"yore/internal/rec"
+	"yore/internal/risk"
 	"yore/internal/tui/hl"
 	"yore/internal/tui/keyhelp"
 	"yore/internal/tui/theme"
@@ -534,6 +535,69 @@ func exitWord(r rec.Record) string {
 	}
 }
 
+// exitSegs is exitWord with the table's outcome colors on the same glyphs —
+// the text is identical, only the ink differs.
+func exitSegs(th *theme.Theme, r rec.Record) []styledSeg {
+	switch {
+	case r.Exit == nil:
+		return []styledSeg{{text: "· unknown", style: th.Dim}}
+	case *r.Exit == 0:
+		return []styledSeg{{text: "✓", style: th.ExitOK}, {text: " 0", style: th.Norm}}
+	default:
+		return []styledSeg{{text: "✗ " + strconv.Itoa(*r.Exit), style: th.ExitErr}}
+	}
+}
+
+// pathSegs dims a path's directory and keeps its leaf normal, so the eye lands
+// on the name rather than the boilerplate prefix. Values without a slash
+// (including the "—" placeholder) render plain.
+func pathSegs(th *theme.Theme, path string, maxCols int) []styledSeg {
+	p := truncCols(path, maxCols)
+	i := strings.LastIndexByte(p, '/')
+	if i < 0 {
+		return []styledSeg{{text: p, style: th.Norm}}
+	}
+	segs := []styledSeg{{text: p[:i+1], style: th.Dim}}
+	if leaf := p[i+1:]; leaf != "" {
+		segs = append(segs, styledSeg{text: leaf, style: th.Norm})
+	}
+	return segs
+}
+
+// hueSeg is one identity-colored value cell: a hostname or executor in its
+// stable hue, or a plain dash when absent.
+func hueSeg(th *theme.Theme, name string) []styledSeg {
+	if name == "" {
+		return []styledSeg{{text: "—", style: th.Norm}}
+	}
+	return []styledSeg{{text: name, style: th.Host(name)}}
+}
+
+// riskStyle maps a risk level to its ink: critical borrows the exit red,
+// medium the match amber, and high is the ramp's own orange between them.
+func riskStyle(th *theme.Theme, l risk.Level) lipgloss.Style {
+	switch l {
+	case risk.Critical:
+		return th.ExitErr
+	case risk.High:
+		return th.RiskHigh
+	case risk.Medium:
+		return th.Match
+	default:
+		return th.Dim
+	}
+}
+
+// riskSegs renders a verdict as "⚠ high (script-exec)": glyph and level in the
+// tier's ink, the category dim. Glyph-first, so the tier survives without color.
+func riskSegs(th *theme.Theme, a risk.Assessment) []styledSeg {
+	segs := []styledSeg{{text: a.Level.Glyph() + " " + a.Level.String(), style: riskStyle(th, a.Level)}}
+	if a.Category != "" {
+		segs = append(segs, styledSeg{text: " (" + a.Category + ")", style: th.Dim})
+	}
+	return segs
+}
+
 // --- detail pane --------------------------------------------------------
 
 func (m *Model) syncDetail() {
@@ -550,7 +614,7 @@ func (m *Model) syncDetail() {
 	q := match.Parse(m.ti.Value())
 
 	var b strings.Builder
-	for _, line := range wrapHighlighted(m.th, r.Cmd, q, w) {
+	for _, line := range wrapHighlighted(m.th, r.Cmd, q, w, 0) {
 		b.WriteString(line)
 		b.WriteByte('\n')
 	}
@@ -564,14 +628,19 @@ func (m *Model) syncDetail() {
 		b.WriteString(m.infoRow(label, val, w))
 		b.WriteByte('\n')
 	}
-	meta("Path", dashIfEmpty(r.Cwd))
-	meta("Host", dashIfEmpty(r.Hostname))
+	metaSegs := func(label string, segs []styledSeg) {
+		b.WriteString(m.infoRowSegs(label, segs, w))
+		b.WriteByte('\n')
+	}
+	vw := maxInt(1, w-infoLabelW)
+	metaSegs("Path", pathSegs(m.th, dashIfEmpty(r.Cwd), vw))
+	metaSegs("Host", hueSeg(m.th, r.Hostname))
 	meta("Session", dashIfEmpty(r.Session))
 	if r.Executor != "" {
-		meta("Executor", r.Executor)
+		metaSegs("Executor", hueSeg(m.th, r.Executor))
 	}
 	if len(r.Tags) > 0 {
-		meta("Tags", strings.Join(r.Tags, ", "))
+		metaSegs("Tags", []styledSeg{{text: strings.Join(r.Tags, ", "), style: m.th.Accent}})
 	}
 	meta("Time", theme.AbsTime(r.StartMs))
 	dur := "—"
@@ -579,7 +648,10 @@ func (m *Model) syncDetail() {
 		dur = theme.Duration(*r.DurMs)
 	}
 	meta("Duration", dur)
-	meta("Exit", exitWord(r))
+	metaSegs("Exit", exitSegs(m.th, r))
+	if a := m.riskRS.Assess(r.Cmd); a.Level > risk.None {
+		metaSegs("Risk", riskSegs(m.th, a))
+	}
 
 	m.detail.SetContent(strings.TrimRight(b.String(), "\n"))
 	m.detail.SetYOffset(0)
@@ -871,15 +943,22 @@ func styleForKind(th *theme.Theme, k int) lipgloss.Style {
 	}
 }
 
-// --- highlight-aware wrapping (detail pane) ------------------------------
+// --- highlight-aware wrapping (detail panes) ------------------------------
 
-type hlRune struct {
-	r     rune
-	match bool
-	brk   bool // a hard line break
+// wrapRune is one display rune plus the kind that colors it (an hl.Kind, or
+// kindMatch/kindMarker) and whether it is a hard line break.
+type wrapRune struct {
+	r   rune
+	k   int
+	brk bool
 }
 
-func wrapHighlighted(th *theme.Theme, s string, q match.Query, w int) []string {
+// wrapHighlighted word-wraps a command to width w with syntax highlighting
+// layered under match highlighting (matches win) — the same coloring the table
+// gives the same text, kept when the command grows to multiple lines. maxLines
+// > 0 caps the output the way wrapPlain does, ending the last kept line with a
+// dim ellipsis; 0 leaves it uncapped.
+func wrapHighlighted(th *theme.Theme, s string, q match.Query, w, maxLines int) []string {
 	if w < 1 {
 		w = 1
 	}
@@ -887,6 +966,7 @@ func wrapHighlighted(th *theme.Theme, s string, q match.Query, w int) []string {
 		return []string{""}
 	}
 	ranges := q.Ranges(s)
+	syn := hl.Classify(s)
 	ri := 0
 	inRange := func(pos int) bool {
 		for ri < len(ranges) && ranges[ri][1] <= pos {
@@ -895,7 +975,7 @@ func wrapHighlighted(th *theme.Theme, s string, q match.Query, w int) []string {
 		return ri < len(ranges) && ranges[ri][0] <= pos
 	}
 
-	var seq []hlRune
+	var seq []wrapRune
 	for i := 0; i < len(s); {
 		r, size := utf8.DecodeRuneInString(s[i:])
 		if size == 0 {
@@ -903,21 +983,25 @@ func wrapHighlighted(th *theme.Theme, s string, q match.Query, w int) []string {
 		}
 		switch r {
 		case '\n':
-			seq = append(seq, hlRune{brk: true})
+			seq = append(seq, wrapRune{brk: true})
 		case '\r':
 		default:
-			seq = append(seq, hlRune{r: r, match: inRange(i)})
+			k := int(syn[i])
+			if inRange(i) {
+				k = kindMatch
+			}
+			seq = append(seq, wrapRune{r: r, k: k})
 		}
 		i += size
 	}
 
-	var lines []string
-	var cur []hlRune
+	var wrapped [][]wrapRune
+	var cur []wrapRune
 	curW := 0
 	lastSpace := -1
 	for _, t := range seq {
 		if t.brk {
-			lines = append(lines, renderHL(th, cur))
+			wrapped = append(wrapped, cur)
 			cur, curW, lastSpace = nil, 0, -1
 			continue
 		}
@@ -925,12 +1009,12 @@ func wrapHighlighted(th *theme.Theme, s string, q match.Query, w int) []string {
 		if curW+rw > w && len(cur) > 0 {
 			if lastSpace > 0 {
 				head := cur[:lastSpace]
-				tail := append([]hlRune(nil), cur[lastSpace+1:]...)
-				lines = append(lines, renderHL(th, head))
+				tail := append([]wrapRune(nil), cur[lastSpace+1:]...)
+				wrapped = append(wrapped, head)
 				cur = tail
-				curW = hlWidth(tail)
+				curW = wrapRuneWidth(tail)
 			} else {
-				lines = append(lines, renderHL(th, cur))
+				wrapped = append(wrapped, cur)
 				cur, curW = nil, 0
 			}
 			lastSpace = -1
@@ -941,13 +1025,27 @@ func wrapHighlighted(th *theme.Theme, s string, q match.Query, w int) []string {
 		cur = append(cur, t)
 		curW += rw
 	}
-	if len(cur) > 0 || len(lines) == 0 {
-		lines = append(lines, renderHL(th, cur))
+	if len(cur) > 0 || len(wrapped) == 0 {
+		wrapped = append(wrapped, cur)
+	}
+
+	if maxLines > 0 && len(wrapped) > maxLines {
+		last := wrapped[maxLines-1]
+		for wrapRuneWidth(last) > w-1 && len(last) > 0 {
+			last = last[:len(last)-1]
+		}
+		wrapped = wrapped[:maxLines]
+		wrapped[maxLines-1] = append(last, wrapRune{r: '…', k: kindMarker})
+	}
+
+	lines := make([]string, 0, len(wrapped))
+	for _, ln := range wrapped {
+		lines = append(lines, renderWrapped(th, ln))
 	}
 	return lines
 }
 
-func hlWidth(ts []hlRune) int {
+func wrapRuneWidth(ts []wrapRune) int {
 	w := 0
 	for _, t := range ts {
 		w += runewidth.RuneWidth(t.r)
@@ -955,26 +1053,24 @@ func hlWidth(ts []hlRune) int {
 	return w
 }
 
-func renderHL(th *theme.Theme, ts []hlRune) string {
+// renderWrapped is emitRuns' wrapped sibling: adjacent same-kind runes coalesce
+// into one styled run, with no clipping — wrapHighlighted already sized the line.
+func renderWrapped(th *theme.Theme, ts []wrapRune) string {
 	if len(ts) == 0 {
 		return ""
 	}
 	var b, run strings.Builder
-	curMatch := ts[0].match
+	curK := ts[0].k
 	flush := func() {
 		if run.Len() > 0 {
-			st := th.Norm
-			if curMatch {
-				st = th.Match
-			}
-			b.WriteString(st.Render(run.String()))
+			b.WriteString(styleForKind(th, curK).Render(run.String()))
 			run.Reset()
 		}
 	}
 	for _, t := range ts {
-		if t.match != curMatch {
+		if t.k != curK {
 			flush()
-			curMatch = t.match
+			curK = t.k
 		}
 		run.WriteRune(t.r)
 	}

@@ -35,7 +35,12 @@ func SpoolDir(dir string) string   { return filepath.Join(dir, "spool") }
 func SocketPath(dir string) string { return filepath.Join(dir, "daemon.sock") }
 func ConfigPath(dir string) string { return filepath.Join(dir, "config.toml") }
 func RedactPath(dir string) string { return filepath.Join(dir, "redact.yml") }
-func BackupDir(dir string) string  { return filepath.Join(dir, "backups") }
+
+// RiskPath is the optional, user-editable risk-rules file. Like redact.yml it
+// sits beside config.toml rather than inside it: rules are a table you grow,
+// not a setting you flip.
+func RiskPath(dir string) string  { return filepath.Join(dir, "risk.toml") }
+func BackupDir(dir string) string { return filepath.Join(dir, "backups") }
 
 // Config is ~/.config/yore/config.toml (TOML — no JSON quoting or trailing-comma
 // quirks to trip over in a hand-edited file).

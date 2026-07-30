@@ -6,8 +6,17 @@ import (
 
 	"yore/internal/config"
 	"yore/internal/daemon"
+	"yore/internal/risk"
 	"yore/internal/tui/browse"
 )
+
+// riskRules loads risk.toml for the browser, dropping warnings on purpose: the
+// alt-screen eats stderr, and `yore doctor` is the venue that reports a broken
+// file. Load fails safe, so the built-ins are on either way.
+func riskRules(dir string) *risk.Ruleset {
+	rs, _ := risk.Load(dir)
+	return rs
+}
 
 // runBrowse opens the full-screen history browser (the `h` alias target) on the
 // given start view — `yore stats` and `yore agents` are the same program landed
@@ -39,6 +48,7 @@ func runBrowse(acceptFile string, start browse.StartView) int {
 		// The browse table opens without agent-run commands (A toggles); the agent
 		// explorer is where that work is shown, grouped by the prompt behind it.
 		HideAgents: cfg.HideAgentCommands,
+		Risk:       riskRules(dir),
 		Splits: browse.Splits{
 			BrowseLeft: ui.BrowseLeftSplit,
 			BrowseTop:  ui.BrowseTopSplit,

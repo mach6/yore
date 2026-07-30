@@ -40,6 +40,17 @@ func TestRendererColorProfile(t *testing.T) {
 	}
 }
 
+// TestRiskHighStyle: the risk ramp's own ink must be a distinct color — if it
+// matched Match or ExitErr, the ramp would read as three levels, not four.
+func TestRiskHighStyle(t *testing.T) {
+	r := lipgloss.NewRenderer(io.Discard)
+	r.SetColorProfile(termenv.TrueColor)
+	th := NewWithRenderer(r)
+	require.Contains(t, th.RiskHigh.Render("high"), "\x1b[")
+	require.NotEqual(t, th.Match.GetForeground(), th.RiskHigh.GetForeground())
+	require.NotEqual(t, th.ExitErr.GetForeground(), th.RiskHigh.GetForeground())
+}
+
 func TestHostStable(t *testing.T) {
 	th := New()
 	// Same name -> same color, repeatedly.

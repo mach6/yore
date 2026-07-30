@@ -10,6 +10,7 @@ import (
 	"yore/internal/config"
 	"yore/internal/daemon"
 	"yore/internal/redact"
+	"yore/internal/risk"
 	"yore/internal/secret"
 	"yore/internal/shell"
 	"yore/internal/syncer"
@@ -114,6 +115,20 @@ func runDoctor() int {
 		warn(fmt.Sprintf("redact.yml is missing %d newer built-in rule(s): %s",
 			len(missing), strings.Join(missing, ", ")))
 		warn("delete redact.yml to pick up the built-ins again (`yore setup` reseeds it), or add the rules by hand")
+	}
+
+	// Risk rules. The browser and the MCP server both load risk.toml but have
+	// nowhere to show a typo (alt-screen; stdout-owned transport) — this is the
+	// venue where a skipped rule gets named.
+	u.section("risk rules")
+	if _, rerrs := risk.Load(dir); len(rerrs) > 0 {
+		for _, e := range rerrs {
+			warn(e.Error())
+		}
+	} else if _, serr := os.Stat(config.RiskPath(dir)); serr == nil {
+		ok("rules file: " + config.RiskPath(dir))
+	} else {
+		ok("built-in rules (add " + config.RiskPath(dir) + " to extend or silence them)")
 	}
 
 	// Enrollment + server.

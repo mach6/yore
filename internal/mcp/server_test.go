@@ -11,6 +11,7 @@ import (
 
 	"yore/internal/proto"
 	"yore/internal/rec"
+	"yore/internal/risk"
 )
 
 // fakeQ is a minimal in-memory Querier: it honors Q (substring), Tag, ScopeCwd
@@ -158,6 +159,30 @@ func TestToolAssessRisk(t *testing.T) {
 	})
 	require.Nil(t, resp2.Error)
 	require.Contains(t, resultText(resp2.Result), "run 1 time")
+}
+
+// TestAssessRiskUsesInjectedRuleset: a user risk.toml rule reaches assess_risk
+// through Options.Risk, and nil Risk means the built-ins alone.
+func TestAssessRiskUsesInjectedRuleset(t *testing.T) {
+	rs, errs := risk.Compile([]risk.Spec{
+		{Pattern: `\bterraform\s+apply\b`, Level: "high", Category: "infra", Reason: "changes infrastructure"},
+	}, nil)
+	require.Empty(t, errs)
+	s := New(fakeQ{rows: sampleRows()}, Options{Version: "test", LocalHost: "laptop", Risk: rs})
+
+	resp := call(t, s, "tools/call", map[string]any{
+		"name": "assess_risk", "arguments": map[string]any{"command": "terraform apply"},
+	})
+	require.Nil(t, resp.Error)
+	text := resultText(resp.Result)
+	require.Contains(t, text, "high")
+	require.Contains(t, text, "infra")
+
+	resp2 := call(t, newTestServer(), "tools/call", map[string]any{
+		"name": "assess_risk", "arguments": map[string]any{"command": "terraform apply"},
+	})
+	require.Nil(t, resp2.Error)
+	require.Contains(t, resultText(resp2.Result), "safe", "without injection the built-ins apply")
 }
 
 func TestResources(t *testing.T) {

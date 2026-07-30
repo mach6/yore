@@ -199,9 +199,9 @@ func (m Model) promptListInner(w, h int) string {
 	c := promptLayout(w, m.prompts.hasDur, len(m.agentHosts) > 1)
 	// Lowercase, like every other column header in the UI: uppercase is reserved
 	// for pane names, which now sit in the border above this.
-	lines := []string{promptRow(th.Dim, th.Dim, th.Dim, false, w, th,
+	lines := []string{promptRow(th, true, false, w,
 		"when", "host", "session", "executor", "cmds", "status", "dur",
-		plainSegs(th.Dim, "prompt", c.textW), c)}
+		th.Dim, plainSegs(th.Dim, "prompt", c.textW), c)}
 
 	rows := m.filteredPrompts
 	if len(rows) == 0 {
@@ -234,9 +234,9 @@ func (m Model) promptListInner(w, h int) string {
 			segs, used = matchSegments(th, text, q, c.textW)
 			segs = append(segs, padSeg(c.textW-used))
 		}
-		lines = append(lines, promptRow(th.Norm, statusStyle, th.Host(p.host), i == sel, w, th,
+		lines = append(lines, promptRow(th, false, i == sel, w,
 			theme.RelTime(now, p.lastMs), p.host, shortSession(p.session), p.executor,
-			strconv.Itoa(p.count), status, promptDur(p), segs, c))
+			strconv.Itoa(p.count), status, promptDur(p), statusStyle, segs, c))
 	}
 	return padLines(lines, w, h)
 }
@@ -455,12 +455,26 @@ func padSeg(n int) styledSeg {
 	return styledSeg{text: strings.Repeat(" ", n), raw: true}
 }
 
-// promptRow formats one fixed-width prompt table row (header or data). base
-// styles every cell except status, which takes its own color; a selected row
-// renders as a solid selection bar. The prompt cell arrives as segments because
-// it carries match highlighting, which a single style cannot express.
-func promptRow(base, statusStyle, hostStyle lipgloss.Style, sel bool, w int, th *theme.Theme,
-	when, host, sess, exec, cmds, status, dur string, text []styledSeg, c promptCols) string {
+// promptRow formats one fixed-width prompt table row (header or data). Cell
+// styles follow the table's conventions — metadata (when/session/dur) dim,
+// identities (host, executor) in their stable hues, status in its outcome
+// color — and a header row is all dim, like every column header in the UI. A
+// selected row renders as a solid selection bar. The prompt cell arrives as
+// segments because it carries match highlighting, which a single style cannot
+// express.
+func promptRow(th *theme.Theme, header, sel bool, w int,
+	when, host, sess, exec, cmds, status, dur string,
+	statusStyle lipgloss.Style, text []styledSeg, c promptCols) string {
+	meta, norm := th.Dim, th.Norm
+	hostStyle, execStyle := th.Host(host), th.Host(exec)
+	if exec == "" {
+		execStyle = th.Dim
+	}
+	if header {
+		meta, norm, statusStyle = th.Dim, th.Dim, th.Dim
+		hostStyle, execStyle = th.Dim, th.Dim
+	}
+
 	var segs []styledSeg
 	sep := func() { segs = append(segs, styledSeg{text: "  ", raw: true}) }
 	cell := func(s string, wdt int, style lipgloss.Style, right bool) {
@@ -473,26 +487,26 @@ func promptRow(base, statusStyle, hostStyle lipgloss.Style, sel bool, w int, th 
 		segs = append(segs, styledSeg{text: t, style: style})
 	}
 
-	cell(when, c.whenW, base, false)
+	cell(when, c.whenW, meta, false)
 	sep()
 	if c.showHost {
 		cell(host, c.hostW, hostStyle, false)
 		sep()
 	}
 	if c.showSess {
-		cell(sess, c.sessW, base, false)
+		cell(sess, c.sessW, meta, false)
 		sep()
 	}
 	if c.showExec {
-		cell(exec, c.execW, base, false)
+		cell(exec, c.execW, execStyle, false)
 		sep()
 	}
-	cell(cmds, c.cmdsW, base, true)
+	cell(cmds, c.cmdsW, norm, true)
 	sep()
 	cell(status, c.statW, statusStyle, false)
 	sep()
 	if c.showDur {
-		cell(dur, c.durW, base, true)
+		cell(dur, c.durW, meta, true)
 		sep()
 	}
 	segs = append(segs, text...)
