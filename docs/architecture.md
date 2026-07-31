@@ -216,6 +216,40 @@ asking first:
 | tokens | `n` | mint an enrollment token, shown once (see below) |
 | tokens | `y` | copy the one just minted |
 | tokens | `x` | cancel an unclaimed token |
+| either | `c` | show, hide, and sort that pane's columns |
+| either | `S` | refetch both lists — the same key that syncs everywhere else, and it reports itself the same way (`refreshing…` → `✓ refreshed`) |
+
+Both panes are **tables** on the shared column machinery (see *Columns* below),
+so each one sorts and hides like every other list and remembers what you chose.
+The machine list opens on *what needs you*: a machine waiting to be approved
+sorts above the working ones, which sort above the revoked. The token list opens
+newest-first — the one you just minted is the one you are looking for. An open
+token's `expires` column counts **down** (`theme.TimeLeft`); the past-tense
+formatter clamps future times to zero, which is how a token with half an hour
+left came to report that it "expires now".
+
+**Nothing on this screen moves unless you ask it to.** A machine running `yore
+setup` elsewhere shows up here as `pending`, so it is tempting to poll — but this
+is also the screen holding a minted token's plaintext, which exists nowhere else
+and is there to be read and copied off. A list that reorders itself under a
+cursor, or a redraw in the middle of a mouse selection, costs more than the wait
+it saves. `S` refetches both lists, and that is the only thing that does.
+
+The **mouse** works here exactly as it does in the other tiled views — click a
+pane to focus it (the same aim `tab` gives the `a`/`x`/`n` keys), wheel to scroll
+the list under the pointer without moving focus, drag the seam to resize, all of
+it still true zoomed. Each of those is one `m.view` case in `mouse.go`; without
+them the events fell through to the browse arm, so a wheel over the machine list
+scrolled the host sidebar of a view that was not on screen and re-ran its query.
+A pending confirmation is drawn in the pane that armed it rather than the focused
+one, so clicking away cannot strand the question on the wrong list.
+
+**`n` mints one token at a time.** A press mints a real standing invitation into
+the group's history, so the key is dead while a mint is in flight (a held key
+would otherwise leave a fistful of live tokens on the server) and while a minted
+token is still on screen (a second banner would bury a plaintext that exists
+nowhere else). The guard clears when the request *lands*, not when it succeeds —
+one failed mint must not disable the key for the session.
 
 The CLI had a second implementation of the machine actions (`devices
 approve|revoke` plus a printed list); two code paths for one dangerous operation
@@ -349,10 +383,10 @@ that rewrote the setting would make an experiment permanent.
 archive and have no status line to be told what was withheld. The rule is that a
 UI may filter only if it can disclose; the scripted path cannot, so it does not.
 
-**Columns** (`columns.go`). The TUI has three row tables — the browse view's
-results, the explorer's prompt list, and that prompt's command list — and each is
-one list of specs saying what a column is called, how wide it is, how it draws a
-cell, and how it orders two rows. The layout, the header, the row renderers and
+**Columns** (`columns.go`). The TUI has five row tables — the browse view's
+results, the explorer's prompt list, that prompt's command list, and the devices
+view's machines and tokens — and each is one list of specs saying what a column
+is called, how wide it is, how it draws a cell, and how it orders two rows. The layout, the header, the row renderers and
 the columns pane are loops over those specs. Each table used to carry its own
 hand-kept trio (a width struct, a header builder, a row builder) that had to agree
 about the set and the order, which is the kind of agreement that lasts until
@@ -360,15 +394,16 @@ someone adds a column — and there were three such trios drifting independently
 
 They generalize because they are the same shape underneath: some fixed metadata
 columns, then one **flexible** column at the end taking what is left and carrying
-the text (a command, or a prompt). `colTableDef` captures that, so the width
-arithmetic and the shedding rules are written once rather than three times in three
-slightly different ways. What stays per-table is what genuinely differs: the cell
+the text (a command, a prompt, a machine's name, a token's hash). `colTableDef`
+captures that, so the width arithmetic and the shedding rules are written once
+rather than once per table in as many slightly different ways. What stays per-table is what genuinely differs: the cell
 gap (1 column in the browse table, 2 in the explorer), the flexible column's
 floor, the order columns give up width in, and the order the table opens in.
 
-`c` raises the **COLUMNS pane** over the table it is aimed at — in the explorer,
-whichever list pane has focus, with the sidebar and details pane aiming at the
-prompt list the view hangs off, the same rule `/` uses. `space` shows or hides a
+`c` raises the **COLUMNS pane** over the table it is aimed at — in the explorer
+and the devices view, whichever list pane has focus, with the explorer's sidebar
+and details pane aiming at the prompt list the view hangs off, the same rule `/`
+uses. `space` shows or hides a
 column; `s` sorts by it, and `s` again reverses, so the key that picks a column is
 the key that flips it. Each table keeps its **own** choices: hiding the session in
 the prompt list says nothing about the browse table's host.
@@ -412,7 +447,8 @@ splits-only callback would have erased the column choices each time a seam moved
 one, because whatever either drops the other silently deletes from the file.
 
 Columns are stored **by name** under a per-table key (`[columns.browse]`,
-`[columns.prompts]`, `[columns.commands]`), because a file that outlives releases
+`[columns.prompts]`, `[columns.commands]`, `[columns.machines]`,
+`[columns.tokens]`), because a file that outlives releases
 cannot hold indexes — index 3 would come to mean a different column the moment one
 is added. Loading is fail-safe the way `redact.yml` and `risk.toml` are: a name
 this build does not have is ignored, a sort naming an unsortable column is dropped,

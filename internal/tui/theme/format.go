@@ -20,11 +20,28 @@ func RelTime(nowMs, thenMs int64) string {
 	if thenMs <= 0 {
 		return Unknown
 	}
-	diff := nowMs - thenMs
-	if diff < 0 {
-		diff = 0
+	return span(max(nowMs-thenMs, 0)/1000, nowMs, thenMs)
+}
+
+// TimeLeft is RelTime's forward-looking twin: how much of a deadline is still
+// to run, in the same compact units, so "expires 25m" reads the way "minted 5m"
+// does. A deadline already passed renders as "now".
+//
+// RelTime cannot answer this. It clamps a future time to zero and calls it
+// "now", which turned a token with 30 minutes left into one that "expires now"
+// — the single most alarming thing it could have said about a token that was
+// perfectly good.
+func TimeLeft(nowMs, thenMs int64) string {
+	if thenMs <= 0 {
+		return Unknown
 	}
-	sec := diff / 1000
+	return span(max(thenMs-nowMs, 0)/1000, nowMs, thenMs)
+}
+
+// span renders a distance of sec seconds in the compact units both directions
+// share, falling back to thenMs as a date once a relative unit stops saying
+// anything useful.
+func span(sec, nowMs, thenMs int64) string {
 	switch {
 	case sec < 1:
 		return "now"

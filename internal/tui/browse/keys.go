@@ -172,6 +172,9 @@ func devicesGroups() []keyhelp.Group {
 			row("g/G", "first/last", "g", "G"),
 			row("tab", "switch pane", "tab", "shift+tab"),
 			row("z", "zoom the pane", "z"),
+			mouseRow("click", "focus a pane"),
+			mouseRow("drag", "resize the panes"),
+			mouseRow("wheel", "scroll under the pointer"),
 		}},
 		{Title: "MACHINES", Rows: []keyhelp.Row{
 			row("a", "approve a pending machine (asks first)", "a"),
@@ -184,8 +187,12 @@ func devicesGroups() []keyhelp.Group {
 			row("y", "copy the one just minted", "y"),
 			row("x", "cancel an unused token (asks first)", "x"),
 		}},
+		// c aims at the focused list, so it is described where focus can be.
+		{Title: "COLUMNS", Rows: []keyhelp.Row{
+			row("c", "show, hide, and sort this list's columns", "c"),
+		}},
 		{Title: "GO", Rows: []keyhelp.Row{
-			row("r", "refetch both lists", "r"),
+			row("S", "refetch both lists from the server", "S"),
 			row("esc/q/D", "back to browsing", "esc", "q", "D"),
 			row("?", "these keys", "?"),
 			row("^c", "quit", "ctrl+c"),
@@ -314,6 +321,7 @@ func (m Model) footerRows() []keyhelp.Row {
 		if m.minted != "" {
 			rows = append([]keyhelp.Row{row("y", "copy the token", "y")}, rows...)
 		}
+		rows = append(rows, row("c", "columns", "c"), row("S", "refresh", "S"))
 		if m.zoom {
 			rows = append(rows, row("z", "unzoom", "z"))
 		}

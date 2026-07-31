@@ -2,9 +2,11 @@ package browse
 
 import (
 	"fmt"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 
 	"yore/internal/proto"
 	"yore/internal/tui/theme"
@@ -38,6 +40,14 @@ type tokensResultMsg struct {
 type mintedMsg struct {
 	info proto.TokenInfo
 	err  error
+}
+
+// enterDevices opens the devices view and fetches both lists.
+func (m Model) enterDevices() (Model, tea.Cmd) {
+	m.view = viewDevices
+	m.devConfirm, m.dpane, m.zoom = "", dpDevices, false
+	m.applyLayout()
+	return m, m.refreshDevicesCmd()
 }
 
 // devicesCmd fetches the enrolled devices.
@@ -179,9 +189,37 @@ func (m Model) handleDevicesKey(s string) (tea.Model, tea.Cmd) {
 	case "G":
 		m.setDevCursor(m.devPaneLen() - 1)
 		return m, nil
-	case "r":
+	case "c":
+		// The columns pane aims at whichever of the two lists has focus, the same
+		// way it aims at the explorer's lists (see colTarget).
+		return m.toggleColumns()
+	case "S":
+		// The same key that syncs from the server everywhere else: here what the
+		// server has to say IS these two lists, so S refetches them — and says so
+		// while it runs and when it lands, the way the browse view's sync does. A
+		// refetch that finished silently was indistinguishable from a key that did
+		// nothing, which is exactly what it looks like when nothing has changed.
+		if m.devRefreshing {
+			return m, nil
+		}
+		m.devRefreshing = true
+		m.flash = "refreshing…" // no expiry tick: replaced when the lists land
+		m.flashID++
 		return m, m.refreshDevicesCmd()
 	case "n": // mint an enrollment token
+		// One at a time, and one on screen at a time. Every press mints a REAL
+		// token — a standing invitation into everything the group can read — so a
+		// held key would leave a fistful of them open on the server; and each new
+		// banner would bury the plaintext of the one before it, which exists
+		// nowhere else and can never be shown again. Dismissing is the second act
+		// that makes minting a second token deliberate.
+		if m.minting {
+			return m, nil
+		}
+		if m.minted != "" {
+			return m.flashOnly("copy or dismiss this token first (y / esc)")
+		}
+		m.minting = true
 		return m, m.mintCmd()
 	case "y": // copy the token that was just minted
 		// The only secret this view ever holds. Every other token is a hash on
@@ -268,10 +306,15 @@ func (m Model) devPaneBox(p devPane, focused bool, w, h int) string {
 	if h < 1 {
 		h = 1
 	}
+	// The pane title carries the list's count and how it has been reshaped: with
+	// no status bar of its own, this pane is the only place an unexpected order or
+	// a switched-off column can say so.
 	if p == dpTokens {
-		return m.titledBox(focused, w, h, "TOKENS", m.devCountSuffix(len(m.tokens)), m.tokenListInner(w, h))
+		return m.titledBox(focused, w, h, "TOKENS",
+			m.listSuffix(ctTokens, m.devCountSuffix(len(m.tokens))), m.tokenListInner(w, h))
 	}
-	return m.titledBox(focused, w, h, "MACHINES", m.devCountSuffix(len(m.devices)), m.deviceListInner(w, h))
+	return m.titledBox(focused, w, h, "MACHINES",
+		m.listSuffix(ctDevices, m.devCountSuffix(len(m.devices))), m.deviceListInner(w, h))
 }
 
 func (m Model) devCountSuffix(n int) string {
@@ -281,54 +324,96 @@ func (m Model) devCountSuffix(n int) string {
 	return fmt.Sprintf("%d", n)
 }
 
-// deviceListInner is the enrolled-machine list, padded to h lines.
+// deviceListInner is the enrolled-machine table, padded to h lines: a column
+// header over one row per machine, windowed on the cursor so a long list scrolls
+// rather than running off the bottom of the pane.
 func (m Model) deviceListInner(w, h int) string {
+	tail := m.devPaneTail(dpDevices)
+	body := maxInt(1, h-len(tail))
+
 	var lines []string
 	switch {
 	case !m.gotDevices:
-		lines = append(lines, m.th.Dim.Render("  loading…"))
+		lines = []string{m.th.Dim.Render("  loading…")}
 	case m.devErr != nil:
-		lines = append(lines, m.th.ExitErr.Render("  "+m.devErr.Error()))
+		lines = []string{m.th.ExitErr.Render("  " + m.devErr.Error())}
 	case len(m.devices) == 0:
-		lines = append(lines, m.th.Dim.Render("  no devices enrolled — run `yore setup`"))
+		lines = []string{m.th.Dim.Render("  no devices enrolled — run `yore setup`")}
 	default:
-		for i, d := range m.devices {
-			lines = append(lines, m.deviceRow(i, d, w))
+		l := m.tableLayout(ctDevices, w)
+		lines = []string{composeSegs(m.tableHeaderSegs(l), false, w, m.th)}
+		rows := maxInt(1, body-1)
+		sel := clampIndex(m.devSel, len(m.devices))
+		now := m.now()
+		top := windowStart(sel, rows, len(m.devices))
+		for i := top; i < len(m.devices) && i < top+rows; i++ {
+			lines = append(lines, m.deviceRow(m.devices[i], l, i == sel && m.dpane == dpDevices, w, now))
 		}
 	}
-	if m.dpane == dpDevices {
-		lines = append(lines, m.devConfirmLines()...)
-	}
-	return padLines(lines, w, h)
+	return stackPane(nil, lines, tail, body, w, h)
 }
 
-// tokenListInner is the enrollment-token list, padded to h lines. A token that
+// tokenListInner is the enrollment-token table, on the same shape. A token that
 // was just minted is shown above it, because that is the only moment its
 // plaintext exists anywhere.
 func (m Model) tokenListInner(w, h int) string {
-	var lines []string
+	var head []string
 	if m.minted != "" {
-		lines = append(lines,
-			m.th.Match.Render("  new token: ")+m.th.Accent.Render(m.minted),
-			m.th.Dim.Render("  valid until "+theme.AbsTime(m.mintedTill)+
+		head = []string{
+			m.th.Match.Render("  new token: ") + m.th.Accent.Render(m.minted),
+			m.th.Dim.Render("  valid until " + theme.AbsTime(m.mintedTill) +
 				" — y copies it, it is never shown again (esc to dismiss)"),
 			"",
-		)
-	}
-	switch {
-	case !m.gotTokens:
-		lines = append(lines, m.th.Dim.Render("  loading…"))
-	case len(m.tokens) == 0:
-		lines = append(lines, m.th.Dim.Render("  no tokens — n mints one for another machine"))
-	default:
-		for i, t := range m.tokens {
-			lines = append(lines, m.tokenRow(i, t, w))
 		}
 	}
-	if m.dpane == dpTokens {
-		lines = append(lines, m.devConfirmLines()...)
+	tail := m.devPaneTail(dpTokens)
+	body := maxInt(1, h-len(head)-len(tail))
+
+	var lines []string
+	switch {
+	case !m.gotTokens:
+		lines = []string{m.th.Dim.Render("  loading…")}
+	case len(m.tokens) == 0:
+		lines = []string{m.th.Dim.Render("  no tokens — n mints one for another machine")}
+	default:
+		l := m.tableLayout(ctTokens, w)
+		lines = []string{composeSegs(m.tableHeaderSegs(l), false, w, m.th)}
+		rows := maxInt(1, body-1)
+		sel := clampIndex(m.tokSel, len(m.tokens))
+		now := m.now()
+		top := windowStart(sel, rows, len(m.tokens))
+		for i := top; i < len(m.tokens) && i < top+rows; i++ {
+			lines = append(lines, m.tokenRow(m.tokens[i], l, i == sel && m.dpane == dpTokens, w, now))
+		}
 	}
-	return padLines(lines, w, h)
+	return stackPane(head, lines, tail, body, w, h)
+}
+
+// stackPane assembles one devices pane: the minted-token banner over the list
+// over the pending question, with only the LIST clipped. padLines would truncate
+// too, but from the bottom — which is the end holding the question the user is
+// being asked.
+func stackPane(head, list, tail []string, body, w, h int) string {
+	out := make([]string, 0, len(head)+len(list)+len(tail))
+	out = append(out, head...)
+	if len(list) > body {
+		list = list[:body]
+	}
+	out = append(out, list...)
+	out = append(out, tail...)
+	return padLines(out, w, h)
+}
+
+// devPaneTail is what stands under a pane's list — the pending confirmation, and
+// only in the pane whose row it is asking about, which is not necessarily the
+// focused one: a click can move focus while a question is armed. It is measured
+// before the list is windowed so the question cannot be pushed off the bottom by
+// the rows it is asking about.
+func (m Model) devPaneTail(p devPane) []string {
+	if m.devConfirmKind != p {
+		return nil
+	}
+	return m.devConfirmLines()
 }
 
 // devConfirmLines is the question standing over the list while an action waits
@@ -360,70 +445,45 @@ func (m Model) devConfirmLines() []string {
 	}
 }
 
-func (m Model) deviceRow(i int, d proto.DeviceInfo, w int) string {
-	cursor := "  "
-	if i == m.devSel && m.dpane == dpDevices {
-		cursor = m.th.Accent.Render("▸ ")
+// deviceRow renders one machine. The fixed cells come from the shared column
+// machinery; the flexible one is the machine's name, in the identity color it
+// carries everywhere else in the UI, followed by the marker for the machine you
+// are sitting at.
+func (m Model) deviceRow(d proto.DeviceInfo, l colLayout, selected bool, w int, now int64) string {
+	th := m.th
+	segs := rowSegs(th, ctDevices, deviceSpecs, l, d, now)
+	if nw := l.w[mcName]; nw > 0 {
+		marker := ""
+		if d.Self {
+			marker = "  (this machine)"
+		}
+		name := truncCols(d.Name, maxInt(1, nw-runewidth.StringWidth(marker)))
+		segs = append(segs, styledSeg{text: name, style: th.Host(d.Name)})
+		if marker != "" {
+			segs = append(segs, styledSeg{text: marker, style: th.Dim})
+		}
+		// Pad the cell out by hand: the marker sits against the name, not against
+		// the far edge of the pane.
+		if pad := nw - runewidth.StringWidth(name) - runewidth.StringWidth(marker); pad > 0 {
+			segs = append(segs, styledSeg{text: strings.Repeat(" ", pad), raw: true})
+		}
 	}
-
-	statusStyle := m.th.Dim
-	switch d.Status {
-	case "active":
-		statusStyle = m.th.ExitOK
-	case "pending":
-		statusStyle = m.th.Match
-	}
-	status := statusStyle.Render(padRight(d.Status, 8))
-
-	name := padRight(truncCols(d.Name, 18), 18)
-	tail := ""
-	if d.Self {
-		tail = m.th.Dim.Render("  (this machine)")
-	} else if d.Code != "" {
-		tail = m.th.Dim.Render("  code " + d.Code)
-	}
-
-	line := cursor + status + " " + m.th.Norm.Render(name) + " " + m.th.Dim.Render(shortID(d.ID)) + tail
-	return clipW(line, w)
+	return composeSegs(segs, selected, w, th)
 }
 
-// tokenRow renders one token: its state, when it was minted, and what became of
-// it. The token itself is not here and cannot be — only its hash was kept.
-func (m Model) tokenRow(i int, t proto.EnrollToken, w int) string {
-	cursor := "  "
-	if i == m.tokSel && m.dpane == dpTokens {
-		cursor = m.th.Accent.Render("▸ ")
+// tokenRow renders one token: its state, when it was minted, what became of it,
+// and its id. The token itself is not here and cannot be — only its hash was
+// kept, which is what the id column shows.
+func (m Model) tokenRow(t proto.EnrollToken, l colLayout, selected bool, w int, now int64) string {
+	th := m.th
+	segs := rowSegs(th, ctTokens, tokenSpecs, l, t, now)
+	if iw := l.w[tcID]; iw > 0 {
+		segs = append(segs, styledSeg{
+			text:  padRight(truncCols(t.ID, iw), iw),
+			style: th.Norm,
+		})
 	}
-
-	style := m.th.Dim
-	switch t.State {
-	case proto.TokenOpen:
-		style = m.th.Match // still live: the one state that is a standing invitation
-	case proto.TokenClaimed:
-		style = m.th.ExitOK
-	case proto.TokenRevoked:
-		style = m.th.ExitErr
-	}
-	state := style.Render(padRight(t.State, 8))
-
-	// What became of it, in one phrase. An open token says how long it has left,
-	// because that is the only thing anyone wants to know about it.
-	var tail string
-	switch t.State {
-	case proto.TokenOpen:
-		tail = "expires " + theme.RelTime(m.now(), t.ExpiresMs)
-	case proto.TokenClaimed:
-		tail = "claimed by " + shortID(t.ClaimedBy) + " " + theme.RelTime(m.now(), t.ClaimedMs)
-	case proto.TokenRevoked:
-		tail = "revoked " + theme.RelTime(m.now(), t.RevokedMs)
-	default:
-		tail = "expired " + theme.RelTime(m.now(), t.ExpiresMs)
-	}
-
-	line := cursor + state + " " + m.th.Norm.Render(padRight(shortID(t.ID), 12)) +
-		" " + m.th.Dim.Render("minted "+theme.RelTime(m.now(), t.CreatedMs)) +
-		m.th.Dim.Render("  "+tail)
-	return clipW(line, w)
+	return composeSegs(segs, selected, w, th)
 }
 
 // shortID trims a ULID or a token hash to a readable prefix for display.

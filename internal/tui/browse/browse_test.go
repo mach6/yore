@@ -3,6 +3,7 @@ package browse
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"regexp"
 	"strconv"
 	"strings"
@@ -1003,10 +1004,13 @@ func TestDevicesPane(t *testing.T) {
 	require.Containsf(t, out, "laptop", "devices view missing device/code:\n%s", out)
 	require.Containsf(t, out, "AB12-CD34", "devices view missing device/code:\n%s", out)
 
-	// Move to the pending device and approve it. Approving asks first, and the
-	// question quotes the verification code: admitting a machine to the group is
-	// only safe if the user checked that code against the one it is showing.
-	m, _ = step(t, m, press("j"))
+	// The pending machine sorts to the top of the list: it is the only row that
+	// is waiting for the user to do something.
+	require.Equal(t, "pending", m.devices[0].Status, "a pending machine leads the list")
+
+	// Approve it. Approving asks first, and the question quotes the verification
+	// code: admitting a machine to the group is only safe if the user checked
+	// that code against the one it is showing.
 	m, _ = step(t, m, press("a"))
 	require.NotEmpty(t, m.devConfirm, "a did not arm an approve confirmation")
 	require.True(t, m.devApproving, "the armed action should be an approval")
@@ -2375,4 +2379,235 @@ func TestMintedTokenCopyYieldsToAConfirmation(t *testing.T) {
 	m, _ = step(t, m, cmd())
 	require.NotEmpty(t, f.tokRevoked, "y confirmed the revoke rather than copying")
 	require.NotContains(t, strip(m.View()), "token copied")
+}
+
+// setDevices replaces the backend's device list, standing in for a machine that
+// enrolled elsewhere since this view was opened.
+func (f *fakeBackend) setDevices(devs ...proto.DeviceInfo) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.devices = proto.DevicesInfo{Devices: devs}
+}
+
+// TestDevicesRefreshOnDemand: S refetches both lists, so a machine that enrolled
+// elsewhere while you were looking at this screen appears without leaving it —
+// and nothing moves under you until you ask for it.
+func TestDevicesRefreshOnDemand(t *testing.T) {
+	m, f := devicesFixture(t)
+	require.Len(t, m.devices, 1)
+
+	f.setDevices(
+		proto.DeviceInfo{ID: "01AAAAAAAAAAAAAAAAAAAAAAAA", Name: "laptop", Status: "active", Self: true},
+		proto.DeviceInfo{ID: "01DDDDDDDDDDDDDDDDDDDDDDDD", Name: "desktop", Status: "pending", Code: "AB12-CD34"},
+	)
+	require.Len(t, m.devices, 1, "the view does not refetch on its own")
+
+	m, cmd := step(t, m, press("S"))
+	require.NotNil(t, cmd, "S should refetch both lists")
+	for _, msg := range collect(cmd) {
+		m, _ = step(t, m, msg)
+	}
+	require.Len(t, m.devices, 2, "S found the machine that enrolled elsewhere")
+	require.Contains(t, strip(m.View()), "desktop")
+}
+
+// TestOpenTokenCountsDownToItsExpiry: a token's remaining life runs FORWARD.
+// Rendering it with the past-tense formatter clamped every future time to zero,
+// so a token with half an hour left announced that it "expires now".
+func TestOpenTokenCountsDownToItsExpiry(t *testing.T) {
+	f := &fakeBackend{
+		resp: mkResp(mkRows("ls")),
+		tokens: proto.TokensInfo{Tokens: []proto.EnrollToken{
+			{ID: "aaaa111122223333", State: proto.TokenOpen, CreatedMs: now - 300_000, ExpiresMs: now + 1_500_000},
+		}},
+	}
+	m := ready(t, f, 120, 30)
+	m, cmd := step(t, m, press("D"))
+	for _, msg := range collect(cmd) {
+		m, _ = step(t, m, msg)
+	}
+
+	l := m.tableLayout(ctTokens, 100)
+	row := strip(m.tokenRow(m.tokens[0], l, false, 100, m.now()))
+	require.Containsf(t, row, "25m", "a token minted 5m ago with a 30m life has 25m left:\n%s", row)
+	require.NotContainsf(t, row, "now", "it does not expire now:\n%s", row)
+}
+
+// TestDetailPaneSurvivesTheDevicesView: the detail pane belongs to the browse
+// view, so it is sized from that view's geometry even while another view is on
+// screen. Sizing it from whatever was on screen squashed it to one column in the
+// devices view — and any refresh landing in that moment re-wrapped its content
+// one character per line, which is the state you came back to.
+func TestDetailPaneSurvivesTheDevicesView(t *testing.T) {
+	const cmd = "go test ./internal/tui/browse"
+	f := &fakeBackend{resp: mkResp(mkRows(cmd))}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: f.resp})
+	want := m.detail.Width
+	require.Greater(t, want, 20, "the browse detail pane is wider than a column")
+
+	m, _ = step(t, m, press("D"))
+	require.Equal(t, viewDevices, m.view)
+	require.Equal(t, want, m.detail.Width, "the detail pane keeps its width while another view is up")
+
+	// A background refresh lands while the devices view is up — the moment that
+	// used to bake the one-column wrapping in.
+	m, _ = step(t, m, queryResultMsg{seq: 2, resp: f.resp})
+	m, _ = step(t, m, press("esc"))
+
+	out := strip(m.View())
+	require.Containsf(t, out, cmd, "the command should be on one line, not stacked:\n%s", out)
+}
+
+// TestDevicesViewMouse: the devices view answers the mouse the way every other
+// multi-pane view does — click to focus, wheel to scroll the pane under the
+// pointer without stealing focus, drag the seam to resize. It used to fall
+// through to the browse arm of every one of those, so a wheel over the machine
+// list moved the *browse* host sidebar and re-ran its query, and dragging the
+// seam moved the browse view's seam instead of this one's.
+func TestDevicesViewMouse(t *testing.T) {
+	f := &fakeBackend{
+		resp: mkResp(mkRows("ls")),
+		devices: proto.DevicesInfo{Devices: []proto.DeviceInfo{
+			{ID: "01AAAAAAAAAAAAAAAAAAAAAAAA", Name: "laptop", Status: "active", Self: true},
+			{ID: "01BBBBBBBBBBBBBBBBBBBBBBBB", Name: "server", Status: "active"},
+			{ID: "01CCCCCCCCCCCCCCCCCCCCCCCC", Name: "builder", Status: "active"},
+		}},
+		tokens: proto.TokensInfo{Tokens: []proto.EnrollToken{
+			{ID: "aaaa111122223333", State: proto.TokenOpen, CreatedMs: now - 60_000, ExpiresMs: now + 600_000},
+			{ID: "bbbb444455556666", State: proto.TokenOpen, CreatedMs: now - 300_000, ExpiresMs: now + 300_000},
+		}},
+	}
+	m := ready(t, f, 120, 30)
+	m, cmd := step(t, m, press("D"))
+	for _, msg := range collect(cmd) {
+		m, _ = step(t, m, msg)
+	}
+	require.Equal(t, dpDevices, m.dpane)
+	hostSel, browseSel := m.hostSel, m.sel
+
+	// Click into the tokens pane: same effect as tab, so the pane keys can be
+	// aimed with the mouse.
+	tok := m.geo.p[dpTokens]
+	m, _ = step(t, m, click(tok.x+10, tok.y+3))
+	require.Equal(t, dpTokens, m.dpane, "clicking the tokens pane did not focus it")
+
+	// The wheel scrolls the pane under the pointer and leaves focus alone.
+	dev := m.geo.p[dpDevices]
+	m, _ = step(t, m, wheelAt(dev.x+10, dev.y+3, tea.MouseButtonWheelDown))
+	require.Positive(t, m.devSel, "the wheel did not scroll the machine list")
+	require.Equal(t, dpTokens, m.dpane, "the wheel must not move focus")
+	m, _ = step(t, m, wheelAt(dev.x+10, dev.y+3, tea.MouseButtonWheelUp))
+	require.Zero(t, m.devSel, "the wheel did not scroll back up")
+
+	m, _ = step(t, m, wheelAt(tok.x+10, tok.y+3, tea.MouseButtonWheelDown))
+	require.Positive(t, m.tokSel, "the wheel did not scroll the token list")
+
+	// None of it touched the browse view underneath.
+	require.Equal(t, hostSel, m.hostSel, "the wheel must not move the browse sidebar")
+	require.Equal(t, browseSel, m.sel, "the wheel must not move the browse table")
+
+	// The seam between the two panes drags, and it is THIS view's seam.
+	seam := m.geo.hDiv
+	m, _ = step(t, m, click(30, seam))
+	require.Equal(t, dragHoriz, m.drag, "clicking the seam did not start a drag")
+	m, _ = step(t, m, dragTo(30, 18))
+	require.Equal(t, 18, m.geo.hDiv, "the seam did not follow the pointer")
+	require.Zero(t, m.splits.BrowseTop, "the browse view's seam must not have moved")
+	require.Equal(t, ratioOf(17, m.midHeight), m.splits.DevicesTop)
+	m, _ = step(t, m, mouseUp(30))
+	require.Equal(t, dragNone, m.drag, "releasing did not end the drag")
+
+	// The ratio survives a resize, like every other seam.
+	m, _ = step(t, m, tea.WindowSizeMsg{Width: 120, Height: 60})
+	require.Equal(t, ratioOf(17, 27), m.splits.DevicesTop)
+	require.Greater(t, m.geo.hDiv, 18, "the split is a proportion, not a row number")
+
+	// And a zoomed pane still takes the wheel: the zoomed rect is parked at that
+	// pane's own index, not at 0.
+	m, _ = step(t, m, press("z"))
+	require.True(t, m.zoom)
+	require.Equal(t, dpTokens, m.dpane, "this is only meaningful off index 0")
+	before := m.tokSel
+	m, _ = step(t, m, wheelAt(10, 5, tea.MouseButtonWheelUp))
+	require.Less(t, m.tokSel, before, "the wheel must still scroll a zoomed devices pane")
+	m, _ = step(t, m, click(10, 5))
+	require.True(t, m.zoom, "clicking inside a zoomed pane must not drop the zoom")
+}
+
+// TestMintCannotBeSpammed: every press of n mints a REAL token — a standing
+// invitation into everything the group can read. Holding the key used to issue
+// one request per repeat, leaving that many live on the server and burying each
+// banner's plaintext under the next, which is the only copy there will ever be.
+func TestMintCannotBeSpammed(t *testing.T) {
+	m, f := devicesFixture(t)
+	m, _ = step(t, m, press("tab"))
+
+	// The first press mints; the ones on top of it, while that request is still
+	// in flight, do nothing at all.
+	m, cmd := step(t, m, press("n"))
+	require.NotNil(t, cmd, "the first n should mint")
+	for range 5 {
+		var again tea.Cmd
+		m, again = step(t, m, press("n"))
+		require.Nil(t, again, "a mint already in flight must swallow further presses")
+	}
+	m, _ = step(t, m, cmd())
+	require.Equal(t, 1, f.mintCalls, "a held key must mint exactly once")
+	require.NotEmpty(t, m.minted)
+
+	// With the token still on screen, n says why it will not mint another rather
+	// than replacing a secret that exists nowhere else.
+	m, cmd = step(t, m, press("n"))
+	require.NotNil(t, cmd, "the refusal should flash")
+	require.Equal(t, 1, f.mintCalls, "n must not clobber the banner")
+	require.Contains(t, strip(m.View()), "dismiss this token first")
+
+	// Dismissing it makes n live again — minting a second token is a deliberate
+	// second act.
+	m, _ = step(t, m, press("esc"))
+	require.Empty(t, m.minted)
+	m, cmd = step(t, m, press("n"))
+	require.NotNil(t, cmd)
+	m, _ = step(t, m, cmd())
+	require.Equal(t, 2, f.mintCalls)
+}
+
+// TestFailedMintReleasesTheKey: the guard is cleared by the request landing, not
+// by it succeeding — otherwise one failed mint would disable n for the session.
+func TestFailedMintReleasesTheKey(t *testing.T) {
+	m, _ := devicesFixture(t)
+	m, _ = step(t, m, press("n"))
+	require.True(t, m.minting)
+
+	m, _ = step(t, m, mintedMsg{err: errors.New("daemon unreachable")})
+	require.False(t, m.minting, "a failed mint must not wedge the key")
+	m, cmd := step(t, m, press("n"))
+	require.NotNil(t, cmd, "n should work again after a failure")
+}
+
+// TestDevicesRefreshSaysSo: S reports itself the way the browse view's sync
+// does — a "refreshing…" while it runs, a "✓ refreshed" when it lands. A
+// refetch that finished silently was indistinguishable from a dead key, which
+// is exactly what it looks like when nothing has changed.
+func TestDevicesRefreshSaysSo(t *testing.T) {
+	m, _ := devicesFixture(t)
+
+	m, cmd := step(t, m, press("S"))
+	require.True(t, m.devRefreshing)
+	require.Contains(t, strip(m.View()), "refreshing…", "S should say it is working")
+
+	// A second S while the first is in flight is swallowed, not stacked.
+	_, again := step(t, m, press("S"))
+	require.Nil(t, again, "a refresh already in flight must swallow further presses")
+
+	for _, msg := range collect(cmd) {
+		m, _ = step(t, m, msg)
+	}
+	require.False(t, m.devRefreshing)
+	require.Contains(t, strip(m.View()), "✓ refreshed", "S should report that it landed")
+
+	// The view's own first load is not an S, so it announces nothing.
+	m2, _ := devicesFixture(t)
+	require.NotContains(t, strip(m2.View()), "refreshed", "loading the view is not a refresh")
 }

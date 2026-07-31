@@ -1,6 +1,7 @@
 package browse
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -637,4 +638,146 @@ func TestColumnHeaderMatchesTheRow(t *testing.T) {
 			"w=%d: a row overflows the table", w)
 		require.Positivef(t, l.w[colCmd], "w=%d: the command column must always keep room", w)
 	}
+}
+
+// --- the devices view's two lists ----------------------------------------
+
+// devPaneLines returns the rendered lines of one devices pane, stripped.
+func devPaneLines(m Model, p devPane) []string {
+	w, h := 116, 12
+	inner := m.deviceListInner(w, h)
+	if p == dpTokens {
+		inner = m.tokenListInner(w, h)
+	}
+	return strings.Split(strip(inner), "\n")
+}
+
+// TestDevicesListsAreTables: both panes of the devices view carry a column
+// header over their rows, and c aims at whichever one has focus.
+func TestDevicesListsAreTables(t *testing.T) {
+	m, _ := devicesFixture(t)
+
+	machines := devPaneLines(m, dpDevices)
+	require.Contains(t, machines[0], "status", "the machine list has a header")
+	require.Contains(t, machines[0], "machine")
+	tokens := devPaneLines(m, dpTokens)
+	require.Contains(t, tokens[0], "state", "the token list has a header")
+	require.Contains(t, tokens[0], "minted")
+	require.Contains(t, tokens[0], "expires")
+
+	m, _ = step(t, m, press("c"))
+	require.Equal(t, ctDevices, m.colTable, "c aims at the focused pane's list")
+	require.Contains(t, strip(m.View()), "machine list")
+	m, _ = step(t, m, press("esc"))
+
+	m, _ = step(t, m, press("tab"))
+	m, _ = step(t, m, press("c"))
+	require.Equal(t, ctTokens, m.colTable)
+	require.Contains(t, strip(m.View()), "token list")
+}
+
+// TestTokenListSortsAndHides: the token list reshapes like every other table,
+// and says on its own pane title that it has been reshaped — the devices view
+// has no status bar to say it anywhere else.
+func TestTokenListSortsAndHides(t *testing.T) {
+	m, _ := devicesFixture(t)
+	require.Equal(t, "aaaa111122223333", m.tokens[0].ID, "newest first is the opening order")
+
+	m, _ = step(t, m, press("tab")) // focus the tokens pane
+	m, _ = step(t, m, press("c"))
+	for m.colSel != tcID {
+		m, _ = step(t, m, press("down"))
+	}
+	m, cmd := step(t, m, press("s"))
+	require.NotNil(t, cmd, "sorting should flash and persist")
+	runBatch(cmd)
+	require.Equal(t, "aaaa111122223333", m.tokens[0].ID, "id ascending starts at aaaa…")
+	m, _ = step(t, m, press("s"))
+	require.Equal(t, "cccc777788889999", m.tokens[0].ID, "s again reverses it")
+
+	// Hiding a column drops it from the header, and the pane title says so.
+	for m.colSel != tcMinted {
+		m, _ = step(t, m, press("up"))
+	}
+	m, _ = step(t, m, press(" "))
+	m, _ = step(t, m, press("esc"))
+	require.NotContains(t, devPaneLines(m, dpTokens)[0], "minted")
+	out := strip(m.View())
+	require.Containsf(t, out, "1 col hidden", "the pane title reports the hidden column:\n%s", out)
+	require.Containsf(t, out, "sort: token", "and the order it is in:\n%s", out)
+}
+
+// TestMachineListSortsByWhatNeedsYou: the machine list opens with the machine
+// waiting for approval on top, because that is the only row asking for anything.
+func TestMachineListSortsByWhatNeedsYou(t *testing.T) {
+	f := &fakeBackend{
+		resp: mkResp(mkRows("ls")),
+		devices: proto.DevicesInfo{Devices: []proto.DeviceInfo{
+			{ID: "01AAAAAAAAAAAAAAAAAAAAAAAA", Name: "laptop", Status: "active", Self: true},
+			{ID: "01BBBBBBBBBBBBBBBBBBBBBBBB", Name: "old-box", Status: "revoked"},
+			{ID: "01CCCCCCCCCCCCCCCCCCCCCCCC", Name: "server", Status: "pending", Code: "AB12-CD34-EF56-GH78-JK90-MN12"},
+		}},
+	}
+	m := ready(t, f, 140, 30)
+	m, cmd := step(t, m, press("D"))
+	for _, msg := range collect(cmd) {
+		m, _ = step(t, m, msg)
+	}
+	require.Equal(t, []string{"server", "laptop", "old-box"}, deviceNames(m),
+		"pending, then working, then thrown out")
+
+	// The code column appears only while a machine is waiting, and it is not
+	// truncated: it exists to be compared character by character.
+	require.Contains(t, devPaneLines(m, dpDevices)[1], "AB12-CD34-EF56-GH78-JK90-MN12")
+
+	// Sorting by machine name is the user's to choose.
+	m, _ = step(t, m, press("c"))
+	for m.colSel != mcName {
+		m, _ = step(t, m, press("down"))
+	}
+	m, _ = step(t, m, press("s"))
+	require.Equal(t, []string{"laptop", "old-box", "server"}, deviceNames(m))
+}
+
+func deviceNames(m Model) []string {
+	out := make([]string, 0, len(m.devices))
+	for _, d := range m.devices {
+		out = append(out, d.Name)
+	}
+	return out
+}
+
+// TestDeviceSortSurvivesARefresh: S refetches both lists, and a refresh that
+// silently restored the server's order would move rows out from under the
+// cursor — including under an armed approve/revoke question.
+func TestDeviceSortSurvivesARefresh(t *testing.T) {
+	m, _ := devicesFixture(t)
+	m, _ = step(t, m, press("tab"))
+	m, _ = step(t, m, press("c"))
+	for m.colSel != tcID {
+		m, _ = step(t, m, press("down"))
+	}
+	m, _ = step(t, m, press("s"))
+	m, _ = step(t, m, press("s")) // id, descending
+	m, _ = step(t, m, press("esc"))
+	require.Equal(t, "cccc777788889999", m.tokens[0].ID)
+
+	m, cmd := step(t, m, press("S"))
+	for _, msg := range collect(cmd) {
+		m, _ = step(t, m, msg)
+	}
+	require.Equal(t, "cccc777788889999", m.tokens[0].ID, "the refresh kept the chosen order")
+}
+
+// TestDevicesChoicesPersist: both new tables are remembered under their own
+// keys, like the other three.
+func TestDevicesChoicesPersist(t *testing.T) {
+	states := defaultColStates()
+	states[ctDevices].hidden[mcID] = true
+	states[ctTokens].sortCol, states[ctTokens].sortDesc = tcExpires, false
+
+	prefs := colPrefsOf(states)
+	require.Equal(t, []string{"id"}, prefs["machines"].Hidden)
+	require.Equal(t, "expires", prefs["tokens"].Sort)
+	require.Equal(t, states, colStatesFrom(prefs), "the round trip is lossless")
 }

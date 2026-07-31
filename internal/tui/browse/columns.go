@@ -35,6 +35,8 @@ const (
 	ctBrowse colTable = iota
 	ctPrompts
 	ctCommands
+	ctDevices
+	ctTokens
 	colTableCount
 )
 
@@ -73,6 +75,24 @@ const (
 	dcCmd
 )
 
+// The devices view's machine list.
+const (
+	mcStatus = iota
+	mcID
+	mcCode
+	mcName
+)
+
+// The devices view's token list.
+const (
+	tcState = iota
+	tcMinted
+	tcExpires
+	tcEnded
+	tcClaimedBy
+	tcID
+)
+
 // colSpec describes one column of a table whose rows are T.
 type colSpec[T any] struct {
 	title string
@@ -80,6 +100,12 @@ type colSpec[T any] struct {
 	right bool // right-aligned: the cells that read as quantities
 	fixed bool // cannot be hidden
 	flex  bool // takes the remaining width; exactly one per table
+
+	// descFirst opens this column descending when it is first sorted on. It is
+	// the recency columns: "newest first" is what a reader means by sorting on
+	// when something happened. A deadline is the exception — the soonest to run
+	// out is the interesting end of that one.
+	descFirst bool
 
 	// cell renders this column's value for one row. The flexible column has none:
 	// its text carries match highlighting and horizontal scroll, which a single
@@ -99,14 +125,15 @@ type colSpec[T any] struct {
 // colMeta is the part of a spec that does not depend on the row type — all the
 // layout, the header and the columns pane ever need.
 type colMeta struct {
-	title    string
-	width    int
-	right    bool
-	fixed    bool
-	flex     bool
-	sortable bool
-	gate     func(Model) bool
-	why      string
+	title     string
+	width     int
+	right     bool
+	fixed     bool
+	flex      bool
+	descFirst bool
+	sortable  bool
+	gate      func(Model) bool
+	why       string
 }
 
 func metasOf[T any](specs []colSpec[T]) []colMeta {
@@ -114,7 +141,8 @@ func metasOf[T any](specs []colSpec[T]) []colMeta {
 	for i, s := range specs {
 		out[i] = colMeta{
 			title: s.title, width: s.width, right: s.right, fixed: s.fixed,
-			flex: s.flex, sortable: s.less != nil, gate: s.gate, why: s.why,
+			flex: s.flex, descFirst: s.descFirst, sortable: s.less != nil,
+			gate: s.gate, why: s.why,
 		}
 	}
 	return out
@@ -127,7 +155,7 @@ func metasOf[T any](specs []colSpec[T]) []colMeta {
 // tag competed for cells with "claude-code" on every agent row.
 var browseSpecs = []colSpec[rec.Record]{
 	{
-		title: "time", width: 8, right: true,
+		title: "time", width: 8, right: true, descFirst: true,
 		cell: func(th *theme.Theme, r rec.Record, now int64) (string, lipgloss.Style) {
 			return theme.RelTime(now, r.StartMs), th.Dim
 		},
@@ -285,6 +313,197 @@ var drillSpecs = []colSpec[rec.Record]{
 	},
 }
 
+// --- the devices view's machine list -------------------------------------
+
+// deviceRank orders machines by what they need from you: a machine waiting to be
+// approved first, then the working ones, then the ones that were thrown out. The
+// raw status strings would order them "active, pending, revoked" alphabetically,
+// which buries the only row that is asking for anything.
+func deviceRank(d proto.DeviceInfo) int {
+	switch d.Status {
+	case "pending":
+		return 0
+	case "active":
+		return 1
+	default:
+		return 2
+	}
+}
+
+func deviceStatusStyle(th *theme.Theme, d proto.DeviceInfo) lipgloss.Style {
+	switch d.Status {
+	case "active":
+		return th.ExitOK
+	case "pending":
+		return th.Match
+	default:
+		return th.Dim
+	}
+}
+
+var deviceSpecs = []colSpec[proto.DeviceInfo]{
+	{
+		title: "status", width: 8,
+		cell: func(th *theme.Theme, d proto.DeviceInfo, _ int64) (string, lipgloss.Style) {
+			return d.Status, deviceStatusStyle(th, d)
+		},
+		less: func(a, b proto.DeviceInfo) bool { return deviceRank(a) < deviceRank(b) },
+	},
+	{
+		title: "id", width: 12,
+		cell: func(th *theme.Theme, d proto.DeviceInfo, _ int64) (string, lipgloss.Style) {
+			return shortID(d.ID), th.Dim
+		},
+		less: func(a, b proto.DeviceInfo) bool { return a.ID < b.ID },
+	},
+	{
+		// 29 wide: the whole verification code, six groups of four (see
+		// syncer.VerificationCode). A truncated one is worse than none — it is here
+		// to be compared character by character against the code the other machine
+		// is showing.
+		title: "code", width: 29,
+		// The verification code, which only a pending machine has. It is shown here
+		// as well as in the approval prompt so the codes can be compared before the
+		// prompt is even raised.
+		cell: func(th *theme.Theme, d proto.DeviceInfo, _ int64) (string, lipgloss.Style) {
+			return d.Code, th.Match
+		},
+		less: func(a, b proto.DeviceInfo) bool { return a.Code < b.Code },
+		gate: func(m Model) bool {
+			for _, d := range m.devices {
+				if d.Code != "" {
+					return true
+				}
+			}
+			return false
+		},
+		why: "no machine is waiting to be approved",
+	},
+	{
+		// The flexible column: a hostname is the one field here with no bound on its
+		// length, and it carries the "(this machine)" marker, which the renderer
+		// appends (see deviceRow).
+		title: "machine", flex: true, fixed: true,
+		less: func(a, b proto.DeviceInfo) bool { return a.Name < b.Name },
+	},
+}
+
+// --- the devices view's token list ---------------------------------------
+
+// tokenRank orders tokens by whether they can still admit a machine: the open
+// ones first, since those are the ones an action (hand it over, or cancel it)
+// can still be taken on.
+func tokenRank(t proto.EnrollToken) int {
+	switch t.State {
+	case proto.TokenOpen:
+		return 0
+	case proto.TokenClaimed:
+		return 1
+	case proto.TokenRevoked:
+		return 2
+	default:
+		return 3
+	}
+}
+
+func tokenStateStyle(th *theme.Theme, t proto.EnrollToken) lipgloss.Style {
+	switch t.State {
+	case proto.TokenOpen:
+		return th.Match // still live: the one state that is a standing invitation
+	case proto.TokenClaimed:
+		return th.ExitOK
+	case proto.TokenRevoked:
+		return th.ExitErr
+	default:
+		return th.Dim
+	}
+}
+
+// tokenEndedMs is when a token stopped being open — claimed or cancelled. Zero
+// while it is still open, or if it simply ran out (that time is its expiry).
+func tokenEndedMs(t proto.EnrollToken) int64 {
+	if t.ClaimedMs > 0 {
+		return t.ClaimedMs
+	}
+	return t.RevokedMs
+}
+
+var tokenSpecs = []colSpec[proto.EnrollToken]{
+	{
+		title: "state", width: 8,
+		cell: func(th *theme.Theme, t proto.EnrollToken, _ int64) (string, lipgloss.Style) {
+			return t.State, tokenStateStyle(th, t)
+		},
+		less: func(a, b proto.EnrollToken) bool { return tokenRank(a) < tokenRank(b) },
+	},
+	{
+		title: "minted", width: 7, right: true, descFirst: true,
+		cell: func(th *theme.Theme, t proto.EnrollToken, now int64) (string, lipgloss.Style) {
+			return theme.RelTime(now, t.CreatedMs), th.Dim
+		},
+		less: func(a, b proto.EnrollToken) bool { return a.CreatedMs < b.CreatedMs },
+	},
+	{
+		// How long this token has LEFT — the one thing anyone wants to know about an
+		// open one. Forward-looking, so it counts down (see theme.TimeLeft); a token
+		// that is no longer open has nothing left to count, and says so.
+		title: "expires", width: 7, right: true,
+		cell: func(th *theme.Theme, t proto.EnrollToken, now int64) (string, lipgloss.Style) {
+			if t.State != proto.TokenOpen {
+				return theme.Unknown, th.Dim
+			}
+			return theme.TimeLeft(now, t.ExpiresMs), th.Dim
+		},
+		less: func(a, b proto.EnrollToken) bool { return a.ExpiresMs < b.ExpiresMs },
+	},
+	{
+		title: "ended", width: 7, right: true, descFirst: true,
+		cell: func(th *theme.Theme, t proto.EnrollToken, now int64) (string, lipgloss.Style) {
+			ms := tokenEndedMs(t)
+			if ms == 0 {
+				return theme.Unknown, th.Dim
+			}
+			return theme.RelTime(now, ms), th.Dim
+		},
+		less: func(a, b proto.EnrollToken) bool { return tokenEndedMs(a) < tokenEndedMs(b) },
+		gate: func(m Model) bool {
+			for _, t := range m.tokens {
+				if tokenEndedMs(t) > 0 {
+					return true
+				}
+			}
+			return false
+		},
+		why: "no token has been used or cancelled",
+	},
+	{
+		title: "claimed by", width: 12,
+		cell: func(th *theme.Theme, t proto.EnrollToken, _ int64) (string, lipgloss.Style) {
+			if t.ClaimedBy == "" {
+				return theme.Unknown, th.Dim
+			}
+			return shortID(t.ClaimedBy), th.Dim
+		},
+		less: func(a, b proto.EnrollToken) bool { return a.ClaimedBy < b.ClaimedBy },
+		gate: func(m Model) bool {
+			for _, t := range m.tokens {
+				if t.ClaimedBy != "" {
+					return true
+				}
+			}
+			return false
+		},
+		why: "no token has admitted a machine",
+	},
+	{
+		// The flexible column, so a wide pane shows more of the id. It is the hash of
+		// the token, never the token: the server keeps no plaintext, so the only
+		// moment the token itself exists is the banner above this list.
+		title: "token", flex: true, fixed: true,
+		less: func(a, b proto.EnrollToken) bool { return a.ID < b.ID },
+	},
+}
+
 // --- the tables ----------------------------------------------------------
 
 // colTableDef is a table's shared geometry and defaults: its columns, the gap
@@ -332,6 +551,20 @@ var colTables = [colTableCount]colTableDef{
 		key: "commands", name: "command list", metas: metasOf(drillSpecs), sep: 2, flexFloor: 12,
 		shed:    []shedStep{{dcDur, 12}},
 		sortCol: dcWhen, sortDesc: false,
+	},
+	ctDevices: {
+		// By status ascending, which deviceRank defines as "whatever needs you
+		// first": the machine waiting for approval opens at the top of the list.
+		key: "machines", name: "machine list", metas: metasOf(deviceSpecs), sep: 2, flexFloor: 12,
+		shed:    []shedStep{{mcID, 16}, {mcCode, 16}},
+		sortCol: mcStatus, sortDesc: false,
+	},
+	ctTokens: {
+		// Newest first: the token you just minted is the one you are looking at the
+		// list to find.
+		key: "tokens", name: "token list", metas: metasOf(tokenSpecs), sep: 2, flexFloor: 12,
+		shed:    []shedStep{{tcEnded, 16}, {tcClaimedBy, 16}, {tcExpires, 16}, {tcMinted, 16}},
+		sortCol: tcMinted, sortDesc: true,
 	},
 }
 
@@ -631,9 +864,9 @@ func (m Model) sortBy(t colTable, c int) (Model, bool) {
 	if m.cols[t].sortCol == c {
 		m.cols[t].sortDesc = !m.cols[t].sortDesc
 	} else {
-		// A time column reads newest-first and everything else smallest-first;
+		// A recency column reads newest-first and everything else smallest-first;
 		// those are the directions each kind is usually wanted in.
-		m.cols[t].sortCol, m.cols[t].sortDesc = c, colTables[t].metas[c].title == "time"
+		m.cols[t].sortCol, m.cols[t].sortDesc = c, colTables[t].metas[c].descFirst
 	}
 	m.reorder(t)
 	return m, true
@@ -690,23 +923,61 @@ func (m *Model) reorder(t colTable) {
 			}
 		}
 		m.infoTop = 0
+	case ctDevices:
+		var selID string
+		if d, ok := m.selectedDevice(); ok {
+			selID = d.ID
+		}
+		m.sortDevices()
+		for i, d := range m.devices {
+			if d.ID == selID {
+				m.devSel = i
+				break
+			}
+		}
+	case ctTokens:
+		var selID string
+		if t, ok := m.selectedToken(); ok {
+			selID = t.ID
+		}
+		m.sortTokens()
+		for i, t := range m.tokens {
+			if t.ID == selID {
+				m.tokSel = i
+				break
+			}
+		}
 	}
 }
 
+// sortDevices and sortTokens put the chosen column's order on top of the order
+// the daemon listed them in. Both lists are re-sorted wherever they are replaced,
+// so a background refresh cannot quietly restore the server's order under a
+// cursor the user placed.
+func (m *Model) sortDevices() { sortRows(deviceSpecs, m.cols[ctDevices], m.devices) }
+
+func (m *Model) sortTokens() { sortRows(tokenSpecs, m.cols[ctTokens], m.tokens) }
+
 // --- the columns pane ----------------------------------------------------
 
-// colTarget is the table the columns pane reshapes: in the explorer, whichever
-// list pane has focus (the sidebar and the details pane have no columns of their
-// own, so they aim at the prompt list the view hangs off — the same rule / uses);
-// everywhere else, the browse table.
+// colTarget is the table the columns pane reshapes: in the explorer and the
+// devices view, whichever list pane has focus (the explorer's sidebar and details
+// pane have no columns of their own, so they aim at the prompt list the view
+// hangs off — the same rule / uses); everywhere else, the browse table.
 func (m Model) colTarget() colTable {
-	if m.view != viewAgents {
-		return ctBrowse
+	switch m.view {
+	case viewAgents:
+		if m.apane == apCommands {
+			return ctCommands
+		}
+		return ctPrompts
+	case viewDevices:
+		if m.dpane == dpTokens {
+			return ctTokens
+		}
+		return ctDevices
 	}
-	if m.apane == apCommands {
-		return ctCommands
-	}
-	return ctPrompts
+	return ctBrowse
 }
 
 // toggleColumns raises or drops the columns pane (the c key). The cursor stays
@@ -855,6 +1126,10 @@ func (m Model) paneLayout(t colTable, fallback int) colLayout {
 		return m.tableLayout(ctPrompts, maxInt(1, m.geo.p[apPrompts].w-2))
 	case ctCommands:
 		return m.tableLayout(ctCommands, maxInt(1, m.geo.p[apCommands].w-2))
+	case ctDevices:
+		return m.tableLayout(ctDevices, maxInt(1, m.geo.p[dpDevices].w-2))
+	case ctTokens:
+		return m.tableLayout(ctTokens, maxInt(1, m.geo.p[dpTokens].w-2))
 	}
 	return m.tableLayout(t, fallback)
 }
@@ -864,13 +1139,17 @@ func (m Model) paneLayout(t colTable, fallback int) colLayout {
 // missing a column has to say so on the pane that holds it — otherwise "oldest
 // first" silently becomes "sorted by duration" and the reader has no way to tell.
 func (m Model) listSuffix(t colTable, base string) string {
+	parts := make([]string, 0, 3)
+	if base != "" {
+		parts = append(parts, base)
+	}
 	if note := m.sortNote(t); note != "" {
-		base += "  " + note
+		parts = append(parts, note)
 	}
 	if n := m.hiddenColCount(t); n > 0 {
-		base += "  " + plural(n, "col") + " hidden"
+		parts = append(parts, plural(n, "col")+" hidden")
 	}
-	return base
+	return strings.Join(parts, "  ")
 }
 
 // sortNote names a table's order for a pane title or the status bar, in words —

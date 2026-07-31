@@ -15,6 +15,14 @@ const wheelStep = 3
 // handleMouse routes a mouse event. A drag in flight owns every motion until the
 // button is released, so the pointer can leave the seam without losing it.
 func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	// The stats screen is one fixed full-frame block: nothing to focus, nothing
+	// to scroll, no seam to grab. It still carries the browse view's geometry
+	// (applyGeometry has no case for it), so without this the wheel moved the
+	// browse sidebar and a drag resized panes nobody could see.
+	if m.view == viewStats {
+		return m, nil
+	}
+
 	switch msg.Action {
 	case tea.MouseActionRelease:
 		// Persist once the drag settles rather than on every motion event: one
@@ -79,6 +87,9 @@ func (m *Model) moveDivider(x, y int) {
 		if m.width < 1 {
 			return
 		}
+		// Only the two split-column views have a vertical seam; the devices view's
+		// panes are full width, so seamAt can never report one there (its vDiv is
+		// -1, which nearSeam rejects).
 		r := clampRatio(ratioOf(x, m.width), minColRatio, maxColRatio)
 		if m.view == viewAgents {
 			m.splits.AgentLeft = r
@@ -90,9 +101,15 @@ func (m *Model) moveDivider(x, y int) {
 			return
 		}
 		r := clampRatio(ratioOf(y-1, m.midHeight), minRowRatio, maxRowRatio)
-		if m.view == viewAgents {
+		switch m.view {
+		case viewAgents:
 			m.splits.AgentTop = r
-		} else {
+		case viewDevices:
+			// The devices view has this seam too, and it is the one it has: MACHINES
+			// over TOKENS. Without its own case the drag moved the browse view's
+			// seam, so the pane under the pointer stayed exactly where it was.
+			m.splits.DevicesTop = r
+		default:
 			m.splits.BrowseTop = r
 		}
 	case dragHosts:
@@ -134,8 +151,17 @@ func (m Model) focusAt(x, y int) (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	if m.view == viewAgents {
+	switch m.view {
+	case viewAgents:
 		m.setAgentPane(agentPane(i))
+		return m, nil
+	case viewDevices:
+		// Same as tab, and the pane keys (a/x/n) follow focus, so a click is how
+		// you aim them with the mouse. A pending confirmation is unaffected: it
+		// belongs to the pane that armed it and is drawn there (see devPaneTail),
+		// so clicking away cannot leave the question stranded on the wrong list.
+		m.dpane = devPane(i)
+		m.applyLayout()
 		return m, nil
 	}
 	m.focus = focus(i)
@@ -164,6 +190,18 @@ func (m Model) wheel(x, y, d int) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.hscroll = 0
+	if m.view == viewDevices {
+		// Move the cursor in the list under the pointer, leaving m.dpane alone —
+		// the same "glancing at a neighbouring pane costs nothing" rule the other
+		// views follow. Falling through to the browse arm scrolled the HOST sidebar
+		// of a view that was not even on screen, and re-ran its query.
+		if devPane(i) == dpTokens {
+			m.tokSel = clampIndex(m.tokSel+d, len(m.tokens))
+		} else {
+			m.devSel = clampIndex(m.devSel+d, len(m.devices))
+		}
+		return m, nil
+	}
 	if m.view == viewAgents {
 		// Scroll the pane the pointer is over, leaving m.apane alone.
 		switch agentPane(i) {

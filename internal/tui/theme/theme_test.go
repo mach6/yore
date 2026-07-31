@@ -148,3 +148,34 @@ func TestDuration(t *testing.T) {
 		})
 	}
 }
+
+// TestTimeLeft is RelTime's forward-looking twin: a deadline counts DOWN. The
+// past-tense formatter clamps every future time to zero, which is how a token
+// with half an hour left came to say it expired "now".
+func TestTimeLeft(t *testing.T) {
+	now := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+	nowMs := now.UnixMilli()
+	in := func(d time.Duration) int64 { return nowMs + int64(d/time.Millisecond) }
+
+	tests := []struct {
+		name string
+		then int64
+		want string
+	}{
+		{"no deadline", 0, Unknown},
+		{"already passed", nowMs - 5000, "now"},
+		{"this instant", nowMs, "now"},
+		{"seconds", in(42 * time.Second), "42s"},
+		{"minutes", in(25 * time.Minute), "25m"},
+		{"half an hour", in(30 * time.Minute), "30m"},
+		{"hours", in(3 * time.Hour), "3h"},
+		{"days", in(2 * 24 * time.Hour), "2d"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := TimeLeft(nowMs, tc.then)
+			require.Equal(t, tc.want, got)
+			require.LessOrEqualf(t, utf8.RuneCountInString(got), 8, "TimeLeft = %q exceeds 8 columns", got)
+		})
+	}
+}

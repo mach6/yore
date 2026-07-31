@@ -303,6 +303,13 @@ type Model struct {
 	// the log, not to disk.
 	minted     string
 	mintedTill int64 // expiry of that token, unix ms
+	// minting is a mint already in flight. Holding n would otherwise issue one
+	// request per repeat and leave that many live tokens on the server.
+	minting bool
+	// devRefreshing is an S refresh in flight, so its result can be announced —
+	// and only its result, since the same message also carries the first load and
+	// the outcome of an approve or revoke.
+	devRefreshing bool
 	// devConfirm is the id of an action awaiting y/n ("" = none); devApproving
 	// and devConfirmKind say which action, on which kind of thing. Every action
 	// here asks first: revoking a device rotates the group's keys, revoking a
@@ -502,8 +509,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.gotDevices = true
 		m.devErr = msg.err
 		m.devices = msg.info.Devices
+		m.sortDevices()
 		if m.devSel >= len(m.devices) {
 			m.devSel = 0
+		}
+		// Report a refresh the user asked for, and only that one: this message also
+		// carries the view's first load and the result of an approve or revoke,
+		// neither of which is a refresh to announce.
+		if m.devRefreshing {
+			m.devRefreshing = false
+			m.flashID++
+			m.flash = "✓ refreshed"
+			if msg.err != nil {
+				m.flash = "refresh failed"
+			}
+			return m, flashTick(m.flashID)
 		}
 		return m, nil
 
@@ -513,12 +533,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.devErr = msg.err // one error line for the view; the panes share it
 		}
 		m.tokens = msg.info.Tokens
+		m.sortTokens()
 		if m.tokSel >= len(m.tokens) {
 			m.tokSel = 0
 		}
 		return m, nil
 
 	case mintedMsg:
+		m.minting = false // the request landed, so n is live again either way
 		if msg.err != nil {
 			m.devErr = msg.err
 			return m, nil
@@ -829,10 +851,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "S":
 		return m.syncNow()
 	case "D":
-		m.view = viewDevices
-		m.devConfirm, m.dpane, m.zoom = "", dpDevices, false
-		m.applyLayout()
-		return m, m.refreshDevicesCmd()
+		mm, cmd := m.enterDevices()
+		return mm, cmd
 	}
 
 	// The agent explorer is interactive (four focusable panes), so it owns its
@@ -2167,9 +2187,17 @@ func (m *Model) applyLayout() {
 	// The detail viewport fills its box interior — which, zoomed, is the whole
 	// frame, so a long record rewraps to the full width instead of staying
 	// wrapped for the tile it came from.
-	dr := m.geo.p[focusDetail]
-	if m.zoom && m.focus != focusDetail {
-		dr = rect{w: tableContent + 2, h: m.detailOuterH}
+	//
+	// It is sized from the BROWSE geometry, not from m.geo, because the detail
+	// pane belongs to the browse view and m.geo describes whichever view is on
+	// screen. Reading m.geo while the devices view was up found the rect no view
+	// but browse lays out at that index — zero — and sized the viewport to one
+	// column. Any refresh landing in that moment (a query result, a token mint)
+	// re-wrapped the pane's content one character per line, and the wrapping is
+	// baked in at SetContent time, so it stayed stacked after coming back.
+	dr := rect{w: rightOuter, h: m.detailOuterH}
+	if m.zoom && m.view == viewBrowse && m.focus == focusDetail {
+		dr = m.geo.p[focusDetail] // zoomed onto the detail pane: the whole frame
 	}
 	m.detail.Width = maxInt(1, dr.w-2)
 	m.detail.Height = maxInt(1, dr.h-2) // the two border rows; the title is in one

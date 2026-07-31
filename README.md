@@ -131,11 +131,15 @@ yore devices                         # back on the enrolled one: pick it, press
                                      # a, and check the code matches
 ```
 
-`yore devices` also lists every enrollment token and what became of it — open,
-claimed (by which machine), expired, or revoked — so an outstanding invitation
-into your history is something you can see and cancel (`x`), not something you
-wait out. `n` mints one there and `y` copies it; it is shown once and never
-again, because the server keeps only its hash.
+`yore devices` also lists every enrollment token and what became of it — open
+(with the time it has left counting down), claimed (by which machine), expired,
+or revoked — so an outstanding invitation into your history is something you can
+see and cancel (`x`), not something you wait out. `n` mints one there and `y`
+copies it; it is shown once and never again, because the server keeps only its
+hash. `S` refetches both lists — the same key that syncs everywhere else — so the
+machine you are waiting on appears without leaving the screen, and nothing on
+that screen moves until you press it, because it is also the screen a token has
+to be read off. `c` sorts or hides either list's columns.
 
 Lost every machine? `yore recover` asks for the recovery phrase and re-enrols
 this one. Client secrets (the device key) live in your **OS keyring**, falling
@@ -175,7 +179,8 @@ leaving everything else — including the agent's own auth — exactly as it was
   you pointed it at — focus it to scroll or `z` it to read the whole thing; `H` cycles the
   host filter from anywhere and `A` the agent, and the host column appears only
   when the rows can disagree about it), and
-  **devices** (`D`). Any pane can
+  **devices** (`D`: enrolled machines over enrollment tokens, both sortable
+  tables; `S` refetches them). Any pane can
   be **expanded to the full terminal** (`z`) or **resized by dragging its
   border** with the mouse — and the sizes you pick are remembered between runs;
   the wheel scrolls whatever the pointer is over. One **time window** (`1`-`5`:
@@ -185,7 +190,8 @@ leaving everything else — including the agent's own auth — exactly as it was
   columns, `e`/`t` filter by the row's executor/tag and `E`/`T` by any you type,
   `H` cycles the host scope, `c` opens a **columns pane** to show, hide, and sort
   by any column of whichever list you are in — the results table, the explorer's
-  prompts, or its commands, each keeping its own choices — `Ctrl+T` tags a row,
+  prompts or its commands, the devices view's machines or tokens, each keeping
+  its own choices — `Ctrl+T` tags a row,
   `S` sync-now; Enter recalls, `y` copies. (yore
   leaves your own `h` alone.) Pane sizes you drag **and the columns you show,
   hide, and sort by** persist to `~/.config/yore/ui.toml` — kept out of your
@@ -275,7 +281,8 @@ in [architecture.md](docs/architecture.md)); all state lives under
 | Force a sync now | `yore sync` (or `S` in `hb`) |
 | Add another machine | `n` in `yore devices` (or `yore devices token`), then `yore setup --token …` there, then approve it with `a` |
 | Approve or revoke a machine | `yore devices` — `a` approves, `x` revokes, both ask first |
-| See which enrollment tokens are outstanding | `yore devices`, tokens pane — open / claimed (by which machine) / expired / revoked; `x` cancels an open one |
+| See which enrollment tokens are outstanding | `yore devices`, tokens pane — open (counting down) / claimed (by which machine) / expired / revoked; `x` cancels an open one |
+| Watch for a machine you are enrolling right now | stay in `yore devices` and press `S` to refetch |
 | Get back in after losing every machine | `yore recover` (needs the recovery phrase) |
 | Diagnose / status | `yore doctor` / `yore status` |
 | Stop the daemon / server | `yore stop` / `yore server stop` |
