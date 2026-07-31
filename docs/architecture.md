@@ -1031,6 +1031,17 @@ device X25519 + Ed25519 keypairs   per machine; private halves never leave it
   diagnosis (with both remedies, since re-pinning from an intercepted network
   would pin the interceptor) instead of a generic connection failure.
 
+**`yore setup` budgets each stretch of talking to the server separately** rather
+than putting one deadline around the whole run. The run stops to ask for a token,
+and fetching one means walking to another machine — a single deadline opened
+before the question expired while the user was answering it, so the enrollment
+that followed failed the instant the token was pasted in, and was reported as the
+server *refusing* it. The prompt asks for the token and says nothing else: it
+used to call itself "the server token for the first machine", which is true only
+of the enrollment that forms the group and is wrong advice on every machine
+after it. A timeout is now named as a timeout, since no amount of minting fresh
+tokens fixes a server that never answered.
+
 Exact byte layouts, domain-separation strings, and the device.key format are in
 `protocol.md`.
 

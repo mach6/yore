@@ -28,19 +28,35 @@ import (
 // to enroll — an already-enrolled machine re-running `yore setup` (to pin a
 // certificate, say) must not be asked for a credential it has no use for.
 //
+// The prompt asks for the token and nothing else. It used to call itself "the
+// server token for the first machine", which is only true for the one enrollment
+// that forms the group and is wrong advice on every machine after it.
+//
 // The token is NOT persisted anywhere: it authorizes exactly one enrollment and
 // is spent by it. Whatever credential a machine needs afterwards is its own
 // device key.
 func resolveToken(tokenFlag string) (string, error) {
 	token := strings.TrimSpace(firstNonEmpty(tokenFlag, os.Getenv("YORE_TOKEN")))
 	if token == "" {
-		token = strings.TrimSpace(prompt("Enrollment token (server token for the first machine): "))
+		token = strings.TrimSpace(prompt("  Enrollment token: "))
 	}
 	if token == "" {
 		return "", errors.New("no enrollment token given")
 	}
 	return token, nil
 }
+
+// serverStepTimeout bounds one stretch of talking to the server. It is a
+// per-stretch budget, never one deadline for a whole run: a run stops to ask
+// for a token, and fetching that token means walking to another machine. A
+// deadline that started before the question was asked expired while the user
+// was answering it, and the enrollment that followed failed instantly — which
+// reads exactly like the server rejecting a token that was in fact perfectly
+// good.
+//
+// A var, not a const, only so a test can shrink it to prove that the enrollment
+// gets a fresh one (see TestRunSetupDoesNotSpendItsBudgetWaitingForTheToken).
+var serverStepTimeout = 60 * time.Second
 
 // resolveServerURL returns the server URL from the flag, then config, then a
 // prompt.
@@ -185,7 +201,7 @@ func runSetup(server, token, name, integration string, pin, clearPin bool) int {
 		cfg.ServerPin = ""
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), serverStepTimeout)
 	defer cancel()
 
 	// Reachability first: a clear "cannot reach server" beats a signature error.
@@ -249,16 +265,28 @@ func runSetup(server, token, name, integration string, pin, clearPin bool) int {
 		u.fail(err.Error())
 		return 1
 	}
-	formed, code, err := sy.Enroll(ctx, name, tkt)
+	// A fresh deadline, starting now: the token prompt above can stand for as
+	// long as it takes to walk to another machine and mint one.
+	ectx, ecancel := context.WithTimeout(context.Background(), serverStepTimeout)
+	defer ecancel()
+	formed, code, err := sy.Enroll(ectx, name, tkt)
 	if err != nil {
-		u.fail("enrollment refused by the server")
-		if isUnauthorized(err) {
+		switch {
+		case isUnauthorized(err):
+			u.fail("enrollment refused by the server")
 			u.note("Tokens are single-use and expire after 30 minutes.")
 			u.note("The server's own token enrolls only while the group has no active device.")
 			fmt.Fprintln(os.Stderr)
 			u.next("mint a fresh token on a machine that is already enrolled:",
 				"yore devices token")
-		} else {
+		case errors.Is(err, context.DeadlineExceeded):
+			// Not a refusal: the server never answered. Saying "refused" here sent
+			// people off to mint another token for a problem no token can fix.
+			u.fail("the server did not answer in time")
+			u.note(err.Error())
+			u.note("If the request did arrive, that token is spent — mint another to retry.")
+		default:
+			u.fail("enrollment failed")
 			u.note(err.Error())
 		}
 		return 1
@@ -297,7 +325,12 @@ func runSetup(server, token, name, integration string, pin, clearPin bool) int {
 		u.fail("deriving recovery key: " + err.Error())
 		return 1
 	}
-	if err := sy.Bootstrap(ctx, rk, salt); err != nil {
+	// Deriving the recovery key is deliberately slow, and on a small machine it
+	// is slow enough to be worth its own budget rather than eating the
+	// enrollment's.
+	bctx, bcancel := context.WithTimeout(context.Background(), serverStepTimeout)
+	defer bcancel()
+	if err := sy.Bootstrap(bctx, rk, salt); err != nil {
 		u.fail("bootstrap: " + err.Error())
 		return 1
 	}

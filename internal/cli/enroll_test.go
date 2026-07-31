@@ -2,10 +2,12 @@ package cli
 
 import (
 	"bytes"
+	"io"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -154,4 +156,46 @@ func TestRunSetupOnEnrolledMachineSavesPinChange(t *testing.T) {
 	require.NoError(t, err, "reload config.toml")
 	require.Empty(t, cfg.ServerPin, "--clear-pin must persist the cleared pin")
 	require.Equal(t, base, cfg.ServerURL, "clearing a pin must not disturb the server URL")
+}
+
+// TestRunSetupDoesNotSpendItsBudgetWaitingForTheToken is the regression test for
+// a freshly minted token being refused the moment it was pasted in.
+//
+// Nothing was wrong with the token: the run opened ONE deadline before prompting
+// for it, and fetching a token means walking to another machine and running
+// `yore devices token` there. By the time it was typed the deadline had expired,
+// so the enrollment POST failed instantly — reported, wrongly, as the server
+// refusing the token. Each stretch of talking to the server gets its own budget,
+// starting when that stretch does.
+func TestRunSetupDoesNotSpendItsBudgetWaitingForTheToken(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("YORE_DIR", dir)
+	base := newSetupServer(t)
+
+	// A budget far shorter than the wait at the prompt, so a deadline opened
+	// before it cannot possibly survive to the enrollment.
+	prevBudget := serverStepTimeout
+	serverStepTimeout = time.Second
+	t.Cleanup(func() { serverStepTimeout = prevBudget })
+
+	r, w, err := os.Pipe()
+	require.NoError(t, err, "stdin pipe")
+	prevStdin := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() {
+		os.Stdin = prevStdin
+		_ = r.Close()
+	})
+	go func() {
+		time.Sleep(2 * time.Second) // the walk to the machine that mints it
+		_, _ = io.WriteString(w, setupTestToken+"\n")
+		_ = w.Close()
+	}()
+
+	require.Equal(t, 0, runSetup(base, "", "test-device", "takeover", false, false),
+		"a token that took longer to fetch than one step's budget must still enroll")
+
+	cfg, err := config.Load(dir)
+	require.NoError(t, err, "load config.toml")
+	require.Equal(t, base, cfg.ServerURL, "the enrollment persisted")
 }
