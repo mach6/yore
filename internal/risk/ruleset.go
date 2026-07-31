@@ -76,7 +76,10 @@ func Compile(specs []Spec, ignore []string) (*Ruleset, []error) {
 		if reason == "" {
 			reason = "matches " + s.Pattern
 		}
-		rs.rules = append(rs.rules, rule{level, category, reason, re.MatchString})
+		// A user rule is a regexp over the command as written: risk.toml
+		// predates the parser and must keep meaning exactly what it says.
+		rs.rules = append(rs.rules, rule{level, category, reason,
+			func(c *cmdline) bool { return re.MatchString(c.raw) }})
 	}
 	for _, pat := range ignore {
 		if strings.TrimSpace(pat) == "" {
@@ -125,12 +128,35 @@ func (rs *Ruleset) Assess(cmd string) Assessment {
 			return Assessment{Level: None, Category: "ignored", Reason: "matches ignore pattern " + re.String()}
 		}
 	}
+	return rs.assess(parse(c, 0))
+}
+
+// maxPayloadDepth bounds how far assessment follows code into code — `sh -c` of
+// a `python -c` of a string. Three is past anything a person writes by hand and
+// keeps a hostile line from costing unbounded work.
+const maxPayloadDepth = 3
+
+// assess scans every rule and keeps the most severe match, then does the same
+// for whatever this command hands to an interpreter, so `sh -c 'rm -rf /'` is
+// rated as the deletion it is rather than as a shell invocation.
+func (rs *Ruleset) assess(c *cmdline) Assessment {
 	best := Assessment{Level: None, Category: "safe", Reason: "no risky pattern matched"}
 	for _, r := range rs.rules {
 		if r.level > best.Level && r.match(c) {
 			best = Assessment{Level: r.level, Category: r.category, Reason: r.reason}
 			if best.Level == Critical {
-				break // nothing outranks critical
+				return best // nothing outranks critical
+			}
+		}
+	}
+	if c.depth >= maxPayloadDepth {
+		return best
+	}
+	for _, p := range c.payloads() {
+		if a := rs.assess(parse(p, c.depth+1)); a.Level > best.Level {
+			best = a
+			if best.Level == Critical {
+				return best
 			}
 		}
 	}

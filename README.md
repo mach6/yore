@@ -215,10 +215,15 @@ leaving everything else — including the agent's own auth — exactly as it was
   server so an agent can query your history back — search, failures, prompts,
   stats, and a history-aware `assess_risk` (*"run 3× across your machines, 1
   failed"*) — **across every machine you own**. `yore doctor` verifies it.
-  Risk rules are yours to extend: `~/.config/yore/risk.toml` adds `[[rule]]`
-  patterns and an `ignore` list on top of the built-ins, fail-safe like
-  `redact.yml`, and the browser and `assess_risk` read the same file. Risk is
-  **advisory** — yore labels commands, it never blocks one.
+  The classifier judges a command by what it would *run*, not by what it
+  contains — the line is parsed into command segments, so `sudo rm -rf /` is an
+  `rm` and `grep -rn "rm -rf" docs/` is a grep — and it covers destructive
+  shell, git, SQL, disk, cloud and IaC, containers, packages and publishing,
+  permissions, accounts, secrets, and system state. Risk rules are yours to
+  extend: `~/.config/yore/risk.toml` adds `[[rule]]` patterns and an `ignore`
+  list on top of the built-ins, fail-safe like `redact.yml`, and the browser and
+  `assess_risk` read the same file. Risk is **advisory** — yore labels commands,
+  it never blocks one.
 - **Secrets redaction** from an editable, fail-safe `~/.config/yore/redact.yml`;
   runs on capture, on import, and on the history seed. It **masks the credential
   and keeps the command** — `export DB_PASSWORD=⟪redacted:generic-token-assign⟫`

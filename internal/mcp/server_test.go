@@ -165,13 +165,13 @@ func TestToolAssessRisk(t *testing.T) {
 // through Options.Risk, and nil Risk means the built-ins alone.
 func TestAssessRiskUsesInjectedRuleset(t *testing.T) {
 	rs, errs := risk.Compile([]risk.Spec{
-		{Pattern: `\bterraform\s+apply\b`, Level: "high", Category: "infra", Reason: "changes infrastructure"},
+		{Pattern: `\bmake\s+deploy\b`, Level: "high", Category: "infra", Reason: "ships to production"},
 	}, nil)
 	require.Empty(t, errs)
 	s := New(fakeQ{rows: sampleRows()}, Options{Version: "test", LocalHost: "laptop", Risk: rs})
 
 	resp := call(t, s, "tools/call", map[string]any{
-		"name": "assess_risk", "arguments": map[string]any{"command": "terraform apply"},
+		"name": "assess_risk", "arguments": map[string]any{"command": "make deploy"},
 	})
 	require.Nil(t, resp.Error)
 	text := resultText(resp.Result)
@@ -179,7 +179,7 @@ func TestAssessRiskUsesInjectedRuleset(t *testing.T) {
 	require.Contains(t, text, "infra")
 
 	resp2 := call(t, newTestServer(), "tools/call", map[string]any{
-		"name": "assess_risk", "arguments": map[string]any{"command": "terraform apply"},
+		"name": "assess_risk", "arguments": map[string]any{"command": "make deploy"},
 	})
 	require.Nil(t, resp2.Error)
 	require.Contains(t, resultText(resp2.Result), "safe", "without injection the built-ins apply")

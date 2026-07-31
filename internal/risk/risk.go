@@ -6,10 +6,12 @@
 //
 // It is intentionally conservative and explainable: every verdict names a
 // category and a short reason, so an agent (or a human) can see WHY.
+//
+// Rules are written against a parsed command (see parse.go), not against the
+// raw string, so they can ask what a line *runs* rather than what it contains.
 package risk
 
 import (
-	"regexp"
 	"strings"
 )
 
@@ -81,48 +83,14 @@ type Assessment struct {
 	Reason   string // short human explanation
 }
 
-// rule is one classifier: a matcher plus the verdict it yields.
+// rule is one classifier: a matcher plus the verdict it yields. The matcher
+// sees the parsed command, so it can distinguish a command from a mention of
+// one; a user rule from risk.toml is a matcher that reads the raw text.
 type rule struct {
 	level    Level
 	category string
 	reason   string
-	match    func(cmd string) bool
-}
-
-func re(pattern string) func(string) bool {
-	r := regexp.MustCompile(pattern)
-	return func(cmd string) bool { return r.MatchString(cmd) }
-}
-
-// rules are scanned in full; the highest-severity match wins (ties keep the
-// first, which is why the table is ordered most-severe first within a level).
-var rules = []rule{
-	// --- Critical: irreversible / destructive ---
-	{Critical, "destructive", "recursive force delete", matchRmRF},
-	{Critical, "destructive", "force-push rewrites remote history", matchGitPushForce},
-	{Critical, "destructive", "hard reset discards work", re(`(?i)\bgit\s+reset\s+--hard\b`)},
-	{Critical, "destructive", "drops a database object", re(`(?i)\bdrop\s+(table|database|schema)\b`)},
-	{Critical, "destructive", "overwrites a raw disk device", re(`(?i)>\s*/dev/(sd|nvme|disk)`)},
-	{Critical, "destructive", "formats a filesystem", re(`(?i)\bmkfs\.`)},
-	{Critical, "destructive", "raw write to a disk device", re(`(?i)\bdd\b.*\bof=/dev/`)},
-
-	// --- High: installs, permissions, remote code execution ---
-	{High, "package-install", "installs packages", matchPackageInstall},
-	{High, "permission", "world-writable permissions", re(`(?i)\bchmod\s+([0-7]*[2367][0-7]*)\b`)},
-	{High, "permission", "recursive ownership change", re(`(?i)\bchown\s+-R\b`)},
-	{High, "script-exec", "pipes a download straight into a shell", re(`(?i)\b(curl|wget)\b[^|]*\|\s*(sudo\s+)?(sh|bash|zsh)\b`)},
-	{High, "script-exec", "executes a local script", re(`(?i)(^|\s)(\./|(sudo\s+)?(bash|sh|zsh)\s+)\S+\.sh\b`)},
-	{High, "destructive", "force-cleans untracked files", re(`(?i)\bgit\s+clean\s+-[a-z]*f`)},
-
-	// --- Medium: privilege, containers, process control ---
-	{Medium, "privilege", "runs as root", re(`(?i)(^|\s)sudo\s`)},
-	{Medium, "container", "removes or kills containers", re(`(?i)\bdocker\s+(rm|kill|stop|prune)\b`)},
-	{Medium, "process", "kills processes", re(`(?i)\b(kill|killall|pkill)\b`)},
-	{Medium, "destructive", "discards git state", re(`(?i)\bgit\s+(reset\b|checkout\s+--\s|stash\s+drop|branch\s+-[dD]\b)`)},
-
-	// --- Low: network / remote reach ---
-	{Low, "network", "reaches the network", re(`(?i)\b(curl|wget|ssh|scp|rsync)\b`)},
-	{Low, "vcs", "pushes to a remote", re(`(?i)\bgit\s+push\b`)},
+	match    func(c *cmdline) bool
 }
 
 // Assess classifies a command against the built-in rules alone. Callers that
@@ -146,56 +114,3 @@ func isNonExecuting(cmd string) bool {
 	}
 	return false
 }
-
-var rmRe = regexp.MustCompile(`(?i)\brm\b`)
-
-// matchRmRF flags rm invocations that are both recursive and forced, in either
-// flag order and whether combined (-rf) or split (-r -f), including long forms.
-func matchRmRF(cmd string) bool {
-	if !rmRe.MatchString(cmd) {
-		return false
-	}
-	recursive := containsFlagLetter(cmd, 'r') || containsFlagLetter(cmd, 'R') || strings.Contains(cmd, "--recursive")
-	force := containsFlagLetter(cmd, 'f') || strings.Contains(cmd, "--force")
-	return recursive && force
-}
-
-// containsFlagLetter reports whether any short-flag cluster (a token starting
-// with a single '-') contains the given letter — so "-rf", "-fr", "-r" all match
-// 'r', without matching a bare word or a long --flag.
-func containsFlagLetter(cmd string, letter byte) bool {
-	for _, tok := range strings.Fields(cmd) {
-		if len(tok) >= 2 && tok[0] == '-' && tok[1] != '-' {
-			if strings.IndexByte(tok[1:], letter) >= 0 {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// matchGitPushForce flags a force push, but not the safer --force-with-lease.
-// (Go's RE2 has no negative lookahead, so this is expressed in code.)
-func matchGitPushForce(cmd string) bool {
-	l := strings.ToLower(cmd)
-	if !strings.Contains(l, "git push") {
-		return false
-	}
-	if strings.Contains(l, "--force-with-lease") {
-		return false
-	}
-	return strings.Contains(l, "--force") || regexpPushShortForce.MatchString(l)
-}
-
-var regexpPushShortForce = regexp.MustCompile(`\bgit\s+push\b[^|;&]*\s-\w*f`)
-
-var pkgRe = regexp.MustCompile(`(?i)\b(` +
-	`npm\s+(i|install|add)|yarn\s+add|pnpm\s+(add|install)|` +
-	`pip3?\s+install|` +
-	`cargo\s+(add|install)|` +
-	`brew\s+install|gem\s+install|` +
-	`go\s+(install|get)|` +
-	`apt(-get)?\s+install|dnf\s+install|yum\s+install|pacman\s+-S\b|apk\s+add` +
-	`)\b`)
-
-func matchPackageInstall(cmd string) bool { return pkgRe.MatchString(cmd) }

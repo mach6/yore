@@ -855,51 +855,102 @@ destructive command touches none of them unless the model volunteers to ask
 first, and nothing obliges it to — or stops it from proceeding when the answer
 comes back `critical`.
 
-**Reaching a verdict** takes three steps. A command that cannot execute anything
+**Reaching a verdict** takes four steps. A command that cannot execute anything
 short-circuits to safe: empty, a `#` comment, an `alias …` definition, or a bare
 `echo`/`printf` — the last only when it holds no `| & ; > <`, backtick, or `$(`,
 so `echo $(rm -rf x)` does not slip through. Then the user's `ignore` patterns
 are tried, and a match returns safe while naming the pattern that silenced it.
-Otherwise every rule is scanned and the highest severity wins; ties keep the
-first, which is why the table is ordered most-severe-first within a level.
+Otherwise the line is parsed (below) and every rule is scanned, highest severity
+winning; ties keep the first, which is why the table is ordered most-severe-first
+within a level. Finally, anything the line hands to an interpreter is assessed
+the same way, recursively.
 
-**The built-in rules** (`risk.go`), 19 of them. Because severity wins over
-order, `sudo npm install` is high (package-install), not medium.
+**A command is judged by what it runs, not by what it contains** (`parse.go`).
+This is the distinction the whole classifier rests on: `grep -rn "rm -rf" docs/`
+and `sh -c 'rm -rf /'` carry the same eight characters and only one of them
+deletes anything. So before any rule runs, the line is lexed into words and cut
+into command *segments* wherever a shell would start a new command — a pipe, a
+`;`, a `&&`, a `$(…)` (even inside double quotes, where it still runs), a
+`find -exec`. Each segment resolves the command word it would actually execute,
+with `sudo`-style wrappers stepped over so `sudo rm -rf /` is an `rm`, quoted
+text kept as inert data, redirection targets pulled out, and **its own flags kept
+to itself** — the `-r` in `grep -rn` is not available to an `rm` three words
+away. Rules then ask "is `kill` the command here?" rather than "does this string
+contain kill", which is what lets `cat kill.txt` and `git commit -m "remove the
+kill switch"` stay safe.
+
+Two consequences are worth stating. A segment carrying `--help`, `--version`, or
+`--dry-run` is *inert*: it announces what it would do, so `npm install --dry-run`
+rates nothing. And quoted text handed to something that will execute it —
+`sh -c '…'`, `python -c '…'` — is re-assessed as the command it becomes, to a
+depth of three; the same text handed to `grep`, which executes nothing, is not.
+
+**The built-in rules** (`rules.go`), 65 of them across four levels. Levels mean
+something specific, and the meaning is what keeps the ramp useful rather than
+uniformly alarming: **critical** is irreversible, **high** is undoable only with
+effort or changes what code runs, **medium** has real but ordinarily recoverable
+side effects, **low** reaches off the machine. Because severity wins over order,
+`sudo npm install` is high (package-install), not medium (privilege).
 
 | Level | Matches | Category |
 |---|---|---|
-| ⛔ critical | `rm` that is both recursive *and* forced (`-rf`, `-fr`, `-r -f`, long forms) | destructive |
-| ⛔ critical | `git push --force` — but not `--force-with-lease` | destructive |
-| ⛔ critical | `git reset --hard` | destructive |
-| ⛔ critical | `DROP TABLE` / `DATABASE` / `SCHEMA` | destructive |
-| ⛔ critical | redirect into a raw disk (`> /dev/sd*`, `nvme*`, `disk*`) | destructive |
-| ⛔ critical | `mkfs.*` | destructive |
-| ⛔ critical | `dd … of=/dev/…` | destructive |
-| ⚠ high | package installs — npm/yarn/pnpm, pip, cargo, brew, gem, `go install`/`get`, apt/dnf/yum/pacman/apk | package-install |
-| ⚠ high | `chmod` to a world- or group-writable mode (a 2, 3, 6, or 7 digit) | permission |
-| ⚠ high | `chown -R` | permission |
-| ⚠ high | `curl`/`wget` piped into a shell | script-exec |
-| ⚠ high | running a local script (`./x.sh`, `bash x.sh`, `sudo sh x.sh`) | script-exec |
-| ⚠ high | `git clean -f` | destructive |
-| ▲ medium | `sudo` | privilege |
-| ▲ medium | `docker rm`/`kill`/`stop`/`prune` | container |
+| ⛔ critical | `rm` both recursive *and* forced (`-rf`, `-fr`, `-r -f`, long forms) | destructive |
+| ⛔ critical | `git push --force`/`--mirror` — but not `--force-with-lease` | destructive |
+| ⛔ critical | remote branch deletion (`git push --delete`, `git push origin :branch`) | destructive |
+| ⛔ critical | `git reset --hard`, `git filter-branch`, `git reflog expire` | destructive |
+| ⛔ critical | `DROP`, `TRUNCATE`, unfiltered `DELETE`/`UPDATE`, `FLUSHALL`, `.drop()` | destructive |
+| ⛔ critical | raw disk writes (`> /dev/sd*`, `dd of=/dev/…`), `mkfs`, `wipefs`, `shred` | destructive |
+| ⛔ critical | `terraform`/`tofu`/`pulumi destroy`, and any apply with `-auto-approve` | infra |
+| ⛔ critical | `kubectl delete namespace`/`--all` | infra |
+| ⛔ critical | cloud deletion — `aws`/`gcloud`/`az`/`doctl` `delete`/`terminate-*`/`rb` | cloud |
+| ⛔ critical | recursive object-store wipes (`aws s3 rm --recursive`) | cloud |
+| ⛔ critical | fork bomb; a shell bound to a socket (`nc -e`, `socat EXEC:`) | script-exec |
+| ⚠ high | package installs — npm/yarn/pnpm/bun, pip/uv/poetry, cargo, go, gem, brew, apt/dnf/yum/pacman/apk/zypper/nix | package-install |
+| ⚠ high | publishing — `npm publish`, `cargo publish`, `gem push`, `docker push`, `twine upload` | supply-chain |
+| ⚠ high | fetch piped into an interpreter; `bash <(curl …)`; `eval "$(curl …)"`; anything piped into a shell | script-exec |
+| ⚠ high | running a local script (`./x.sh`, `bash x.sh`, `. ./setup.sh`) | script-exec |
+| ⚠ high | ephemeral runners — `npx`, `uvx`, `bunx`, `pipx run` | script-exec |
+| ⚠ high | `chmod` granting group/world **write**, or setting setuid/setgid; `chown -R`; `setfacl` | permission |
+| ⚠ high | `git clean -f`; `find -delete`; `rsync --delete`; package *removal* | destructive |
+| ⚠ high | `docker`/`podman` prune, `volume rm`; `kubectl delete`/`drain`; `helm uninstall` | destructive |
+| ⚠ high | partition-table edits (`fdisk`, `parted`, `sgdisk` — but not their `-l`) | destructive |
+| ⚠ high | `crontab -r`, which deletes every scheduled job at once | destructive |
+| ⚠ high | account changes — `useradd`, `userdel`, `usermod`, `passwd`, `visudo` | account |
+| ⚠ high | reading or copying private key material (`~/.ssh/id_*`, `/etc/shadow`, `*.pem`, `.aws/credentials`); `gpg --export-secret-keys` | secret |
+| ⚠ high | firewall teardown — `iptables -F`, `ufw disable`, `setenforce 0` | network |
+| ⚠ high | a container given the host (`--privileged`, `-v /:/host`, the docker socket) | container |
+| ⚠ high | `shutdown`, `reboot`, `init 0` | system |
+| ▲ medium | `sudo`/`doas`; `su`, `pkexec` | privilege |
+| ▲ medium | `docker`/`podman` `rm`/`kill`/`stop`/`down` | container |
 | ▲ medium | `kill`, `killall`, `pkill` | process |
-| ▲ medium | `git reset`, `git checkout -- `, `git stash drop`, `git branch -d` | destructive |
-| • low | `curl`, `wget`, `ssh`, `scp`, `rsync` | network |
+| ▲ medium | `git reset`, `restore`, `checkout --`, `stash drop`/`clear`, `branch -d`, `tag -d`, `gc`; `rebase`, `cherry-pick`, `commit --amend` | destructive |
+| ▲ medium | `truncate`, and a bare `> file` redirect with no command producing content | destructive |
+| ▲ medium | `systemctl stop`/`disable`/`mask`; `crontab -e`, `at` | system |
+| ▲ medium | piping local output into a request body (`… \| curl -d @-`) | network |
+| ▲ medium | `terraform apply`, `kubectl apply`, `helm install`, `ansible-playbook` | infra |
+| ▲ medium | running an executable out of the working directory (`./configure`) | script-exec |
+| • low | `curl`, `wget`, `ssh`, `scp`, `rsync`, `nc`, `telnet` | network |
 | • low | `git push` | vcs |
+| • low | a credential typed into the environment (`FOO_TOKEN=…`) | secret |
 
-Two rules live in Go rather than in a regexp, and both for the same reason —
-being right matters more than being uniform. `rm` demands recursive *and* force
-in the flag clusters, so `rm -r` alone is not critical; and `git push --force`
+Rules live in Go rather than in regexps wherever being right matters more than
+being uniform, which is most of them. `chmod` is the clearest case: only the
+group and other digits can grant anyone a write bit, so `644`, `755`, and `600`
+— the three most common modes there are — must not be flagged while `chmod -R
+777` must, and no single pattern gets both ends of that right. `git push --force`
 carves out `--force-with-lease`, which RE2 cannot express without negative
-lookahead and which would otherwise flag the *safe* form as the most dangerous
-thing in the table.
+lookahead and which would otherwise rate the *safe* form as the most dangerous
+thing in the table. SQL is matched by content, but only where SQL would actually
+execute — handed to a database client, or typed as the whole line — so
+`git commit -m "drop table support"` is a commit message and not a dropped table.
 
-**What it does not see.** Matching is over the raw command string, with no shell
-parsing: a dangerous command quoted inside a harmless one still trips its rule,
-and one hidden behind an alias or a `Makefile` target does not trip anything.
-This is the deliberate trade — a classifier that is wrong in an obvious,
-inspectable direction beats one that is wrong subtly.
+**What it does not see.** The parser resolves command position, not semantics.
+A command behind an alias, a `Makefile` target, or a variable holding a program
+name trips nothing; neither does one carried inside `docker exec web …` or
+`ssh host …`, where the remote command is an argument this classifier does not
+follow. This stays the deliberate trade — a classifier that is wrong in an
+obvious, inspectable direction beats one that is wrong subtly — and `risk.toml`
+is where a team closes the gaps that matter to them.
 
 **Risk rules are the user's.** The built-in table ships compiled in;
 `~/.config/yore/risk.toml` extends it — `[[rule]]` entries with a Go regexp, a

@@ -38,17 +38,17 @@ func TestLevelGlyph(t *testing.T) {
 // the built-in's category and reason, and omitted fields get defaults.
 func TestRulesetUserRules(t *testing.T) {
 	rs, errs := Compile([]Spec{
-		{Pattern: `\bkubectl\s+delete\b`, Level: "high", Category: "destructive", Reason: "deletes k8s resources"},
+		{Pattern: `\bmake\s+deploy\b`, Level: "high", Category: "destructive", Reason: "ships to production"},
 		{Pattern: `\bgit\s+push\b`, Level: "critical"},       // escalates a built-in Low
 		{Pattern: `\bssh\b`, Level: "low", Category: "mine"}, // ties the built-in Low
-		{Pattern: `\bterraform\s+apply\b`, Level: "medium"},  // defaults
+		{Pattern: `\bflyctl\s+scale\b`, Level: "medium"},     // defaults
 	}, nil)
 	require.Empty(t, errs)
 
-	a := rs.Assess("kubectl delete pod web-1")
+	a := rs.Assess("make deploy")
 	require.Equal(t, High, a.Level)
 	require.Equal(t, "destructive", a.Category)
-	require.Equal(t, "deletes k8s resources", a.Reason)
+	require.Equal(t, "ships to production", a.Reason)
 
 	require.Equal(t, Critical, rs.Assess("git push origin main").Level,
 		"a user rule may escalate a built-in verdict")
@@ -57,12 +57,12 @@ func TestRulesetUserRules(t *testing.T) {
 	require.Equal(t, Low, a.Level)
 	require.Equal(t, "network", a.Category, "a same-level tie keeps the built-in's verdict")
 
-	a = rs.Assess("terraform apply")
+	a = rs.Assess("flyctl scale count 3")
 	require.Equal(t, Medium, a.Level)
 	require.Equal(t, "user", a.Category)
-	require.Equal(t, `matches \bterraform\s+apply\b`, a.Reason)
+	require.Equal(t, `matches \bflyctl\s+scale\b`, a.Reason)
 
-	require.Equal(t, None, DefaultRuleset().Assess("terraform apply").Level,
+	require.Equal(t, None, DefaultRuleset().Assess("flyctl scale count 3").Level,
 		"user rules must not leak into the default ruleset")
 }
 
@@ -111,20 +111,21 @@ func TestRulesetLoad(t *testing.T) {
 ignore = ['^terraform destroy -target=staging$']
 
 [[rule]]
-pattern = '(?i)\bkubectl\s+delete\b'
+pattern = '(?i)\bmake\s+deploy\b'
 level   = "high"
-reason  = "deletes k8s resources"
+reason  = "ships to production"
 `), 0o644))
 	rs, errs = Load(dir)
 	require.Empty(t, errs)
-	require.Equal(t, High, rs.Assess("kubectl delete deploy web").Level)
-	require.Equal(t, None, rs.Assess("terraform destroy -target=staging").Level)
+	require.Equal(t, High, rs.Assess("make deploy").Level)
+	require.Equal(t, None, rs.Assess("terraform destroy -target=staging").Level,
+		"an ignore de-escalates even a built-in critical")
 
 	require.NoError(t, os.WriteFile(config.RiskPath(dir), []byte("not = [valid toml"), 0o644))
 	rs, errs = Load(dir)
 	require.Len(t, errs, 1, "a broken file is one warning, not a failure")
 	require.Equal(t, Critical, rs.Assess("rm -rf /").Level, "and the built-ins stay on")
-	require.Equal(t, None, rs.Assess("kubectl delete deploy web").Level)
+	require.Equal(t, None, rs.Assess("make deploy").Level)
 
 	sub := filepath.Join(dir, "unreadable")
 	require.NoError(t, os.Mkdir(sub, 0o755))
