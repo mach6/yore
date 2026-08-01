@@ -1,0 +1,208 @@
+# yore fleet — a 22-container sandbox: one multi-tenant sync server and TWENTY
+# client machines, spread over eight Linux distributions and split evenly
+# between zsh and bash.
+#
+#   server            the sync server, hosting TWO tenants (two users):
+#                     "alice" and "bob", each its own isolated history group
+#                     with its own database under /data/tenants/.
+#   a01..a10          alice's ten machines
+#   b01..b10          bob's ten machines
+#
+# The point of two tenants is that yore's isolation is testable: alice's nodes
+# must converge on alice's history and must NEVER see bob's, even though every
+# node talks to the same server process over the same network.
+#
+# Everything is internal to the Docker network — nothing is published to the
+# host, and the server never holds anything but ciphertext.
+#
+#   docker compose -f docker/sandbox/fleet.yml down -v      # ALWAYS reset first
+#   docker compose -f docker/sandbox/fleet.yml up -d --build
+#   docker/sandbox/fleet.sh                                 # the harness does both
+#
+# Reset with `down -v`, never plain `down`: a tenant that already has an active
+# device refuses its bootstrap token by design, and the containers' device keys
+# die with them, so a reused volume leaves an orphaned group nothing can enroll
+# into.
+name: yore-fleet
+
+# Every node is identical apart from its base image, hostname, and which shell
+# it *is*. YORE_SHELL is read by the harness (which shell to drive); the yore
+# hooks are wired into both rc files by the image.
+x-node: &node
+  init: true # tini reaps the hook's orphaned record processes
+  tty: true
+  stdin_open: true
+  depends_on: [server]
+  networks: [yore]
+
+services:
+  server:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile
+    # The distroless image runs as nonroot; a fresh named volume is root-owned,
+    # so the sandbox server runs as root to write /data. In production, give the
+    # volume nonroot ownership instead.
+    user: "0:0"
+    environment:
+      # Named tenants: one server process, one isolated database per user under
+      # /data/tenants/<name>.db. Each token bootstraps only its own tenant, and
+      # only while that tenant has no active device.
+      YORE_TOKENS_FILE: /tokens.json
+      YORE_BACKUP_INTERVAL: 5m
+    volumes:
+      - ./fleet-tokens.json:/tokens.json:ro
+      - server-data:/data
+    networks: [yore]
+
+  # --- alice: ten machines ------------------------------------------------
+  a01:
+    <<: *node
+    build: &alpine
+      context: ../..
+      dockerfile: docker/sandbox/Dockerfile.node
+      args: {BASE_IMAGE: "alpine:3.20"}
+    hostname: alice-alpine-zsh-01
+    environment: {YORE_SERVER: "http://server:8080", YORE_INTEGRATION: takeover, YORE_SHELL: zsh, YORE_TENANT: alice}
+
+  a02:
+    <<: *node
+    build: &debian
+      context: ../..
+      dockerfile: docker/sandbox/Dockerfile.node
+      args: {BASE_IMAGE: "debian:12-slim"}
+    hostname: alice-debian-bash-02
+    environment: {YORE_SERVER: "http://server:8080", YORE_INTEGRATION: takeover, YORE_SHELL: bash, YORE_TENANT: alice}
+
+  a03:
+    <<: *node
+    build: &ubuntu
+      context: ../..
+      dockerfile: docker/sandbox/Dockerfile.node
+      args: {BASE_IMAGE: "ubuntu:24.04"}
+    hostname: alice-ubuntu-zsh-03
+    environment: {YORE_SERVER: "http://server:8080", YORE_INTEGRATION: takeover, YORE_SHELL: zsh, YORE_TENANT: alice}
+
+  a04:
+    <<: *node
+    build: &fedora
+      context: ../..
+      dockerfile: docker/sandbox/Dockerfile.node
+      args: {BASE_IMAGE: "fedora:41"}
+    hostname: alice-fedora-bash-04
+    environment: {YORE_SERVER: "http://server:8080", YORE_INTEGRATION: takeover, YORE_SHELL: bash, YORE_TENANT: alice}
+
+  a05:
+    <<: *node
+    build: &alma
+      context: ../..
+      dockerfile: docker/sandbox/Dockerfile.node
+      args: {BASE_IMAGE: "almalinux:9"}
+    hostname: alice-alma-zsh-05
+    environment: {YORE_SERVER: "http://server:8080", YORE_INTEGRATION: coexist, YORE_SHELL: zsh, YORE_TENANT: alice}
+
+  a06:
+    <<: *node
+    build: &arch
+      context: ../..
+      dockerfile: docker/sandbox/Dockerfile.node
+      args: {BASE_IMAGE: "archlinux:base"}
+    hostname: alice-arch-bash-06
+    environment: {YORE_SERVER: "http://server:8080", YORE_INTEGRATION: takeover, YORE_SHELL: bash, YORE_TENANT: alice}
+
+  a07:
+    <<: *node
+    build: &suse
+      context: ../..
+      dockerfile: docker/sandbox/Dockerfile.node
+      args: {BASE_IMAGE: "opensuse/leap:15.6"}
+    hostname: alice-suse-zsh-07
+    environment: {YORE_SERVER: "http://server:8080", YORE_INTEGRATION: takeover, YORE_SHELL: zsh, YORE_TENANT: alice}
+
+  a08:
+    <<: *node
+    build: &alpedge
+      context: ../..
+      dockerfile: docker/sandbox/Dockerfile.node
+      args: {BASE_IMAGE: "alpine:edge"}
+    hostname: alice-alpedge-bash-08
+    environment: {YORE_SERVER: "http://server:8080", YORE_INTEGRATION: takeover, YORE_SHELL: bash, YORE_TENANT: alice}
+
+  a09:
+    <<: *node
+    build: *debian
+    hostname: alice-debian-zsh-09
+    environment: {YORE_SERVER: "http://server:8080", YORE_INTEGRATION: takeover, YORE_SHELL: zsh, YORE_TENANT: alice}
+
+  a10:
+    <<: *node
+    build: *ubuntu
+    hostname: alice-ubuntu-bash-10
+    environment: {YORE_SERVER: "http://server:8080", YORE_INTEGRATION: coexist, YORE_SHELL: bash, YORE_TENANT: alice}
+
+  # --- bob: ten machines --------------------------------------------------
+  b01:
+    <<: *node
+    build: *fedora
+    hostname: bob-fedora-zsh-01
+    environment: {YORE_SERVER: "http://server:8080", YORE_INTEGRATION: takeover, YORE_SHELL: zsh, YORE_TENANT: bob}
+
+  b02:
+    <<: *node
+    build: *alpine
+    hostname: bob-alpine-bash-02
+    environment: {YORE_SERVER: "http://server:8080", YORE_INTEGRATION: takeover, YORE_SHELL: bash, YORE_TENANT: bob}
+
+  b03:
+    <<: *node
+    build: *arch
+    hostname: bob-arch-zsh-03
+    environment: {YORE_SERVER: "http://server:8080", YORE_INTEGRATION: takeover, YORE_SHELL: zsh, YORE_TENANT: bob}
+
+  b04:
+    <<: *node
+    build: *alma
+    hostname: bob-alma-bash-04
+    environment: {YORE_SERVER: "http://server:8080", YORE_INTEGRATION: takeover, YORE_SHELL: bash, YORE_TENANT: bob}
+
+  b05:
+    <<: *node
+    build: *suse
+    hostname: bob-suse-bash-05
+    environment: {YORE_SERVER: "http://server:8080", YORE_INTEGRATION: coexist, YORE_SHELL: bash, YORE_TENANT: bob}
+
+  b06:
+    <<: *node
+    build: *ubuntu
+    hostname: bob-ubuntu-zsh-06
+    environment: {YORE_SERVER: "http://server:8080", YORE_INTEGRATION: takeover, YORE_SHELL: zsh, YORE_TENANT: bob}
+
+  b07:
+    <<: *node
+    build: *debian
+    hostname: bob-debian-bash-07
+    environment: {YORE_SERVER: "http://server:8080", YORE_INTEGRATION: takeover, YORE_SHELL: bash, YORE_TENANT: bob}
+
+  b08:
+    <<: *node
+    build: *alpedge
+    hostname: bob-alpedge-zsh-08
+    environment: {YORE_SERVER: "http://server:8080", YORE_INTEGRATION: takeover, YORE_SHELL: zsh, YORE_TENANT: bob}
+
+  b09:
+    <<: *node
+    build: *fedora
+    hostname: bob-fedora-bash-09
+    environment: {YORE_SERVER: "http://server:8080", YORE_INTEGRATION: coexist, YORE_SHELL: bash, YORE_TENANT: bob}
+
+  b10:
+    <<: *node
+    build: *arch
+    hostname: bob-arch-zsh-10
+    environment: {YORE_SERVER: "http://server:8080", YORE_INTEGRATION: takeover, YORE_SHELL: zsh, YORE_TENANT: bob}
+
+volumes:
+  server-data:
+
+networks:
+  yore:

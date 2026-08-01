@@ -37,6 +37,8 @@ freebsd/amd64. WSL runs the linux binaries; native Windows is not yet supported.
 | `make drone` | Run the Drone pipeline locally (needs the `drone` CLI + Docker). Scope it with `make drone steps=lint,test`. |
 | `make docker` | Build the server image from `docker/Dockerfile`. |
 | `make bench` | Store / matcher / crypto benchmarks. |
+| `make stress` | End-to-end harness against the 3-container sandbox: records, redacts, syncs, and verifies. `N=150` is a ~20 s smoke once the images are cached (a couple of minutes the first time, when it compiles yore into the client image); the default `N=5000` is a real run. |
+| `make fleet` | The same at scale: 20 machines, 8 distributions, 2 users on one multi-tenant server. Minutes, and it pulls ~2 GB of base images the first time. |
 
 Before pushing, the quick loop is:
 
@@ -102,13 +104,31 @@ use the containerized sandbox in [`docker/sandbox/`](docker/sandbox/): a sync
 server plus a zsh client and a bash client, all in containers. See its
 [`README.md`](docker/sandbox/README.md) for the compose workflow.
 
+**Run `make stress N=150` before merging anything that touches recording,
+redaction, the daemon, sync, or the shell integration.** It takes about twenty
+seconds, tears itself down afterwards, and it is the only thing that exercises
+the CLI the way a user does. Unit tests do not: the harness has twice been the
+thing that noticed a subcommand had been removed from under it, and both times
+only because someone ran it. Nothing runs it for you — neither harness is in CI
+(they need Docker and minutes, and `.drone.yml` deliberately stays fast).
+
+For a change to sync, multi-user isolation, or anything whose behavior depends
+on scale, `make fleet TOTAL=20000` covers ground the 3-container sandbox cannot:
+twenty machines across eight Linux distributions, split between two users on one
+multi-tenant server, with cross-user isolation and per-record accounting.
+
 ## Submitting a change
 
 1. Branch off `main`.
 2. Make the change with tests and doc updates.
 3. Run `make lint && make test && make coverage-check` (or `make drone` for the
    full pipeline) until green.
-4. Open a PR with a clear description of the behavior change and its rationale.
+4. If you touched recording, redaction, the daemon, sync, or the shell
+   integration, run `make stress N=150` as well.
+5. Open a PR with a clear description of the behavior change and its rationale.
+   Call out any change to a **default** explicitly — an existing user who never
+   set the key gets the new behavior on upgrade, and that belongs in the PR
+   description whether or not the code change looks small.
 
 By contributing you agree that your contributions are licensed under the
 project's [MIT License](LICENSE).

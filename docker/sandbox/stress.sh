@@ -150,11 +150,18 @@ dc bash yore setup --server http://server:8080 --token "$TOKEN" \
      --integration takeover --name bash-box >/dev/null
 ok "bash-box registered (pending)"
 
-# Parse the pending device id from `yore devices` on the already-enrolled host.
-PENDING_ID="$(dc zsh yore devices | awk '$2=="pending"{print $1; exit}')"
+# Approving is a keypress in the devices view, which a script cannot press. The
+# view is one client of the daemon's protocol — newline-delimited JSON on a unix
+# socket — and so is this: `devices` to find the pending machine, `approve` to
+# admit it. socat and jq both run INSIDE the container (the client image carries
+# them), so the harness still needs nothing on the host but docker.
+dsock() { # dsock <request-json> [jq-filter]
+  dc zsh sh -c "printf '%s\n' '$1' | socat -t 30 - UNIX-CONNECT:/root/.config/yore/daemon.sock${2:+ | jq -r '$2'}"
+}
+PENDING_ID="$(dsock '{"op":"devices"}' '.devices.devices[] | select(.status=="pending") | .id' | head -1 | tr -d '\r')"
 if [ -z "$PENDING_ID" ]; then bad "could not find pending device id"; exit 1; fi
 note "pending device id: $PENDING_ID"
-printf 'y\n' | dc zsh yore devices approve "$PENDING_ID" >/dev/null
+dsock "{\"op\":\"approve\",\"device_id\":\"$PENDING_ID\"}" >/dev/null
 ok "bash-box approved from zsh-box"
 
 # Configure ignore-dir + a short backup interval into each host's config BEFORE
@@ -335,18 +342,22 @@ else
   bad "dropped-count sanity: stored count off by more than ±$TOL"
 fi
 
-# --- 5e. Tags -------------------------------------------------------------
-tag_count() { dc zsh yore search --headless --scope local --limit "$BIGLIMIT" --tag "$1" 2>/dev/null | grep -c "$ZMARK" || true; }
-n_cc="$(tag_count claude-code)"
-n_sa="$(tag_count stress-agent)"
-n_ai="$(tag_count aider)"
-note "tag claude-code : $n_cc (planted $TC)"
-note "tag stress-agent: $n_sa (planted $TS)"
-note "tag aider       : $n_ai (planted $TA)"
+# --- 5e. Agent attribution -------------------------------------------------
+# $CLAUDECODE / $AIDER_MODEL / $YORE_TAG all name the agent that RAN the
+# command, which yore records as its executor. Executors are not user tags:
+# --tag filters labels the user applied with `yore tag`, and would find none of
+# these.
+exec_count() { dc zsh yore search --headless --scope local --limit "$BIGLIMIT" --executor "$1" 2>/dev/null | grep -c "$ZMARK" || true; }
+n_cc="$(exec_count claude-code)"
+n_sa="$(exec_count stress-agent)"
+n_ai="$(exec_count aider)"
+note "executor claude-code : $n_cc (planted $TC)"
+note "executor stress-agent: $n_sa (planted $TS)"
+note "executor aider       : $n_ai (planted $TA)"
 if within "$n_cc" "$TC" "$TOL" && within "$n_sa" "$TS" "$TOL" && within "$n_ai" "$TA" "$TOL"; then
-  ok "tags: claude-code/stress-agent/aider counts match planted (±$TOL)"
+  ok "attribution: claude-code/stress-agent/aider executor counts match planted (±$TOL)"
 else
-  bad "tags: a tag count diverges from planted"
+  bad "attribution: an executor count diverges from planted"
 fi
 
 # --- 5f. Performance -------------------------------------------------------

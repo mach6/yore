@@ -56,9 +56,16 @@ dc bash yore setup --server http://server:8080 --token "$TOKEN" \
       --integration takeover --name bash-box
 
 # 4) From the already-enrolled zsh-box, confirm the code matches and approve.
-#    (approve prompts y/N — feed 'y' since we exec with -T)
-dc zsh yore devices                       # shows bash-box pending + its code
-printf 'y\n' | dc zsh yore devices approve <BASH_DEVICE_ID>
+#    `yore devices` opens the browser's devices pane: bash-box is at the top,
+#    with its code; check it matches, press `a`, confirm.
+docker compose -f docker/sandbox/compose.yml exec zsh yore devices
+
+#    Scripting it instead? The pane is one client of the daemon's protocol —
+#    newline-delimited JSON on a unix socket — and so is socat:
+sock=/root/.config/yore/daemon.sock
+ID=$(dc zsh sh -c "printf '{\"op\":\"devices\"}\n' | socat -t 30 - UNIX-CONNECT:$sock" \
+       | jq -r '.devices.devices[] | select(.status=="pending") | .id')
+dc zsh sh -c "printf '{\"op\":\"approve\",\"device_id\":\"$ID\"}\n' | socat -t 30 - UNIX-CONNECT:$sock"
 
 # 5) Record a command on zsh-box and push it.
 printf 'echo hello-from-zsh-box' | dc zsh yore record --cwd /root --exit 0
@@ -153,3 +160,77 @@ docker/sandbox/stress.sh --keep
 By default the harness always tears the sandbox down (via an `EXIT` trap, even on
 failure) and confirms `docker ps` is left clean. Pass `--keep` / `KEEP=1` to leave
 it running for inspection.
+
+## The fleet (`fleet.yml` + `fleet.sh`) — twenty machines, two users
+
+The three-container sandbox above is the one you poke at by hand. `fleet.yml` is
+the same idea at the scale yore is actually meant for: **twenty client machines,
+eight Linux distributions, ten zsh and ten bash, split between TWO users** who
+share one server and must never see each other's history.
+
+| tenant  | machines | distributions                                                   |
+|---------|----------|-----------------------------------------------------------------|
+| `alice` | `a01`…`a10` | alpine 3.20, alpine edge, debian 12, ubuntu 24.04, fedora 41, almalinux 9, arch, opensuse leap |
+| `bob`   | `b01`…`b10` | the same eight, differently paired with shells                  |
+
+Two users means two **server tenants**: `fleet-tokens.json` maps a name to a
+bootstrap token, the server hosts each in its own database under
+`/data/tenants/<name>.db`, and requests route by device (or, at enrollment, by
+token). Nothing about a tenant is visible to the other — which is a property the
+harness checks rather than assumes.
+
+One `Dockerfile.node` builds every node: the base image is a build arg and the
+package step picks the distro's package manager, so the yore binary (CGO-free,
+static) is built once and dropped into all eight. Each image also carries
+`socat` and `jq`, which is how the harness drives the daemon: its protocol is
+newline-delimited JSON on a unix socket, so a script can list and approve
+devices the same way the TUI does.
+
+```sh
+make fleet                 # 500,000 randomized commands across 20 nodes
+make fleet TOTAL=20000     # a quick pass over the same ground
+make fleet DOWN=1          # tear it down at the end (default: leave it up)
+docker/sandbox/fleet.sh --no-build   # re-run the load on the fleet already up
+```
+
+### What it does
+
+1. **Builds and starts** 22 containers, then waits for the server's health probe
+   from inside a node (nothing is published to the host).
+2. **Enrolls all twenty machines**: each tenant bootstraps its first machine with
+   its own token, then every further machine redeems a single-use token minted by
+   an enrolled one and is approved from it — 2 groups formed, 18 approvals.
+3. **Seeds config** per node (`ignore_dirs`, rolling backups).
+4. **Checks the real shell hooks** on every distro/shell pair: a pty-driven
+   interactive zsh or bash, hooks live, must land its commands in the store.
+5. **Generates the load** — one exec per node running `fleet-gen.sh`, a weighted
+   random mix of ordinary commands, failures, agent-run commands, secrets,
+   space-prefixed commands and ignored-directory commands, with randomized
+   text, cwd, exit status, duration, session, and timestamps spread over 90 days.
+6. **Waits for every daemon to drain its spool**, timing the gap.
+7. **Syncs** in three waves (push, pull, settle), timing each.
+8. **Measures**: record throughput per node, search latency (local, deep, fuzzy,
+   executor-filtered, tag-filtered, frecency, whole-corpus), database sizes on
+   every client and both tenants, daemon RSS.
+9. **Verifies**: zero plaintext secrets anywhere; no plaintext at all on the
+   server; the drop gate exact; full convergence across each tenant's ten
+   machines; **neither user able to see one byte of the other's history**; agent
+   attribution and user tags surviving the round trip; one daemon per node, no
+   zombies, backups rolling.
+
+Every check prints ✓/✗ and a per-node table lands in `.agents/fleet/` (gitignored)
+along with each generator's tallies.
+
+### Notes for anyone extending it
+
+- **Counting requires unique commands.** `yore search --headless` dedupes
+  identical command text (`internal/cli/search.go` sets `Dedupe: true`), so the
+  generator makes every command unique with a trailing `#<node>-<n>` comment.
+  Counting deduped output against a generated total otherwise comes up short.
+- **`$YORE_TAG` is an executor**, an alias of `$YORE_EXECUTOR` — filter it with
+  `--executor`, not `--tag`. User tags come from `yore tag add`.
+- **The pty probes run with `TERM=dumb`.** Any yore process started on a TTY
+  writes a terminal status query and reads the answer; a pty with no terminal
+  emulator behind it never answers, and that read consumes the input the harness
+  had queued. `TERM=dumb` turns the query off. The harness measures the cost of
+  the query separately and reports it.

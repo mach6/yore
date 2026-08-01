@@ -12,7 +12,7 @@ LDFLAGS    := -s -w -X yore/internal/cli.Version=$(shell git describe --tags --a
 SHELL       := /bin/bash
 .SHELLFLAGS := -o pipefail -c
 
-.PHONY: build test vet fmt lint coverage coverage-check bench clean docker release drone stress
+.PHONY: build test vet fmt lint coverage coverage-check bench clean docker release drone stress fleet
 
 build:
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/yore
@@ -70,6 +70,18 @@ docker:
 #   make stress KEEP=1     # leave the sandbox running afterwards
 stress:
 	N=$(N) KEEP=$(KEEP) docker/sandbox/stress.sh
+
+# MANUAL fleet harness — the same idea at scale: TWENTY machines over eight Linux
+# distributions, half zsh and half bash, split between TWO users (server tenants
+# with their own isolated groups). Enrolls all twenty, drives half a million
+# randomized commands through them, syncs, then measures throughput/latency/size
+# and verifies convergence, redaction, and cross-user isolation. Leaves the fleet
+# UP by default — the end state is the thing worth looking at.
+#   make fleet                 # 500,000 records across 20 nodes
+#   make fleet TOTAL=20000     # quick run
+#   make fleet DOWN=1          # tear the fleet down when it finishes
+fleet:
+	TOTAL=$(TOTAL) docker/sandbox/fleet.sh $(if $(DOWN),--down,)
 
 # Tier-1 release matrix: linux+darwin+freebsd, amd64+arm64 where it matters.
 # WSL runs the linux binaries. Windows native is experimental/later.
