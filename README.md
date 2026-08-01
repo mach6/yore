@@ -167,8 +167,8 @@ leaving everything else — including the agent's own auth — exactly as it was
 ## Highlights
 
 - **`Ctrl-R` search** — scopes (local / all / host / session / cwd / git-repo),
-  frecency and fuzzy matching, syntax highlighting; Enter runs the pick by default
-  (`enter_executes`).
+  frecency and fuzzy matching, syntax highlighting; Enter puts the pick on the
+  prompt for review, or runs it outright with `enter_executes`.
 - **`hb` browser** — hosts / commands / details panes, plus full-screen **stats**
   (`s`: KPIs, top programs/commands/dirs, per-host, and three full-width graphs —
   a contribution heatmap with a month ruler, a daily trend, and an hour-of-day

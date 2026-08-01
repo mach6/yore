@@ -66,21 +66,27 @@ fi
 # store — anything yore would drop (secret / ignored dir / space-prefixed) is
 # not added to the shell history either. The filter exits 1 to drop, and a
 # zshaddhistory function returning non-zero skips the entry.
+# Output goes to /dev/null: filter answers with its exit status and prints
+# nothing, and a yore process whose stdout is the terminal asks that terminal
+# for its background colour and waits for the reply. On a hook that runs for
+# every command that costs a round trip per prompt, and the reply-read swallows
+# input already queued — a pasted block loses lines.
 _yore_addhistory() {
 	emulate -L zsh
-	command {{.Bin}} filter --cwd "$PWD" <<< "${1%$'\n'}"
+	command {{.Bin}} filter --cwd "$PWD" <<< "${1%$'\n'}" >/dev/null 2>&1
 }
 add-zsh-hook zshaddhistory _yore_addhistory
 {{- end}}
 {{- if .Bindings}}
 
 # Whether accepting a Ctrl-R result should run it immediately (Atuin parity).
-# Default: run the picked command on Enter; opt out with
-# `yore set-config enter_executes false` to insert it for review instead. Asked
-# of yore at call time — NOT cached at source time — so the setting takes effect
-# without re-sourcing. Fails open to the default (run) if yore is unavailable.
+# Default: put the picked command on the prompt for review; opt in with
+# `yore set-config enter_executes true` to have Enter run it. Asked of yore at
+# call time — NOT cached at source time — so the setting takes effect without
+# re-sourcing. Falls back to the default (review) if yore is unavailable, which
+# is the safe direction: nothing runs that the user did not look at.
 _yore_enter_executes() {
-	[[ "$(command {{.Bin}} get-config enter_executes 2>/dev/null)" != false ]]
+	[[ "$(command {{.Bin}} get-config enter_executes 2>/dev/null)" == true ]]
 }
 
 # Interactive search widget. The TUI draws on /dev/tty, so this command

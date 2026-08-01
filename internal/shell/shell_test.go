@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -151,6 +152,30 @@ func TestModes(t *testing.T) {
 			for _, w := range tc.mustNotHav {
 				require.NotContains(t, got, w)
 			}
+		})
+	}
+}
+
+// TestPromptPathWritesNothingToTheTerminal pins a property of the hooks that is
+// invisible in normal use and expensive when it breaks: nothing the prompt path
+// runs may inherit the terminal on stdout. A yore process whose stdout is a
+// terminal queries it for its background colour and reads the reply, so a hook
+// that leaks the terminal into a per-command call costs a round trip on every
+// prompt and eats input that is already queued.
+func TestPromptPathWritesNothingToTheTerminal(t *testing.T) {
+	for _, sh := range []string{"zsh", "bash"} {
+		t.Run(sh, func(t *testing.T) {
+			got, err := shell.Init(sh, shell.Options{Aliases: true, Bin: "yore", Mode: "takeover"})
+			require.NoError(t, err)
+			for _, line := range strings.Split(got, "\n") {
+				if !strings.Contains(line, "yore filter") {
+					continue
+				}
+				require.Contains(t, line, ">/dev/null",
+					"the redaction gate runs for every command and must not inherit the terminal")
+				return
+			}
+			require.Fail(t, "takeover mode must install the redaction gate")
 		})
 	}
 }

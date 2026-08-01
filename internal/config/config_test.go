@@ -42,8 +42,8 @@ func TestParseSize(t *testing.T) {
 func TestDefaults(t *testing.T) {
 	d := Defaults()
 	assert.True(t, d.AutoDeepen, "AutoDeepen default true")
-	assert.True(t, d.EnterExecutes, "EnterExecutes default true")
 	assert.True(t, d.LogSilent, "LogSilent default true")
+	assert.False(t, d.EnterExecutes, "EnterExecutes default false: Enter reviews, it does not run")
 
 	var z Config
 	assert.False(t, z.AutoDeepen, "zero Config: AutoDeepen false (no magic accessor)")
@@ -61,26 +61,32 @@ func TestLoadSeedsDefaultsAndOverrides(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, Defaults(), missing, "missing config yields Defaults()")
 
-	// A file that mentions only enter_executes:false must keep the other defaults
+	// A file that mentions only auto_deepen:false must keep the other defaults
 	// on and flip just that one — the classic case an omitempty *bool got wrong.
 	dir := t.TempDir()
-	require.NoError(t, Save(dir, Config{EnterExecutes: false, AutoDeepen: true, LogSilent: true, ServerURL: "https://s"}))
+	require.NoError(t, Save(dir, Config{AutoDeepen: false, LogSilent: true, ServerURL: "https://s"}))
 	got, err := Load(dir)
 	require.NoError(t, err)
-	assert.False(t, got.EnterExecutes, "explicit false survives Save/Load")
-	assert.True(t, got.AutoDeepen, "unrelated default stays true")
+	assert.False(t, got.AutoDeepen, "explicit false survives Save/Load")
 	assert.True(t, got.LogSilent, "unrelated default stays true")
 	assert.Equal(t, "https://s", got.ServerURL)
 
-	// An absent enter_executes must remain the default (true), not fall to the
-	// bool zero value.
+	// An absent key keeps its default in both directions: a default-true bool
+	// must not fall to the zero value, and a default-false one must not rise.
 	dir2 := t.TempDir()
 	require.NoError(t, os.WriteFile(ConfigPath(dir2), []byte("server_url = \"https://x\"\n"), 0o600))
 	got2, err := Load(dir2)
 	require.NoError(t, err)
-	assert.True(t, got2.EnterExecutes, "absent key keeps default")
-	assert.True(t, got2.LogSilent, "absent key keeps default")
+	assert.True(t, got2.LogSilent, "absent key keeps default true")
+	assert.False(t, got2.EnterExecutes, "absent key keeps default false")
 	assert.Equal(t, "https://x", got2.ServerURL)
+
+	// An explicit true on a default-false bool survives too.
+	dir3 := t.TempDir()
+	require.NoError(t, Save(dir3, Config{EnterExecutes: true}))
+	got3, err := Load(dir3)
+	require.NoError(t, err)
+	assert.True(t, got3.EnterExecutes, "explicit true survives Save/Load")
 }
 
 // TestGetSet covers the config accessor pair the shell integration and
@@ -90,16 +96,17 @@ func TestLoadSeedsDefaultsAndOverrides(t *testing.T) {
 func TestGetSet(t *testing.T) {
 	dir := t.TempDir()
 
-	// A default-true bool reads back "true" before anything is written.
+	// A default-false bool reads back "false" before anything is written; the
+	// shell integration asks exactly this question on every Ctrl-R.
 	v, err := Get(dir, "enter_executes")
 	require.NoError(t, err)
-	assert.Equal(t, "true", v, "default reported for an absent key")
+	assert.Equal(t, "false", v, "default reported for an absent key")
 
 	// Set flips it and persists; Get reflects the new value.
-	require.NoError(t, Set(dir, "enter_executes", "false"))
+	require.NoError(t, Set(dir, "enter_executes", "true"))
 	v, err = Get(dir, "enter_executes")
 	require.NoError(t, err)
-	assert.Equal(t, "false", v, "set value round-trips")
+	assert.Equal(t, "true", v, "set value round-trips")
 
 	// A string key and an int key round-trip too.
 	require.NoError(t, Set(dir, "server_url", "https://sync.example"))
@@ -108,7 +115,7 @@ func TestGetSet(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "https://sync.example", got.ServerURL)
 	assert.Equal(t, 7, got.BackupKeep)
-	assert.False(t, got.EnterExecutes, "earlier set is preserved across further sets")
+	assert.True(t, got.EnterExecutes, "earlier set is preserved across further sets")
 
 	// A bad type and an unknown key are errors, and neither writes anything.
 	require.Error(t, Set(dir, "backup_keep", "not-a-number"), "non-integer rejected")

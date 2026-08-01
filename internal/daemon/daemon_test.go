@@ -434,3 +434,38 @@ func TestTagsListCountsCommands(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, info.Tags, same.Tags)
 }
+
+// TestClientSurvivesALostConnection covers the case a long-lived TUI hits: the
+// daemon it was talking to has gone (idled out after its 30 minutes, taking its
+// connections with it), and the next thing the user does must work anyway. The
+// client re-establishes and retries rather than turning every keystroke into an
+// error until the screen is closed and reopened.
+func TestClientSurvivesALostConnection(t *testing.T) {
+	dir := t.TempDir()
+	c, _ := startDaemon(t, dir, 30*time.Second)
+
+	require.NoError(t, c.Ping(), "healthy to begin with")
+
+	// Exactly what a shutting-down daemon does to its clients.
+	c.mu.Lock()
+	_ = c.conn.Close()
+	c.mu.Unlock()
+
+	st, err := c.Status()
+	require.NoError(t, err, "a lost connection must be re-established, not reported")
+	assert.Equal(t, "test-ver", st.Version, "the retry reached a real daemon")
+
+	// And the client keeps working afterwards, on the connection it healed onto.
+	require.NoError(t, c.Ping(), "still usable after recovering")
+}
+
+// TestMintingIsNeverRetried pins the one op that must not be resent when a
+// connection is lost: a second mint would leave a second live invitation on the
+// server, and only the first was ever shown to anyone.
+func TestMintingIsNeverRetried(t *testing.T) {
+	assert.False(t, resumable(proto.OpToken), "minting a token must not be retried")
+	assert.False(t, resumable(proto.OpShutdown), "stopping must not spawn a daemon to stop")
+	for _, op := range []string{proto.OpQuery, proto.OpHosts, proto.OpStatus, proto.OpRecord, proto.OpApprove} {
+		assert.Truef(t, resumable(op), "%s converges and is safe to retry", op)
+	}
+}

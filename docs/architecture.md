@@ -41,7 +41,9 @@ invariant. On every command the shell hook runs `yore record`, which:
 1. reads the command text on stdin (capped at 1 MiB);
 2. drops it if empty;
 3. runs the **redact gate** (below) — a rejection returns silently, exit 0;
-4. appends one JSON line to this process's spool file and **fsyncs** it;
+4. writes one JSON line to a `.tmp` spool file, **fsyncs** it, and renames it
+   into place — publishing atomically, so a drain running at that instant can
+   neither read half a record nor delete a file still being written;
 5. best-effort pokes the daemon over the unix socket (spawning one if absent),
    with tight deadlines (~150 ms worst case, and `record` runs backgrounded);
 6. exits 0.
@@ -64,8 +66,11 @@ Concise map by role. Leaf-contract packages import nothing else in the tree.
   and all settings, applying defaults via accessor methods.
 
 **Storage & capture:**
-- **spool** — crash-safe, fsync'd, per-process (`<pid>.jsonl`) append files;
-  `Drain` tolerates a torn final line and dedupes downstream by id.
+- **spool** — crash-safe, fsync'd handoff files published by rename
+  (`<nanos>-<pid>-<n>.tmp` → `.jsonl`, so only complete files carry the name
+  `Drain` collects, and a concurrent drain can never unlink a write in flight);
+  `Drain` tolerates a torn line in anything older, sweeps abandoned temps, and
+  dedupes downstream by id.
 - **store** — local bbolt (`data.db`). Holds only this host's stream. Single-owner
   (an exclusive file lock; a competing opener gets `ErrLocked`). Idempotent
   appends keyed by record id; assigns per-stream `seq`; tombstones for deletes;
@@ -117,6 +122,14 @@ A long-lived background process, auto-spawned on first use (detached, `Setsid`)
 and idle-exiting after `daemon_idle` (default 30m). It is the sole owner of the
 local bbolt store and the authority for all search.
 
+Idle-exiting is invisible to whatever is still on screen: the client treats a
+lost connection as a reconnect, spawning a daemon if none is listening and
+resending the request. A TUI left open past the timeout keeps working on the
+next keystroke rather than reporting a broken socket for the rest of its life.
+The one op never resent is minting an enrollment token — a second attempt would
+leave a second live invitation standing on the server, and only the first was
+ever shown to anyone.
+
 - **RAM corpus.** On start it loads the live search corpus from a warm **gob
   snapshot** (`corpus.snap`) and folds in the store tail above the snapshot's
   position via `store.Since`; a missing/corrupt snapshot falls back to a full
@@ -142,6 +155,21 @@ local bbolt store and the authority for all search.
   reach the same archive, and dropping the cache for one of those would spend a
   full re-pull of every machine's history on a transport edit — the exact cost the
   cache exists to avoid.
+- **What it costs in RAM.** The corpus is the daemon's whole footprint, and it is
+  linear in records: **~620 B of live heap per record** (a 304-byte `rec.Record`,
+  ~200 B of size-class-rounded strings, and the parallel `cmds` header), and
+  resident memory runs ~3× live because Go's collector keeps roughly that much
+  elbow room by default. So:
+
+  ```
+  daemon RSS ≈ 2.5 KB × (this host's records + remote_keep × other hosts)
+  ```
+
+  Measured on a ten-machine group holding 470 000 records: 1.1 GB. `remote_keep`
+  is what bounds the second term — at its default (50 000/host) a ten-machine
+  group settles near 1.1 GB no matter how many years accumulate. The *first*
+  term is unbounded: your own history grows forever, at roughly 75 MB of RSS per
+  30 000 commands recorded.
 - **Prompt index.** Agent prompt text is stored once, on its own record (see
   below), so the daemon keeps a `promptID → prompt` index — fed by the local
   store scan at startup, local ingest, and remote pull — and rejoins each query
@@ -1209,6 +1237,13 @@ the tenant every handler operates on.
   `backup_interval` (default 1h; `"0"` disables), keeping the newest
   `backup_keep` (default 3) — same temp-file + atomic-rename + prune scheme as
   the server.
+- **What backups cost in disk.** Each one is a **full copy**, so `backup_keep`
+  is a multiplier, not a margin: peak disk for a store is roughly
+  `(backup_keep + 1) × db size`, and every interval writes a whole database.
+  The default (3) means a 300 MB tenant occupies ~1.2 GB and rewrites 300 MB an
+  hour; size a server volume for the multiple, not the database. A backup is
+  smaller than its `data.db` because it writes only used pages — the live file
+  carries bbolt's allocation slack (~20%), the copy does not.
 - **Bounded daemon log.** `~/.config/yore/daemon.log` rotates once it would
   exceed `log_max_size` (default 5MB; `"0"` = unbounded append), keeping
   `log_keep` old segments (default 1). `log_silent` (default **true**) suppresses
@@ -1269,7 +1304,7 @@ be a poor neighbour. Same directory, same 0600, different concern.
 | `sync_prompts` | `true` | upload agent prompt records; `false` keeps prompt text on the machine that recorded it (their commands still sync). Not retroactive — prompts already pushed stay on the server |
 | `remote_keep` | `50000` | records cached and held in RAM per *other* host, newest first; a negative value means unlimited |
 | `auto_deepen` | `true` | let deep reads nudge a background sync |
-| `enter_executes` | `true` | Ctrl-R Enter runs the result (vs. insert for review) |
+| `enter_executes` | `false` | Ctrl-R Enter inserts the result on the prompt for review; `true` runs it outright |
 | `bind_up_arrow` | `false` | also bind Up to the search TUI |
 | `hide_agent_commands` | `true` | keep agent-run commands out of the interactive search UIs (`A` in the browser, `⌥a` in the Ctrl-R panel, per session; both always say how many rows they are holding). `--headless` never hides anything |
 | `keymap` | `emacs` | `emacs` \| `vim` TUI key style |

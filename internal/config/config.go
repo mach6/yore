@@ -102,12 +102,15 @@ type Config struct {
 	// no omitempty: an explicit false must survive a Save/Load round-trip.
 	AutoDeepen bool `toml:"auto_deepen"` // default true
 
-	// EnterExecutes controls the Ctrl-R search widget: when true, accepting a
-	// result with Enter runs it immediately (Atuin parity); false inserts it into
-	// the prompt for review instead. The emitted shell integration reads this at
-	// runtime via `yore get-config enter_executes` (never by parsing the file),
-	// so an explicit false must round-trip — hence no omitempty.
-	EnterExecutes bool `toml:"enter_executes"` // default true
+	// EnterExecutes controls the Ctrl-R search widget: when false (the default),
+	// accepting a result with Enter puts it on the prompt for review; true runs
+	// it immediately (Atuin parity). It defaults off because a search result is
+	// a guess about what you meant, and running someone's old command because
+	// the highlight was one row from where they thought is not a mistake the
+	// tool gets to make on their behalf. The emitted shell integration reads
+	// this at runtime via `yore get-config enter_executes` (never by parsing the
+	// file); no omitempty, so config.toml states the choice either way.
+	EnterExecutes bool `toml:"enter_executes"` // default false
 
 	// BindUpArrow also binds the Up arrow to the search TUI (in addition to
 	// Ctrl-R), Atuin-style. Off by default because it changes a very
@@ -196,7 +199,6 @@ type Config struct {
 func Defaults() Config {
 	return Config{
 		AutoDeepen:        true,
-		EnterExecutes:     true,
 		LogSilent:         true,
 		SyncPrompts:       true,
 		HideAgentCommands: true,

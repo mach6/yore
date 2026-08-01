@@ -3,6 +3,7 @@ package daemon
 import (
 	"bufio"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -59,7 +60,10 @@ func (c *Client) solo(req proto.Request) (proto.Response, error) {
 	if c.dir == "" {
 		return c.roundtrip(req, syncDeadline)
 	}
-	sc, err := Dial(c.dir)
+	// EnsureRunning rather than Dial: these ops are also what a TUI reaches for
+	// after sitting open long enough for the daemon to idle out, and a screen
+	// that cannot sync until you quit and come back is a screen that is broken.
+	sc, err := EnsureRunning(c.dir)
 	if err != nil {
 		return proto.Response{}, err
 	}
@@ -271,9 +275,28 @@ func (c *Client) ok(req proto.Request) error {
 // roundtrip writes one request and reads one response under a deadline. It
 // holds the client mutex for the whole exchange so concurrent callers queue
 // rather than interleaving on the single connection.
+//
+// If the connection has gone — the usual reason being that the daemon idled out
+// under a TUI that was open but quiet, taking its connections with it — the
+// request is retried once on a fresh connection, spawning a daemon if none is
+// listening. A long-lived screen recovers by itself instead of turning into an
+// error message per keystroke.
 func (c *Client) roundtrip(req proto.Request, deadline time.Duration) (proto.Response, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	resp, err := c.exchange(req, deadline)
+	if err == nil || !lostConn(err) || !resumable(req.Op) {
+		return resp, err
+	}
+	if rerr := c.reconnect(); rerr != nil {
+		return proto.Response{}, err // report the original failure, not the redial
+	}
+	return c.exchange(req, deadline)
+}
+
+// exchange is one write/read on the current connection.
+func (c *Client) exchange(req proto.Request, deadline time.Duration) (proto.Response, error) {
 	if err := c.conn.SetDeadline(time.Now().Add(deadline)); err != nil {
 		return proto.Response{}, err
 	}
@@ -287,6 +310,46 @@ func (c *Client) roundtrip(req proto.Request, deadline time.Duration) (proto.Res
 		return proto.Response{}, err
 	}
 	return resp, nil
+}
+
+// reconnect replaces the client's connection with a live one, spawning a daemon
+// if the socket is dead. The caller holds the mutex.
+func (c *Client) reconnect() error {
+	if c.dir == "" {
+		return errors.New("daemon: no state dir to reconnect with")
+	}
+	_ = c.conn.Close()
+	fresh, err := EnsureRunning(c.dir)
+	if err != nil {
+		return err
+	}
+	c.conn, c.r = fresh.conn, fresh.r
+	return nil
+}
+
+// lostConn reports whether err means the connection went away rather than the
+// daemon answering slowly. A deadline is not a lost connection: the daemon may
+// be mid-query, and re-asking would only pile on.
+func lostConn(err error) bool {
+	return errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, net.ErrClosed) ||
+		errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ECONNRESET)
+}
+
+// resumable reports whether re-sending an op after a lost connection is safe.
+// Reads are, and so are the mutations that converge (a record dedupes by id, a
+// tombstone and an approval are the same applied twice). Minting an enrollment
+// token is NOT: a second attempt would leave a second live invitation standing
+// on the server, which is precisely what nobody can see to revoke. Shutdown is
+// excluded because retrying it would spawn a daemon in order to stop it.
+func resumable(op string) bool {
+	switch op {
+	case proto.OpToken, proto.OpShutdown:
+		return false
+	}
+	return true
 }
 
 func respErr(resp proto.Response) error {

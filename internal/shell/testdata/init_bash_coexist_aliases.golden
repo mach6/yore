@@ -423,14 +423,15 @@ precmd_functions+=(__yore_precmd)
 preexec_functions+=(__yore_preexec)
 
 # Whether accepting a Ctrl-R result should run it immediately (Atuin parity).
-# Default: run the picked command on Enter; opt out with
-# `yore set-config enter_executes false` to insert it for review instead. NOTE:
-# bash reads this at source time to choose the Ctrl-R binding below (bash
-# `bind -x` cannot itself accept the line), so a change takes effect only in a
-# new shell / re-source. zsh, by contrast, re-reads it on every keypress. Fails
-# open to the default (run) if yore is unavailable.
+# Default: put the picked command on the prompt for review; opt in with
+# `yore set-config enter_executes true` to have Enter run it. NOTE: bash reads
+# this at source time to choose the Ctrl-R binding below (bash `bind -x` cannot
+# itself accept the line), so a change takes effect only in a new shell /
+# re-source. zsh, by contrast, re-reads it on every keypress. Falls back to the
+# default (review) if yore is unavailable, which is the safe direction: nothing
+# runs that the user did not look at.
 _yore_enter_executes() {
-	[[ "$(command yore get-config enter_executes 2>/dev/null)" != false ]]
+	[[ "$(command yore get-config enter_executes 2>/dev/null)" == true ]]
 }
 
 # Interactive search widget. The TUI draws on /dev/tty, so this command
