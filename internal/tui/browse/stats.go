@@ -309,10 +309,18 @@ func maxOf(vals []int) int {
 	return m
 }
 
+// maxRankedEntries bounds how many entries topN retains. The commands tally
+// holds one entry per distinct command line ever run, so without a cap the
+// retained slice would grow for as long as the archive does. It is not a
+// display limit — statColumn already draws however many of these entries fit
+// the terminal's height — so the number only needs to comfortably outrun any
+// ranked column a real terminal could show. 64 clears that bar with room to
+// spare while still discarding the long tail before it is kept around.
+const maxRankedEntries = 64
+
 // topN returns the highest-count entries from a tally map, most first, ties
 // broken by name for stable output.
 func topN(m map[string]int) []cmdCount {
-	const n = 12
 	out := make([]cmdCount, 0, len(m))
 	for k, v := range m {
 		out = append(out, cmdCount{k, v})
@@ -323,8 +331,8 @@ func topN(m map[string]int) []cmdCount {
 		}
 		return out[i].name < out[j].name
 	})
-	if len(out) > n {
-		out = out[:n]
+	if len(out) > maxRankedEntries {
+		out = out[:maxRankedEntries]
 	}
 	return out
 }

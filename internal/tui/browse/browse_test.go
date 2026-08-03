@@ -1818,6 +1818,103 @@ func TestStatsChartsFitWholeOrNotAtAll(t *testing.T) {
 	}
 }
 
+// manyProgramsRows returns count records, each a distinct program run with a
+// distinct full command line ("progN --flag"), so every ranked list —
+// programs by first token, commands by full line — ends up with count
+// distinct entries instead of collapsing onto one.
+func manyProgramsRows(count int) []rec.Record {
+	rows := make([]rec.Record, count)
+	for i := range rows {
+		rows[i] = rec.Record{
+			ID:       strconv.Itoa(i),
+			Cmd:      "prog" + strconv.Itoa(i) + " --flag",
+			Cwd:      "/work",
+			Hostname: "boxA",
+			StartMs:  now - int64(i)*3_600_000,
+			Exit:     rec.IntPtr(0),
+		}
+	}
+	return rows
+}
+
+// manyProgramsModel opens the stats view over count distinct programs at an
+// explicit terminal size.
+func manyProgramsModel(t *testing.T, w, h, count int) Model {
+	t.Helper()
+	f := &fakeBackend{
+		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: count}}},
+		resp:  mkResp(manyProgramsRows(count)),
+	}
+	m := ready(t, f, w, h)
+	m, cmd := step(t, m, press("s"))
+	require.NotNil(t, cmd)
+	sr, ok := cmd().(statsResultMsg)
+	require.True(t, ok)
+	m, _ = step(t, m, sr)
+	return m
+}
+
+// TestStatsTallTerminalRendersMoreThan12Rows pins the fix for the ranked
+// columns stopping dead at 12 rows: with more than 12 distinct programs held
+// and a terminal tall enough to draw them, the aggregation must retain more
+// than the old fixed cap and the renderer must actually draw them.
+func TestStatsTallTerminalRendersMoreThan12Rows(t *testing.T) {
+	const count = 40
+	m := manyProgramsModel(t, 200, 120, count)
+
+	require.Greaterf(t, len(m.stats.topPrograms), 12,
+		"the aggregation must retain more than 12 distinct programs, got %d", len(m.stats.topPrograms))
+	require.Greaterf(t, len(m.stats.topCommands), 12,
+		"the aggregation must retain more than 12 distinct commands, got %d", len(m.stats.topCommands))
+
+	out := strip(m.View())
+	shown := strings.Count(out, "--flag")
+	require.Greaterf(t, shown, 12,
+		"a tall terminal must render more than 12 ranked rows, got %d:\n%s", shown, out)
+}
+
+// TestStatsShortTerminalDoesNotRegressWithManyEntries proves raising the
+// aggregation's cap did not change short-terminal behavior: with the same
+// 40-distinct-program fixture, a short terminal still shows only what fits —
+// nowhere near every retained entry — and the ranked columns are not
+// starved below what minColumnsH promises.
+func TestStatsShortTerminalDoesNotRegressWithManyEntries(t *testing.T) {
+	const count = 40
+	m := manyProgramsModel(t, 100, 8, count)
+
+	lines := strings.Split(m.View(), "\n")
+	require.Len(t, lines, 8, "the view must render exactly the requested height")
+
+	out := strip(m.View())
+	require.Contains(t, out, "Top programs", "the ranked columns must survive a short terminal")
+
+	shown := strings.Count(out, "--flag")
+	require.Greaterf(t, shown, 0, "some ranked rows must still be visible, got %d:\n%s", shown, out)
+	require.Lessf(t, shown, 12,
+		"a short terminal must not spill every retained entry onto screen, got %d:\n%s", shown, out)
+}
+
+// TestStatsGrowTallerShowsMoreRowsWithoutRecompute pins the design decision
+// that the aggregation's cap is height-independent: recomputeStats is not
+// wired to tea.WindowSizeMsg (recomputing on every resize would be wasteful,
+// and the sample the stats screen aggregates over does not change size), so
+// growing the terminal must reveal more of the SAME retained data purely by
+// the renderer drawing further down the same slices.
+func TestStatsGrowTallerShowsMoreRowsWithoutRecompute(t *testing.T) {
+	const count = 40
+	m := manyProgramsModel(t, 200, 20, count)
+	statsBefore := m.stats
+	shortCount := strings.Count(strip(m.View()), "--flag")
+
+	m, _ = step(t, m, tea.WindowSizeMsg{Width: 200, Height: 100})
+	require.Same(t, statsBefore, m.stats, "growing the terminal must not recompute stats")
+
+	tallCount := strings.Count(strip(m.View()), "--flag")
+	require.Greaterf(t, tallCount, shortCount,
+		"a taller terminal must render more ranked rows from the same data (%d -> %d)", shortCount, tallCount)
+	require.Greater(t, tallCount, 12, "the taller terminal should exceed the old fixed cap")
+}
+
 // statLineWidth returns the display width of the first rendered line whose
 // stripped text starts with prefix.
 func statLineWidth(t *testing.T, m Model, prefix string) int {
