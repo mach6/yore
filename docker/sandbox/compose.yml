@@ -1,7 +1,8 @@
-# yore sandbox — a self-contained 3-container playground:
+# yore sandbox — a self-contained 4-container playground:
 #   server   the sync server (ciphertext only), on the internal network
 #   zsh      a client with zsh + yore hooks (hostname zsh-box)
 #   bash     a client with bash + yore hooks (hostname bash-box)
+#   fish     a client with fish + yore hooks (hostname fish-box)
 #
 # Clients reach the server over the internal Docker network (plain HTTP — no TLS
 # needed inside the sandbox; per-device request signing authenticates everything).
@@ -56,6 +57,24 @@ services:
       context: ../..
       dockerfile: docker/sandbox/Dockerfile.client
     hostname: bash-box
+    init: true  # tini reaps orphaned shell-hook processes; sleep infinity cannot
+    environment:
+      YORE_SERVER: http://server:8080
+      # The bootstrap token. It enrols only the FIRST machine: once any device
+      # is active the server refuses it, and further machines need a token from
+      # `yore devices token`.
+      YORE_TOKEN: sandbox-token
+      YORE_INTEGRATION: takeover
+    depends_on: [server]
+    networks: [yore]
+    tty: true
+    stdin_open: true
+
+  fish:
+    build:
+      context: ../..
+      dockerfile: docker/sandbox/Dockerfile.client
+    hostname: fish-box
     init: true  # tini reaps orphaned shell-hook processes; sleep infinity cannot
     environment:
       YORE_SERVER: http://server:8080

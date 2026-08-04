@@ -1,6 +1,6 @@
 # yore sandbox
 
-A self-contained, three-container playground for exercising yore's full
+A self-contained, four-container playground for exercising yore's full
 cross-machine sync without touching your host or any real server:
 
 | service  | what it is                                             | hostname   |
@@ -8,6 +8,7 @@ cross-machine sync without touching your host or any real server:
 | `server` | the sync server — stores **ciphertext only**           | (internal) |
 | `zsh`    | a client with zsh + the yore hooks wired in            | `zsh-box`  |
 | `bash`   | a client with bash + the yore hooks wired in           | `bash-box` |
+| `fish`   | a client with fish + the yore hooks wired in           | `fish-box` |
 
 Clients reach the server over an internal Docker network (plain HTTP — no TLS is
 needed inside the sandbox; per-device request signing still protects writes).
@@ -94,11 +95,38 @@ To poke at the real TUI (Ctrl-R search, `h`/`hs`, up-arrow), attach a terminal:
 ```sh
 docker compose -f docker/sandbox/compose.yml exec zsh zsh      # zsh-box
 docker compose -f docker/sandbox/compose.yml exec bash bash    # bash-box
+docker compose -f docker/sandbox/compose.yml exec fish fish    # fish-box
 ```
 
-The rc files already `eval "$(yore init …)"`, so hooks are live. In takeover
-mode the shell's own history file is disabled and yore is the single source of
-truth (so `!N`, up-arrow, and Ctrl-R all read from yore).
+The rc files already `eval "$(yore init …)"` — or `yore init fish | source`, as
+fish has no `eval` — so hooks are live. In takeover mode the shell's own history
+file is disabled and yore is the single source of truth (so `!N`, up-arrow, and
+Ctrl-R all read from yore). fish announces this itself on startup with "fish is
+running in private mode, history will not be persisted", which is `fish_private_mode`
+doing exactly that job.
+
+### Syntax-checking the generated hook
+
+```sh
+dc fish sh -c "yore init fish --mode takeover > /tmp/i.fish && fish -n /tmp/i.fish"
+```
+
+`fish -n -` does **not** work: unlike most tools fish has no `-` convention for
+stdin and reports "Error reading script file '-'". Write the script to a file, or
+pipe into `fish -n /dev/stdin`.
+
+### Scripting an interactive fish
+
+fish's `fish_preexec`/`fish_postexec` events fire only from the interactive
+reader, so neither `fish -c 'cmd'` nor piping into `fish -i` records anything —
+both skip the reader entirely, and a test built on either will silently observe
+nothing while looking like it passed. Drive a real pty instead:
+
+```sh
+dc fish sh -c "apk add --no-cache util-linux >/dev/null
+               printf 'echo hi\nfalse\nexit\n' > /tmp/c.txt
+               script -qec 'fish -i' /dev/null < /tmp/c.txt"
+```
 
 ## Tear it down (removes containers, network, and the server volume)
 
@@ -163,7 +191,7 @@ it running for inspection.
 
 ## The fleet (`fleet.yml` + `fleet.sh`) — twenty machines, two users
 
-The three-container sandbox above is the one you poke at by hand. `fleet.yml` is
+The four-container sandbox above is the one you poke at by hand. `fleet.yml` is
 the same idea at the scale yore is actually meant for: **twenty client machines,
 eight Linux distributions, ten zsh and ten bash, split between TWO users** who
 share one server and must never see each other's history.
