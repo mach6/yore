@@ -490,6 +490,48 @@ func TestDeleteConfirmSingleCheckedUsesCountPrompt(t *testing.T) {
 	require.NotContains(t, out, "delete this command?")
 }
 
+// runBulkDelete confirms a bulk delete and delivers its result. The deletes run
+// in a command rather than inline in Update — the table holds every matching row
+// (proto.LimitAll), so ctrl+a can check an archive and doing the round trips on
+// the event loop would freeze the UI — so a test has to drain the command the
+// way bubbletea would, or it asserts on a delete that has not happened yet.
+func runBulkDelete(t *testing.T, m Model) Model {
+	t.Helper()
+	m, _ = step(t, m, press("d"))
+	m, cmd := step(t, m, press("y"))
+	for _, msg := range collect(cmd) {
+		m, _ = step(t, m, msg)
+	}
+	return m
+}
+
+// TestBulkDeleteDoesNotBlockUpdate proves the round trips happen in a command
+// and not on the event loop. buildReq asks for proto.LimitAll, so the table
+// holds every matching row and ctrl+a can check an entire archive; deleting
+// inline would hold Update for the whole run, freezing the UI with no redraw
+// and nothing to tell it from a hang. Confirming must therefore return with
+// nothing deleted yet, and the in-progress flash already on screen.
+func TestBulkDeleteDoesNotBlockUpdate(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("a", "b", "c"))})
+	m, _ = step(t, m, press("ctrl+a"))
+
+	m, _ = step(t, m, press("d"))
+	m, cmd := step(t, m, press("y"))
+
+	require.Empty(t, f.deleted, "confirming must not delete inline — the work belongs in the command")
+	require.Len(t, m.rows, 3, "no row may leave the table before the deletes have run")
+	require.Contains(t, strip(m.View()), "deleting 3 records…", "the in-progress flash must be showing while the command runs")
+	require.NotNil(t, cmd, "confirming must hand back the command that does the work")
+
+	for _, msg := range collect(cmd) {
+		m, _ = step(t, m, msg)
+	}
+	require.Len(t, f.deleted, 3, "draining the command must then do every delete")
+	require.Empty(t, m.rows)
+}
+
 func TestBulkDeleteRemovesExactlySelected(t *testing.T) {
 	f := &fakeBackend{}
 	m := ready(t, f, 120, 30)
@@ -501,8 +543,7 @@ func TestBulkDeleteRemovesExactlySelected(t *testing.T) {
 	m, _ = step(t, m, press("down")) // row 3: drop-d
 	m, _ = step(t, m, press(" "))
 
-	m, _ = step(t, m, press("d"))
-	m, _ = step(t, m, press("y"))
+	m = runBulkDelete(t, m)
 
 	require.ElementsMatch(t, []string{"1", "3"}, f.deleted, "exactly the checked records must be deleted")
 	require.Len(t, m.rows, 2)
@@ -524,8 +565,7 @@ func TestBulkDeletePartialFailure(t *testing.T) {
 	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("a", "b", "c"))})
 	m, _ = step(t, m, press("ctrl+a"))
 
-	m, _ = step(t, m, press("d"))
-	m, _ = step(t, m, press("y"))
+	m = runBulkDelete(t, m)
 
 	require.ElementsMatch(t, []string{"0", "2"}, f.deleted, "the failing id must not be reported as deleted")
 	require.Len(t, m.rows, 1, "only the row whose delete failed should remain")
@@ -542,8 +582,7 @@ func TestBulkDeleteAllFail(t *testing.T) {
 	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("a", "b"))})
 	m, _ = step(t, m, press("ctrl+a"))
 
-	m, _ = step(t, m, press("d"))
-	m, _ = step(t, m, press("y"))
+	m = runBulkDelete(t, m)
 
 	require.Empty(t, f.deleted)
 	require.Len(t, m.rows, 2, "nothing should be removed locally if every delete failed")

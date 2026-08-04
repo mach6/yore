@@ -175,6 +175,17 @@ type hostsTickMsg struct{}
 // syncDoneMsg carries the result of an on-demand "sync now" (the S key).
 type syncDoneMsg struct{ err error }
 
+// bulkDeleteDoneMsg carries the result of a bulk delete. The deletes run in a
+// command rather than inline in Update because the table holds every matching
+// row (buildReq asks for proto.LimitAll), so ctrl+a can check an entire
+// archive: doing N round trips on the event loop would freeze the UI for the
+// whole run, with no redraw and nothing to tell it from a hang.
+type bulkDeleteDoneMsg struct {
+	removed map[string]struct{}
+	failed  int
+	err     error
+}
+
 // Model is the Bubble Tea model backing the browser. Exported so tests can
 // drive Update directly.
 type Model struct {
@@ -520,6 +531,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case syncDoneMsg:
 		return m.applySync(msg)
+
+	case bulkDeleteDoneMsg:
+		return m.applyBulkDelete(msg)
 
 	case flashExpireMsg:
 		if msg.id == m.flashID {
@@ -2150,32 +2164,56 @@ func (m Model) deleteChecked() (tea.Model, tea.Cmd) {
 	for id := range m.checked {
 		ids = append(ids, id)
 	}
-	removed := make(map[string]struct{}, len(ids))
-	failed := 0
-	var lastErr error
-	for _, id := range ids {
-		if err := m.b.Delete(id); err != nil {
-			failed++
-			lastErr = err
-			continue
+	// In-progress flash with no expiry tick: replaced by applyBulkDelete when
+	// the run ends, so it shows for the real duration however long that is.
+	m.flash = "deleting " + plural(len(ids), "record") + "…"
+	m.flashID++
+	return m, m.bulkDeleteCmd(ids)
+}
+
+// bulkDeleteCmd tombstones ids one at a time off the event loop. Every id is
+// attempted even after a failure: a record already tombstoned cannot be
+// un-tombstoned by giving up early, so stopping would leave the run half done
+// with no way to tell which half.
+func (m Model) bulkDeleteCmd(ids []string) tea.Cmd {
+	b := m.b
+	return func() tea.Msg {
+		msg := bulkDeleteDoneMsg{removed: make(map[string]struct{}, len(ids))}
+		for _, id := range ids {
+			if err := b.Delete(id); err != nil {
+				msg.failed++
+				msg.err = err
+				continue
+			}
+			msg.removed[id] = struct{}{}
 		}
-		removed[id] = struct{}{}
+		return msg
+	}
+}
+
+// applyBulkDelete folds a finished bulk delete back into the table. Records
+// whose call succeeded are dropped locally; the rest stay in the table AND stay
+// checked, so a retry acts on exactly what failed, and the flash reports both
+// counts rather than silently losing the difference between what was asked for
+// and what happened.
+func (m Model) applyBulkDelete(msg bulkDeleteDoneMsg) (tea.Model, tea.Cmd) {
+	for id := range msg.removed {
 		delete(m.checked, id)
 	}
-	m.removeRows(removed)
+	m.removeRows(msg.removed)
 	m.clampSel()
 	m.clampWindow()
 	m.syncDetail()
 	m.flashID++
 	switch {
-	case failed == 0:
-		m.flash = "✓ deleted " + plural(len(removed), "record")
-	case len(removed) == 0:
+	case msg.failed == 0:
+		m.flash = "✓ deleted " + plural(len(msg.removed), "record")
+	case len(msg.removed) == 0:
 		m.flash = "delete failed"
-		m.lastErr = lastErr
+		m.lastErr = msg.err
 	default:
-		m.flash = fmt.Sprintf("deleted %d, %d failed", len(removed), failed)
-		m.lastErr = lastErr
+		m.flash = fmt.Sprintf("deleted %d, %d failed", len(msg.removed), msg.failed)
+		m.lastErr = msg.err
 	}
 	return m, flashTick(m.flashID)
 }
