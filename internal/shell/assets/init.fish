@@ -60,15 +60,16 @@ set -g fish_private_mode 1
 {{- if .Bindings}}
 
 # Whether accepting a Ctrl-R result should run it immediately (Atuin parity).
-# Default: run the picked command on Enter; opt out with
-# `yore set-config enter_executes false` to insert it for review instead. Asked
-# of yore at call time — NOT cached at source time — so the setting takes effect
-# without re-sourcing. Fails open to the default (run) if yore is unavailable.
+# Default: put the picked command on the prompt for review; opt in with
+# `yore set-config enter_executes true` to have Enter run it. Asked of yore at
+# call time — NOT cached at source time — so the setting takes effect without
+# re-sourcing. Falls back to the default (review) if yore is unavailable, which
+# is the safe direction: nothing runs that the user did not look at.
 function _yore_enter_executes
 	# Substituted into a variable first, then quoted: fish only expands `(cmd)`
 	# OUTSIDE quotes, so "(cmd)" would compare the literal text and always win.
 	set -l v (command {{.Bin}} get-config enter_executes 2>/dev/null)
-	test "$v" != false
+	test "$v" = true
 end
 
 # Interactive search widget. The TUI draws on /dev/tty, so this command

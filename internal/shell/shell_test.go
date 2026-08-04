@@ -234,6 +234,31 @@ func TestFishFieldsAndIdioms(t *testing.T) {
 	require.NotContains(t, got, "__yore_start", "fish should not need a hand-tracked start timestamp")
 }
 
+// TestEnterExecutesFailsClosedInEveryShell pins the SAFETY DIRECTION of the
+// enter_executes gate, which is the one place the three hooks can disagree
+// without any of them looking wrong on its own.
+//
+// Every hook asks `yore get-config enter_executes` at call time and must run the
+// picked command only on an explicit "true". Testing the other polarity — "not
+// false" — reads identically while yore is answering, because it answers
+// "false" by default. The two diverge exactly when yore CANNOT answer: the
+// output is empty, "not false" is satisfied, and the shell runs a command out of
+// history that the user only meant to look at. A history tool's Ctrl-R picks are
+// full of sudo and rm, so the failure direction is the whole point.
+func TestEnterExecutesFailsClosedInEveryShell(t *testing.T) {
+	for _, sh := range []string{"zsh", "bash", "fish"} {
+		t.Run(sh, func(t *testing.T) {
+			got, err := shell.Init(sh, shell.Options{Bin: "yore", Mode: "coexist"})
+			require.NoError(t, err)
+			require.Contains(t, got, "get-config enter_executes",
+				"the gate must be asked at call time, not baked in at source time")
+			require.NotContains(t, got, "!= false",
+				"enter_executes must fail CLOSED: compare against true, so an unanswerable "+
+					"get-config leaves the command on the prompt instead of running it")
+		})
+	}
+}
+
 // TestFishNoSubstitutionInsideQuotes guards the one way a script ported from
 // zsh/bash silently does nothing in fish: `"$(cmd)"` translated to `"(cmd)"`.
 // Fish expands `(cmd)` only OUTSIDE quotes, so the quoted form is a literal
