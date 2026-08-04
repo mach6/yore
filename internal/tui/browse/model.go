@@ -350,6 +350,13 @@ type Model struct {
 	splits Splits
 	drag   dragKind
 	zoom   bool
+	// zoomDetail is the Z key's variant of z: while zoomed, keep the zoomed
+	// pane's detail companion visible as a side pane instead of hiding it. It
+	// is inert on its own — applyGeometry only honors it for panes that have
+	// such a companion (see zoomHasDetail) — so tabbing onto a pane with
+	// nothing to pair it with falls back to plain zoom without this having to
+	// be unset.
+	zoomDetail bool
 
 	// out is where OSC 52 copy sequences are written (the tty). Run sets it;
 	// it stays nil under test so copying is a silent no-op.
@@ -844,6 +851,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.toggleAgents()
 	case "z":
 		return m.toggleZoom()
+	case "Z":
+		return m.toggleZoomDetail()
 	case "1", "2", "3", "4", "5":
 		// The period is global, so the tabs work in every view — including the
 		// browse table, which had no time filter at all before.
@@ -1329,13 +1338,13 @@ func (m *Model) recomputeStats() {
 func (m Model) toggleAgents() (tea.Model, tea.Cmd) {
 	if m.view == viewAgents {
 		m.view = viewBrowse
-		m.zoom = false
+		m.zoom, m.zoomDetail = false, false
 		m.applyLayout()
 		return m, nil
 	}
 	m.view = viewAgents
 	m.apane = apPrompts
-	m.zoom = false
+	m.zoom, m.zoomDetail = false, false
 	m.promptSel = 0
 	m.drillSel = 0
 	m.infoCmd, m.infoTop = false, 0 // opening on the prompt list, details describes its prompt
@@ -1348,16 +1357,88 @@ func (m Model) toggleAgents() (tea.Model, tea.Cmd) {
 	return m, m.statsCmd(m.statsSeq)
 }
 
-// toggleZoom expands the focused pane to fill the frame (or restores the tiled
-// layout). Only the multi-pane views have anything to zoom.
+// toggleZoom expands the focused pane to fill the frame, alone (or restores
+// the tiled layout). Only the multi-pane views have anything to zoom. z and Z
+// are a mirrored pair, one per flavor: each claims plain-or-detail zoom, and
+// pressing the key for the flavor already showing exits back to the tiled
+// layout — so z always reaches the exact single-pane zoom this had before Z
+// existed, and esc (which calls this too) peels a detail companion off before
+// it drops the zoom entirely, one visible thing at a time like everywhere else
+// esc backs out of a state.
 func (m Model) toggleZoom() (tea.Model, tea.Cmd) {
 	if m.view != viewBrowse && m.view != viewAgents {
 		return m, nil
 	}
-	m.zoom = !m.zoom
+	if m.zoom && !m.zoomDetail {
+		m.zoom = false
+	} else {
+		m.zoom, m.zoomDetail = true, false
+	}
 	m.applyLayout()
 	m.syncDetail()
 	return m, nil
+}
+
+// toggleZoomDetail is Z: the same full-frame zoom as z, but for the two panes
+// with a meaningful detail view — the browse table and the agent explorer's
+// prompt and command lists — it keeps that detail pane on screen as a side
+// pane instead of hiding it. A pane with nothing to show there (the host
+// sidebar, the explorer's executor and host lists) has no side pane to offer,
+// so Z falls back to plain zoom exactly there.
+func (m Model) toggleZoomDetail() (tea.Model, tea.Cmd) {
+	if m.view != viewBrowse && m.view != viewAgents {
+		return m, nil
+	}
+	if !m.zoomHasDetail() {
+		return m.toggleZoom()
+	}
+	if m.zoom && m.zoomDetail {
+		m.zoom, m.zoomDetail = false, false
+	} else {
+		m.zoom, m.zoomDetail = true, true
+	}
+	m.applyLayout()
+	m.syncDetail()
+	return m, nil
+}
+
+// zoomHasDetail reports whether the pane that focus would zoom has a
+// companion detail view worth keeping on screen. In the browse view that is
+// the table and the detail pane itself (so tabbing onto the companion while
+// zoomed-with-detail keeps the pair rather than collapsing to one); in the
+// explorer it is the prompt and command lists and the details pane they share.
+func (m Model) zoomHasDetail() bool {
+	switch m.view {
+	case viewBrowse:
+		return m.focus == focusTable || m.focus == focusDetail
+	case viewAgents:
+		switch m.apane {
+		case apPrompts, apCommands, apInfo:
+			return true
+		}
+	}
+	return false
+}
+
+// zoomDetailActive reports whether the frame is currently showing a
+// zoomed-with-detail pair, for the places (dragging the seam between them)
+// that need to tell it apart from the browse/explorer sidebar split that
+// otherwise shares the same vDiv field.
+func (m Model) zoomDetailActive() bool {
+	return m.zoom && m.zoomDetail && m.zoomHasDetail()
+}
+
+// zoomDetailAgentPane is the explorer pane that pairs with DETAILS when
+// zoomed with the companion kept visible: whichever of the prompt or command
+// list last pointed the details pane at itself. Reusing infoCmd here — rather
+// than a second field — is what keeps the pairing right even when focus is
+// sitting on DETAILS itself, whose own apPrompts/apCommands neighbor cannot be
+// read off m.apane.
+func (m Model) zoomDetailAgentPane() agentPane {
+	if m.infoCmd {
+		return apCommands
+	}
+	return apPrompts
 }
 
 // handleAgentsKey services the agent explorer: navigation in whichever pane holds
@@ -2185,8 +2266,9 @@ func (m *Model) applyLayout() {
 	m.applyGeometry(w, mid)
 
 	// The detail viewport fills its box interior — which, zoomed, is the whole
-	// frame, so a long record rewraps to the full width instead of staying
-	// wrapped for the tile it came from.
+	// frame — or the side pane, zoomed with the detail kept beside the table —
+	// so a long record rewraps to that width instead of staying wrapped for the
+	// tile it came from.
 	//
 	// It is sized from the BROWSE geometry, not from m.geo, because the detail
 	// pane belongs to the browse view and m.geo describes whichever view is on
@@ -2195,9 +2277,12 @@ func (m *Model) applyLayout() {
 	// column. Any refresh landing in that moment (a query result, a token mint)
 	// re-wrapped the pane's content one character per line, and the wrapping is
 	// baked in at SetContent time, so it stayed stacked after coming back.
+	//
+	// m.geo is safe to read in the two zoomed cases below precisely because both
+	// are gated on the browse view being the one on screen.
 	dr := rect{w: rightOuter, h: m.detailOuterH}
-	if m.zoom && m.view == viewBrowse && m.focus == focusDetail {
-		dr = m.geo.p[focusDetail] // zoomed onto the detail pane: the whole frame
+	if m.zoom && m.view == viewBrowse && (m.focus == focusDetail || m.zoomDetailActive()) {
+		dr = m.geo.p[focusDetail] // on screen: the whole frame, or the side pane
 	}
 	m.detail.Width = maxInt(1, dr.w-2)
 	m.detail.Height = maxInt(1, dr.h-2) // the two border rows; the title is in one
@@ -2222,19 +2307,31 @@ func (m *Model) applyLayout() {
 }
 
 // applyGeometry records where the active view's panes and seams landed, so the
-// renderers and the mouse agree on one set of rectangles. A zoomed pane owns the
-// whole frame and has no seams to grab.
+// renderers and the mouse agree on one set of rectangles. A zoomed pane owns
+// the whole frame and has no seams to grab — unless zoomDetail is asking to
+// keep its detail companion visible, in which case the two share the frame
+// with one seam between them, sized like every other split from splits.ZoomDetail.
 func (m *Model) applyGeometry(w, mid int) {
 	if m.zoom {
 		g := noDividers()
 		full := rect{x: 0, y: 1, w: w, h: mid}
 		switch m.view {
 		case viewAgents:
-			g.p[m.apane] = full
+			if m.zoomDetail && m.zoomHasDetail() {
+				dw := splitAt(m.splits.ZoomDetail, w, minPaneCols, w*defaultZoomDetailRatio/ratioFull)
+				g = zoomDetailGeom(w, mid, dw, int(m.zoomDetailAgentPane()), int(apInfo))
+			} else {
+				g.p[m.apane] = full
+			}
 		case viewDevices:
 			g.p[m.dpane] = full
 		default:
-			g.p[m.focus] = full
+			if m.zoomDetail && m.zoomHasDetail() {
+				dw := splitAt(m.splits.ZoomDetail, w, minPaneCols, w*defaultZoomDetailRatio/ratioFull)
+				g = zoomDetailGeom(w, mid, dw, int(focusTable), int(focusDetail))
+			} else {
+				g.p[m.focus] = full
+			}
 		}
 		m.geo = g
 		return

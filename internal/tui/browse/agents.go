@@ -239,10 +239,19 @@ func (m Model) agentsTitle(w int) string {
 // --- the five-pane grid --------------------------------------------------
 
 // renderAgentsView draws the explorer. Zoomed, the focused pane alone fills the
-// frame; otherwise the five panes tile the geometry applyLayout resolved, with
-// the focused one carrying the accent border.
+// frame — unless zoomDetail is keeping DETAILS beside it, in which case the
+// two render side by side; otherwise the five panes tile the geometry
+// applyLayout resolved, with the focused one carrying the accent border.
 func (m Model) renderAgentsView(w, h int) string {
 	if m.zoom {
+		if m.zoomDetailActive() {
+			main := m.zoomDetailAgentPane()
+			g := m.geo
+			return lipgloss.JoinHorizontal(lipgloss.Top,
+				m.agentPaneBox(main, m.apane == main, g.p[main].w-2, g.p[main].h-2),
+				m.agentPaneBox(apInfo, m.apane == apInfo, g.p[apInfo].w-2, g.p[apInfo].h-2),
+			)
+		}
 		return m.agentPaneBox(m.apane, true, w-2, h-2)
 	}
 	g := m.geo

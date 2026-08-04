@@ -208,9 +208,19 @@ func padTo(s string, w int) string {
 
 // renderPanes lays out the three browse panes: host sidebar on the left, the
 // results table over the detail pane on the right. Zoomed, the focused pane
-// alone fills the frame.
+// alone fills the frame — unless zoomDetail is keeping the detail pane beside
+// it, in which case both render side by side from the same geometry the mouse
+// hit-tests against.
 func (m Model) renderPanes(w int) string {
 	if m.zoom {
+		if m.zoomDetailActive() {
+			tbl := m.geo.p[focusTable]
+			det := m.geo.p[focusDetail]
+			return lipgloss.JoinHorizontal(lipgloss.Top,
+				m.browsePaneBox(focusTable, m.focus == focusTable, tbl.w-2, tbl.h-2),
+				m.browsePaneBox(focusDetail, m.focus == focusDetail, det.w-2, det.h-2),
+			)
+		}
 		r := m.geo.p[m.focus]
 		return m.browsePaneBox(m.focus, true, r.w-2, r.h-2)
 	}

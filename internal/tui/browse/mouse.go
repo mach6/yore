@@ -87,6 +87,13 @@ func (m *Model) moveDivider(x, y int) {
 		if m.width < 1 {
 			return
 		}
+		if m.zoomDetailActive() {
+			// This seam's ratio is the detail companion's own width, unlike the
+			// sidebar seam it otherwise shares vDiv with — the companion sits on
+			// the right, so its share is the far side of where the pointer is.
+			m.splits.ZoomDetail = clampRatio(ratioFull-ratioOf(x, m.width), minColRatio, maxColRatio)
+			break
+		}
 		// Only the two split-column views have a vertical seam; the devices view's
 		// panes are full width, so seamAt can never report one there (its vDiv is
 		// -1, which nearSeam rejects).

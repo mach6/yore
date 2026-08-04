@@ -28,6 +28,12 @@ const maxPanes = 5
 // where the horizontal seam starts — the browse view splits only its right-hand
 // column. hDiv2 is the agent explorer's second horizontal seam, between the
 // executor sidebar and the host pane; it spans only the left column.
+//
+// Zoomed with its detail companion kept visible (zoomDetail, the Z key), a
+// pane's rect shrinks to share the frame with one more: zoomDetailGeom parks
+// both at their own indices with a real vDiv between them, so paneAt/seamAt
+// need no special case for it at all — they already sweep every index and
+// hit-test whatever vDiv holds.
 type layout struct {
 	p        [maxPanes]rect
 	vDiv     int
@@ -80,6 +86,7 @@ type Splits struct {
 	AgentTop   int // prompt-list height, ‰ of the middle region
 	AgentHosts int // executor-list height, ‰ of the explorer's top-left region
 	DevicesTop int // device-list height, ‰ of the middle region
+	ZoomDetail int // detail-companion width when zoomed with it kept visible (Z), ‰ of the terminal width
 }
 
 // Divider bounds. The ratios keep both sides of a seam meaningful; the absolute
@@ -104,6 +111,11 @@ const (
 	// machines as you have), while tokens accumulate — so the tokens pane gets
 	// the larger share.
 	defaultDevicesTopRatio = 400
+
+	// Zoomed-with-detail default: the companion holds one record's worth of
+	// labeled fields, not a table, so it needs less width than the pane it sits
+	// beside — a third of the frame reads all of it without starving the list.
+	defaultZoomDetailRatio = 340
 )
 
 // withDefaults fills in the agent explorer's starting proportions. That view is
@@ -119,6 +131,9 @@ func (s Splits) withDefaults() Splits {
 	}
 	if s.DevicesTop == 0 {
 		s.DevicesTop = defaultDevicesTopRatio
+	}
+	if s.ZoomDetail == 0 {
+		s.ZoomDetail = defaultZoomDetailRatio
 	}
 	return s
 }
@@ -234,4 +249,19 @@ func agentGeom(w, mid, leftW, topH, hostsH int) layout {
 		hDivFrom: 0,
 		hDiv2:    1 + topH - hostsH,
 	}
+}
+
+// zoomDetailGeom lays out a zoomed pane that keeps its detail companion beside
+// it instead of hiding it (the Z key): the zoomed pane on the left, the
+// companion in a narrower side pane on the right, with one draggable seam
+// between them spanning the whole frame. mainIdx/detailIdx are indices into
+// layout.p — focusTable/focusDetail for the browse view, the agent explorer's
+// focused list pane/apInfo for that view — so one function serves both
+// callers; applyGeometry picks the indices, this just places the two rects.
+func zoomDetailGeom(w, mid, detailW, mainIdx, detailIdx int) layout {
+	mainW := w - detailW
+	g := layout{vDiv: mainW, hDiv: -1, hDivFrom: -1, hDiv2: -1}
+	g.p[mainIdx] = rect{x: 0, y: 1, w: mainW, h: mid}
+	g.p[detailIdx] = rect{x: mainW, y: 1, w: detailW, h: mid}
+	return g
 }

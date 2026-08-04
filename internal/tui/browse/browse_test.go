@@ -1565,6 +1565,206 @@ func TestZoomedPaneKeepsMouse(t *testing.T) {
 	require.Positivef(t, am.promptSel, "the wheel must still scroll a zoomed agent pane")
 }
 
+// TestZoomDetailToggle proves z and Z are a mirrored pair: z always reaches
+// the plain single-pane zoom this view had before Z existed, Z keeps the
+// detail companion beside the zoomed pane instead of hiding it, and either
+// key exits once its own flavor is already showing.
+func TestZoomDetailToggle(t *testing.T) {
+	f := &fakeBackend{
+		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 1}}},
+		resp:  mkResp(mkRows("cargo build")),
+	}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: f.resp})
+	require.Equal(t, focusTable, m.focus)
+
+	// Plain zoom: no regression. Only the table's own slot is populated.
+	m, _ = step(t, m, press("z"))
+	require.True(t, m.zoom)
+	require.False(t, m.zoomDetail)
+	require.Zero(t, m.geo.p[focusDetail], "plain zoom must not show the detail companion")
+	m, _ = step(t, m, press("z"))
+	require.False(t, m.zoom, "z exits the flavor it already showed")
+
+	// Z: the detail companion joins the zoomed pane.
+	m, _ = step(t, m, press("Z"))
+	require.True(t, m.zoom)
+	require.True(t, m.zoomDetail)
+	require.NotZero(t, m.geo.p[focusDetail], "Z must keep the detail companion visible")
+	require.NotZero(t, m.geo.p[focusTable])
+
+	// Switching flavor mid-zoom stays zoomed rather than exiting.
+	m, _ = step(t, m, press("z"))
+	require.True(t, m.zoom, "z should downgrade the flavor, not leave zoom")
+	require.False(t, m.zoomDetail)
+	require.Zero(t, m.geo.p[focusDetail])
+
+	m, _ = step(t, m, press("Z"))
+	require.True(t, m.zoom, "Z should upgrade the flavor, not leave zoom")
+	require.True(t, m.zoomDetail)
+
+	// Z exits once its own flavor is already showing.
+	m, _ = step(t, m, press("Z"))
+	require.False(t, m.zoom)
+	require.False(t, m.zoomDetail)
+}
+
+// TestBrowseZoomDetail proves Z keeps the results table's detail pane visible
+// as a side pane, sized from the same per-mille split mechanism as the rest of
+// the layout, instead of losing it the way plain zoom does.
+func TestBrowseZoomDetail(t *testing.T) {
+	f := &fakeBackend{
+		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 1}}},
+		resp:  mkResp(mkRows("cargo build")),
+	}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: f.resp})
+
+	m, _ = step(t, m, press("Z"))
+	require.True(t, m.zoom)
+	require.True(t, m.zoomDetail)
+	out := strip(m.View())
+	require.NotContainsf(t, out, "HOSTS", "the sidebar has no detail companion and stays hidden:\n%s", out)
+	require.Containsf(t, out, "COMMANDS", "the zoomed table must still render:\n%s", out)
+	require.Containsf(t, out, "cargo build", "and still show its rows:\n%s", out)
+	require.Containsf(t, out, "DETAILS", "the detail companion must still be on screen:\n%s", out)
+
+	tbl, det := m.geo.p[focusTable], m.geo.p[focusDetail]
+	require.Positive(t, tbl.w)
+	require.Positive(t, det.w)
+	require.Equal(t, m.width, tbl.w+det.w, "the pair must still fill the whole frame")
+	require.Equal(t, tbl.w, m.geo.vDiv, "the seam between them must be draggable")
+
+	// A pane with no detail companion (the host sidebar) falls back to plain
+	// zoom, per the same rule the agent explorer's sidebar and host lists get.
+	m, _ = step(t, m, press("esc")) // drop the companion
+	m, _ = step(t, m, press("esc")) // unzoom entirely
+	m, _ = step(t, m, press("shift+tab"))
+	require.Equal(t, focusHosts, m.focus)
+	m, _ = step(t, m, press("Z"))
+	require.True(t, m.zoom)
+	require.False(t, m.zoomDetail, "the sidebar has nothing to pair with")
+	out = strip(m.View())
+	require.Containsf(t, out, "HOSTS", "the zoomed sidebar must still render:\n%s", out)
+	require.NotContainsf(t, out, "DETAILS", "there is nothing to keep beside it:\n%s", out)
+}
+
+// TestAgentsZoomDetail is TestBrowseZoomDetail's counterpart for the explorer's
+// prompt pane: Z keeps DETAILS beside it, and the pairing follows whichever of
+// the prompt or command list last pointed DETAILS at itself.
+func TestAgentsZoomDetail(t *testing.T) {
+	m := agentModel(t, 140, 40)
+	require.Equal(t, apPrompts, m.apane)
+
+	m, _ = step(t, m, press("Z"))
+	require.True(t, m.zoom)
+	require.True(t, m.zoomDetail)
+	out := strip(m.View())
+	require.Containsf(t, out, "PROMPTS", "the zoomed prompt list must still render:\n%s", out)
+	require.Containsf(t, out, "DETAILS", "its detail companion must still be on screen:\n%s", out)
+	require.NotContainsf(t, out, "COMMANDS", "the command pane has no place in this pair:\n%s", out)
+	// "AGENTS" is not a safe marker here: it is also the explorer's permanent
+	// title-line label, on screen in every state. The sidebar's own visibility
+	// is a geometry fact instead.
+	require.Zero(t, m.geo.p[apAgents], "the executor sidebar has no rect while this pair is zoomed")
+
+	prompts, info := m.geo.p[apPrompts], m.geo.p[apInfo]
+	require.Positive(t, prompts.w)
+	require.Positive(t, info.w)
+	require.Equal(t, m.width, prompts.w+info.w)
+	require.Equal(t, prompts.w, m.geo.vDiv)
+
+	// Tabbing onto DETAILS keeps the same pair on screen — focus moves between
+	// the two visible panes rather than the layout collapsing to one.
+	m, _ = step(t, m, press("tab")) // prompts -> commands
+	m, _ = step(t, m, press("tab")) // commands -> details
+	require.Equal(t, apInfo, m.apane)
+	require.True(t, m.infoCmd, "landing on details via the command pane describes the command")
+	out = strip(m.View())
+	require.Contains(t, out, "COMMANDS", "the pairing followed the command pane, not the prompt pane")
+	require.NotContains(t, out, "PROMPTS")
+
+	// A pane with no detail companion (the executor sidebar) falls back to
+	// plain zoom.
+	m, _ = step(t, m, press("esc")) // drop the companion
+	m, _ = step(t, m, press("esc")) // unzoom
+	for m.apane != apAgents {
+		m, _ = step(t, m, press("shift+tab"))
+	}
+	m, _ = step(t, m, press("Z"))
+	require.True(t, m.zoom)
+	require.False(t, m.zoomDetail)
+	require.Equal(t, m.width, m.geo.p[apAgents].w, "the sidebar alone fills the frame")
+	require.Zero(t, m.geo.p[apInfo], "there is nothing to keep beside it")
+}
+
+// TestZoomDetailMouse proves the mouse still works in the side-pane layout: the
+// wheel scrolls whichever of the pair is under the pointer, and a click on the
+// detail companion focuses it without dropping the zoom.
+func TestZoomDetailMouse(t *testing.T) {
+	long := strings.Repeat("cargo build --features one,two,three ", 20)
+	f := &fakeBackend{
+		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 1}}},
+		resp:  mkResp(mkRows(long)),
+	}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: f.resp})
+	m, _ = step(t, m, press("Z"))
+	require.True(t, m.zoomDetail)
+	require.Positive(t, m.detail.TotalLineCount()-m.detail.Height, "the long command should overflow the companion")
+
+	det := m.geo.p[focusDetail]
+	m, _ = step(t, m, wheelAt(det.x+2, det.y+2, tea.MouseButtonWheelDown))
+	require.Positive(t, m.detail.YOffset, "the wheel must scroll the detail companion")
+
+	m, _ = step(t, m, click(det.x+2, det.y+2))
+	require.Equal(t, focusDetail, m.focus, "clicking the detail companion must focus it")
+	require.True(t, m.zoom, "focusing the companion must not drop the zoom")
+	require.True(t, m.zoomDetail, "and must not drop the companion")
+
+	// The table half of the pair is still reachable and still scrolls.
+	tbl := m.geo.p[focusTable]
+	m, _ = step(t, m, click(tbl.x+2, tbl.y+2))
+	require.Equal(t, focusTable, m.focus)
+}
+
+// TestZoomDetailSplitSurvivesResize proves the seam between the zoomed pane and
+// its detail companion is stored as a per-mille ratio, like every other split,
+// so the proportion the user dragged to holds through a terminal resize.
+func TestZoomDetailSplitSurvivesResize(t *testing.T) {
+	f := &fakeBackend{
+		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 1}}},
+		resp:  mkResp(mkRows("cargo build")),
+	}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: f.resp})
+	m, _ = step(t, m, press("Z"))
+	require.True(t, m.zoomDetail)
+	// This split is a new feature with no legacy layout to preserve, so — like
+	// the agent explorer's own splits — it opens at a sensible default rather
+	// than at 0 ("auto" for the browse view's pre-existing splits, which have
+	// an established layout to leave alone until dragged).
+	require.Equal(t, defaultZoomDetailRatio, m.splits.ZoomDetail, "an undragged companion opens at the default ratio")
+
+	seam := m.geo.vDiv
+	m, _ = step(t, m, click(seam, 5))
+	require.Equal(t, dragVert, m.drag, "clicking the seam did not start a drag")
+	m, _ = step(t, m, dragTo(90, 5))
+	require.Equal(t, 90, m.geo.vDiv, "the seam did not follow the pointer")
+	m, _ = step(t, m, mouseUp(90))
+	require.Equal(t, dragNone, m.drag)
+
+	wantRatio := ratioFull - ratioOf(90, 120)
+	require.Equal(t, wantRatio, m.splits.ZoomDetail, "the ratio stored is the companion's own share")
+
+	// A resize keeps the ratio, which recomputes a wider companion rather than
+	// leaving it pinned at the cell count it was dragged to.
+	m, _ = step(t, m, tea.WindowSizeMsg{Width: 240, Height: 30})
+	require.Equal(t, wantRatio, m.splits.ZoomDetail, "the stored ratio must not drift on its own")
+	require.Equal(t, 60, m.geo.p[focusDetail].w, "the companion's width must scale with the frame")
+	require.Equal(t, 180, m.geo.vDiv)
+}
+
 // TestAgentsDurColumnAdapts keeps the adaptive DUR column honest across the
 // prompt and command panes.
 func TestAgentsDurColumnAdapts(t *testing.T) {

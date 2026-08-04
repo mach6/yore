@@ -315,6 +315,19 @@ position, and `Tab` cycles focus within the active view.
 - **Zoom** (`z`) expands the focused pane to the whole frame. Focus and zoom move
   together, so `Tab` while zoomed swaps which pane fills the screen rather than
   dropping back to the tiles; Esc unzooms before it leaves the view.
+- **Zoom with detail** (`Z`) is `z`'s sibling for the two panes whose whole point
+  is a companion detail view: the browse table (paired with the record detail
+  pane) and the agent explorer's prompt and command lists (paired with
+  **DETAILS**). Instead of hiding the companion, it shrinks to a side pane beside
+  the zoomed one, sized by its own per-mille split (`Splits.ZoomDetail`) so the
+  proportion survives a resize exactly like every other seam — and the seam
+  between the two is draggable like any other. `z` and `Z` are a mirrored pair:
+  each claims one flavor, and pressing the key for the flavor already showing
+  exits back to the tiles, so `z` alone still reaches the exact single-pane zoom
+  it always has. A pane with no meaningful detail — the host sidebar, the
+  explorer's executor and host lists — has nothing to pair with, so `Z` there is
+  `z`. Esc, which already peels one visible thing off at a time, drops the
+  detail companion before it drops the zoom.
 - **Mouse** (cell-motion reporting, enabled in `Run`): click focuses a pane, the
   wheel scrolls whatever the pointer is over without moving focus, and dragging a
   seam resizes the panes either side of it. The trade-off is that the terminal's

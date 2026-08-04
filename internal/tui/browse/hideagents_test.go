@@ -54,7 +54,9 @@ func (a *agentBackend) Query(req proto.QueryReq) (proto.QueryResp, error) {
 func browseWith(t *testing.T, f *agentBackend, hide bool) Model {
 	t.Helper()
 	m := NewModel(f, Options{Version: "v1", Now: now, HideAgents: hide})
-	m, _ = step(t, m, tea.WindowSizeMsg{Width: 100, Height: 20})
+	// Tall enough that the full "?" key panel (TestFooterOffersTheKeyWhenItMatters
+	// reads it without scrolling) fits every row the PANES group has grown to.
+	m, _ = step(t, m, tea.WindowSizeMsg{Width: 100, Height: 24})
 	return deliver(t, m, f, 1)
 }
 

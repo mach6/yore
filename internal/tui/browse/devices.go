@@ -45,7 +45,7 @@ type mintedMsg struct {
 // enterDevices opens the devices view and fetches both lists.
 func (m Model) enterDevices() (Model, tea.Cmd) {
 	m.view = viewDevices
-	m.devConfirm, m.dpane, m.zoom = "", dpDevices, false
+	m.devConfirm, m.dpane, m.zoom, m.zoomDetail = "", dpDevices, false, false
 	m.applyLayout()
 	return m, m.refreshDevicesCmd()
 }
@@ -158,7 +158,7 @@ func (m Model) handleDevicesKey(s string) (tea.Model, tea.Cmd) {
 	switch s {
 	case "esc", "D", "q":
 		m.view = viewBrowse
-		m.zoom = false
+		m.zoom, m.zoomDetail = false, false
 		m.applyLayout()
 		return m, nil
 	case "?":

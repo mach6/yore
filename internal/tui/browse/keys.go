@@ -77,6 +77,7 @@ func (m Model) browseGroups() []keyhelp.Group {
 	}
 	panes = append(panes,
 		row("z", "zoom the pane", "z"),
+		row("Z", "zoom, keeping the detail pane beside it", "Z"),
 		row("esc", "unzoom", "esc"),
 		mouseRow("click", "focus a pane"),
 		mouseRow("drag", "resize panes"),
@@ -137,6 +138,7 @@ func (m Model) agentsGroups() []keyhelp.Group {
 		{Title: "PANES", Rows: []keyhelp.Row{
 			row("tab/⇧tab", "switch pane", "tab", "shift+tab"),
 			row("z", "zoom the pane", "z"),
+			row("Z", "zoom, keeping the detail pane beside it", "Z"),
 			mouseRow("click", "focus a pane"),
 			mouseRow("drag", "resize panes"),
 			mouseRow("wheel", "scroll under the pointer"),
@@ -294,10 +296,17 @@ func (m Model) footerRows() []keyhelp.Row {
 			row("tab", "pane", "tab"),
 			row("/", "filter "+filterNoun(m.filterTarget()), "/"),
 			row("z", "zoom", "z"),
+		}
+		// Z only does something different from z on the panes that have a
+		// details companion worth keeping, so it is offered exactly there.
+		if m.zoomHasDetail() {
+			rows = append(rows, row("Z", "zoom with details", "Z"))
+		}
+		rows = append(rows,
 			row("1-5", "window", "1", "2", "3", "4", "5"),
 			row("H", "host", "H"),
 			row("A", "agent", "A"),
-		}
+		)
 		// With a filter up, esc means "drop it" before it means "leave" — say the
 		// one that will actually happen next.
 		if m.filterFor(m.filterTarget()) != "" {
@@ -365,6 +374,16 @@ func (m Model) footerRows() []keyhelp.Row {
 		rows = append(rows, row("A", "show agents", "A"))
 	}
 	if m.zoom {
+		// Says what pressing it will do next, the way agentToggleDesc reads
+		// hideAgents: the same key means "add the side pane" until there is one,
+		// then "drop it" once there is.
+		if m.zoomHasDetail() {
+			if m.zoomDetail {
+				rows = append(rows, row("Z", "hide detail", "Z"))
+			} else {
+				rows = append(rows, row("Z", "show detail", "Z"))
+			}
+		}
 		rows = append(rows, row("z/esc", "unzoom", "z", "esc"))
 	}
 	return append(rows, row("?", "keys", "?"), row("q", "quit", "q"))
