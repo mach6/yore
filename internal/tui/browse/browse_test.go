@@ -23,25 +23,26 @@ import (
 // --- test doubles & helpers ---------------------------------------------
 
 type fakeBackend struct {
-	mu         sync.Mutex
-	reqs       []proto.QueryReq
-	resp       proto.QueryResp
-	hosts      proto.HostsInfo
-	hostsCalls int // Hosts() invocations; the sidebar may re-fetch repeatedly
-	deleted    []string
-	delErr     error
-	failIDs    map[string]bool // Delete fails for exactly these ids, regardless of delErr
-	submitted  []rec.Record
-	submitErr  error
-	devices    proto.DevicesInfo
-	approved   []string
-	revoked    []string
-	tokens     proto.TokensInfo
-	tokRevoked []string
-	minted     proto.TokenInfo
-	mintCalls  int
-	synced     int
-	syncErr    error
+	mu           sync.Mutex
+	reqs         []proto.QueryReq
+	resp         proto.QueryResp
+	hosts        proto.HostsInfo
+	hostsCalls   int // Hosts() invocations; the sidebar may re-fetch repeatedly
+	deleted      []string
+	delErr       error
+	failIDs      map[string]bool // Delete fails for exactly these ids, regardless of delErr
+	submitted    []rec.Record
+	submitErr    error
+	submitFailID map[string]bool // SubmitRecord fails for exactly these TargetIDs, regardless of submitErr
+	devices      proto.DevicesInfo
+	approved     []string
+	revoked      []string
+	tokens       proto.TokensInfo
+	tokRevoked   []string
+	minted       proto.TokenInfo
+	mintCalls    int
+	synced       int
+	syncErr      error
 }
 
 func (f *fakeBackend) Query(req proto.QueryReq) (proto.QueryResp, error) {
@@ -80,8 +81,14 @@ func (f *fakeBackend) Delete(id string) error {
 func (f *fakeBackend) SubmitRecord(r rec.Record) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.submitFailID[r.TargetID] {
+		return errors.New("submit failed")
+	}
+	if f.submitErr != nil {
+		return f.submitErr
+	}
 	f.submitted = append(f.submitted, r)
-	return f.submitErr
+	return nil
 }
 
 func (f *fakeBackend) Devices() (proto.DevicesInfo, error) {
@@ -413,6 +420,50 @@ func TestCheckAll(t *testing.T) {
 	m, _ = step(t, m, queryResultMsg{seq: 2, resp: mkResp(nil)})
 	m, _ = step(t, m, press("ctrl+a"))
 	require.Zero(t, m.checkedCount())
+}
+
+// TestCheckAllTogglesFromPartial: ctrl+a is a master-checkbox tri-state, not
+// a one-way "select everything" — a partial selection promotes to all, a full
+// selection clears, and a third press checks all again, exactly the way a
+// table header's own select-all checkbox behaves.
+func TestCheckAllTogglesFromPartial(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("a", "b", "c"))})
+
+	// Only row 0 checked: a partial selection.
+	m, _ = step(t, m, press(" "))
+	require.Equal(t, 1, m.checkedCount())
+
+	// ctrl+a on a partial selection promotes it to everything shown.
+	m, _ = step(t, m, press("ctrl+a"))
+	require.Equal(t, 3, m.checkedCount(), "ctrl+a on a partial selection should check every row shown")
+
+	// Pressing it again, now that everything is checked, clears it outright.
+	m, _ = step(t, m, press("ctrl+a"))
+	require.Zero(t, m.checkedCount(), "ctrl+a on a full selection should clear it")
+
+	// A third press checks all again — the toggle keeps working, not a one-shot.
+	m, _ = step(t, m, press("ctrl+a"))
+	require.Equal(t, 3, m.checkedCount(), "ctrl+a should check all again after clearing")
+}
+
+// TestCheckAllClearsWhenAllCheckedBySpace: the "all checked" test is about
+// the state of m.checked, not about which key put it there — checking every
+// row one at a time with space must clear on the next ctrl+a exactly like
+// checking them with ctrl+a itself would.
+func TestCheckAllClearsWhenAllCheckedBySpace(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("a", "b"))})
+
+	m, _ = step(t, m, press(" "))
+	m, _ = step(t, m, press("down"))
+	m, _ = step(t, m, press(" "))
+	require.Equal(t, 2, m.checkedCount())
+
+	m, _ = step(t, m, press("ctrl+a"))
+	require.Zero(t, m.checkedCount(), "ctrl+a should clear a selection that reached 'all' via space alone")
 }
 
 func TestCheckClearOnEsc(t *testing.T) {
@@ -1245,6 +1296,211 @@ func TestTagRowPicker(t *testing.T) {
 	assert.Equal(t, "tag", f.submitted[0].Type)
 	assert.Contains(t, m.rows[0].Tags, "refactor", "row shows the new tag at once")
 	require.Contains(t, strip(m.View()), "tagged: refactor")
+}
+
+// TestTagPromptShowsScopeAndResets: ctrl+t with a selection names the count
+// it is about to tag, the same precedent the delete confirm sets; closing it
+// (by cancel or submit) must put the prompt back to the single-row default so
+// the next ctrl+t with nothing checked does not still show a stale count.
+func TestTagPromptShowsScopeAndResets(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 40)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("a", "b", "c"))})
+
+	m, _ = step(t, m, press(" "))
+	m, _ = step(t, m, press("down"))
+	m, _ = step(t, m, press(" "))
+
+	m, _ = step(t, m, press("ctrl+t"))
+	require.Equal(t, "tag 2 records: ", m.tagInput.Prompt, "the prompt should name how many records it will tag")
+
+	m, _ = step(t, m, press("esc"))
+	require.Equal(t, "tag: ", m.tagInput.Prompt, "closing the box must drop the stale count")
+
+	// Reopening with nothing checked shows the plain single-row prompt.
+	m, _ = step(t, m, press("esc")) // clear the selection
+	m, _ = step(t, m, press("ctrl+t"))
+	require.Equal(t, "tag: ", m.tagInput.Prompt)
+}
+
+// runBulkTag opens ctrl+t, types name, submits, and drains the resulting
+// command the way bubbletea would — the async mirror of runBulkDelete, since
+// a bulk tag's SubmitRecord round trips run in a tea.Cmd, not on Update.
+func runBulkTag(t *testing.T, m Model, name string) Model {
+	t.Helper()
+	m, _ = step(t, m, press("ctrl+t"))
+	for _, r := range name {
+		m, _ = step(t, m, press(string(r)))
+	}
+	m, cmd := step(t, m, press("enter"))
+	for _, msg := range collect(cmd) {
+		m, _ = step(t, m, msg)
+	}
+	return m
+}
+
+// TestBulkTagTagsEveryChecked: with a selection, ctrl+t tags the whole
+// checked set instead of the cursor row, and every tagged row shows the tag
+// optimistically. The unchecked row must not be touched.
+func TestBulkTagTagsEveryChecked(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 40)
+	rows := mkRows("a", "b", "c")
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(rows)})
+
+	m, _ = step(t, m, press(" ")) // check row 0
+	m, _ = step(t, m, press("down"))
+	m, _ = step(t, m, press("down"))
+	m, _ = step(t, m, press(" ")) // check row 2
+
+	m = runBulkTag(t, m, "wip")
+
+	require.Len(t, f.submitted, 2, "exactly the checked rows should be tagged")
+	got := map[string]bool{}
+	for _, r := range f.submitted {
+		require.Equal(t, "wip", r.TagName)
+		require.Equal(t, "tag", r.Type)
+		got[r.TargetID] = true
+	}
+	require.True(t, got["0"] && got["2"], "the two checked ids should have been submitted")
+
+	byID := map[string][]string{}
+	for _, r := range m.rows {
+		byID[r.ID] = r.Tags
+	}
+	require.Contains(t, byID["0"], "wip")
+	require.Contains(t, byID["2"], "wip")
+	require.Empty(t, byID["1"], "the row never checked must not gain the tag")
+	require.Contains(t, strip(m.View()), "✓ tagged 2 records")
+
+	// Tagging is additive, not destructive like delete: the selection survives
+	// so a second tag over the same set does not require reselecting.
+	require.Equal(t, 2, m.checkedCount(), "a successful bulk tag should not clear the selection")
+}
+
+// TestBulkTagSingleRowStillWorksUnchecked proves the dispatch in submitTag:
+// with nothing checked, ctrl+t still acts on the single row under the
+// cursor, exactly as before bulk tag existed.
+func TestBulkTagSingleRowStillWorksUnchecked(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 40)
+	rows := mkRows("a", "b")
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(rows)})
+	require.Zero(t, m.checkedCount())
+
+	m, _ = step(t, m, press("ctrl+t"))
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("solo")})
+	m, _ = step(t, m, press("enter"))
+
+	require.Len(t, f.submitted, 1, "the single-row path submits synchronously in Update")
+	require.Equal(t, rows[0].ID, f.submitted[0].TargetID)
+	require.Contains(t, m.rows[0].Tags, "solo")
+}
+
+// TestBulkTagDoesNotBlockUpdate proves the round trips happen in a command,
+// not on the event loop — the same freeze bug fixed for bulk delete. This is
+// the important assertion: it must fail if the loop moves back inline.
+func TestBulkTagDoesNotBlockUpdate(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 40)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("a", "b", "c"))})
+	m, _ = step(t, m, press("ctrl+a"))
+
+	m, _ = step(t, m, press("ctrl+t"))
+	for _, r := range "wip" {
+		m, _ = step(t, m, press(string(r)))
+	}
+	m, cmd := step(t, m, press("enter"))
+
+	require.Empty(t, f.submitted, "confirming must not submit inline — the work belongs in the command")
+	for _, r := range m.rows {
+		require.Emptyf(t, r.Tags, "no row may show the tag before the command has run: %+v", r)
+	}
+	require.Contains(t, strip(m.View()), "tagging 3 records…", "the in-progress flash must be showing while the command runs")
+	require.NotNil(t, cmd, "confirming must hand back the command that does the work")
+
+	for _, msg := range collect(cmd) {
+		m, _ = step(t, m, msg)
+	}
+	require.Len(t, f.submitted, 3, "draining the command must then do every submit")
+	for _, r := range m.rows {
+		require.Contains(t, r.Tags, "wip")
+	}
+}
+
+// TestBulkTagPartialFailure: one SubmitRecord call in the batch fails. The
+// others must still go through, the failed id must stay checked so it can be
+// retried, and the flash must report both counts. Note the whole selection
+// survives here, not just the failure — a bulk tag never unchecks anything,
+// which is what makes the failed id retry-able without any special case.
+func TestBulkTagPartialFailure(t *testing.T) {
+	f := &fakeBackend{submitFailID: map[string]bool{"1": true}}
+	m := ready(t, f, 120, 40)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("a", "b", "c"))})
+	m, _ = step(t, m, press("ctrl+a"))
+
+	m = runBulkTag(t, m, "wip")
+
+	byID := map[string][]string{}
+	for _, r := range m.rows {
+		byID[r.ID] = r.Tags
+	}
+	require.Contains(t, byID["0"], "wip")
+	require.Contains(t, byID["2"], "wip")
+	require.Empty(t, byID["1"], "the failing id must not show the tag")
+	require.Contains(t, strip(m.View()), "tagged 2, 1 failed")
+
+	// Tagging never drops anything from the checked set — rows survive it, so
+	// the selection is worth keeping for a follow-up tag — but the one id that
+	// actually failed is exactly as retry-able as if nothing else had
+	// succeeded: it is (still) checked.
+	require.True(t, m.isChecked("0"))
+	require.True(t, m.isChecked("1"), "the failed id should stay checked so it can be retried")
+	require.True(t, m.isChecked("2"))
+}
+
+// TestOptimisticTagSurvivesPeriodChange is the allRows regression test: the
+// single-row tag path used to mutate only m.rows, so applyPeriodFilter — which
+// rebuilds rows from allRows on every 1..5 press — silently dropped the tag
+// the next time the period changed. It must fail against the old
+// m.rows-only submitTag.
+func TestOptimisticTagSurvivesPeriodChange(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 40)
+	rows := mkRows("a", "b")
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(rows)})
+
+	// Narrow to "Today" first: on the default "All" period, rows and allRows
+	// are literally the same slice, so the bug would not reproduce there —
+	// applyPeriodFilter has to actually rebuild rows from allRows for the
+	// missing-allRows write to matter.
+	m, _ = step(t, m, press("1"))
+	require.NotEmpty(t, m.rows, "the rows should still be within today's window")
+
+	m, _ = step(t, m, press("ctrl+t"))
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("refactor")})
+	m, _ = step(t, m, press("enter"))
+
+	found := false
+	for _, r := range m.rows {
+		if r.ID == rows[0].ID {
+			found = true
+			require.Contains(t, r.Tags, "refactor")
+		}
+	}
+	require.True(t, found)
+
+	// Back to "All": applyPeriodFilter now hands rows the allRows slice
+	// directly. If the tag never reached allRows, it vanishes here.
+	m, _ = step(t, m, press("5"))
+	found = false
+	for _, r := range m.rows {
+		if r.ID == rows[0].ID {
+			found = true
+			require.Contains(t, r.Tags, "refactor", "the tag must survive a period-filter round trip")
+		}
+	}
+	require.True(t, found)
 }
 
 func TestTagFilterNoTag(t *testing.T) {

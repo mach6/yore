@@ -89,7 +89,7 @@ func (m Model) browseGroups() []keyhelp.Group {
 	act := []keyhelp.Row{
 		row("enter", "put it on the prompt", "enter"),
 		row("y", "copy", "y"),
-		row("^t", "tag this command", "ctrl+t"),
+		row("^t", "tag (the selection, if any)", "ctrl+t"),
 	}
 	if m.vim {
 		act = append(act, row("d", "delete (the selection, if any)", "d"))
@@ -113,7 +113,7 @@ func (m Model) browseGroups() []keyhelp.Group {
 		}},
 		{Title: "SELECT", Rows: []keyhelp.Row{
 			row("space", "check this row for a bulk action", " "),
-			row("^a", "check every row shown", "ctrl+a"),
+			row("^a", "check all shown, or clear if all are checked", "ctrl+a"),
 		}},
 		{Title: "ACT", Rows: act},
 		{Title: "GO", Rows: globalRows("")},

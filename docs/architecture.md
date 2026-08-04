@@ -341,12 +341,16 @@ position, and `Tab` cycles focus within the active view.
   long-standing default layout until a seam is actually moved.
 
 **Bulk selection** (browse table only). `space` marks or unmarks the row under
-the cursor; `ctrl+a` marks every row the table is *currently showing* — after
-the query, the period filter, and any search have narrowed it, not the whole
-archive. A marked row carries a visible check in a leading gutter column (drawn
-outside the ordinary column layout — `colLayout` reserves `selGutterW` columns
-for it before dividing the rest among the data columns, since a `colSpec`
-cell has no way to see selection state), and the pane title carries the count
+the cursor; `ctrl+a` is a master-checkbox tri-state, the same convention as a
+table header's own select-all checkbox: if every row *currently showing* is
+already checked it clears the selection outright, otherwise — nothing checked,
+or only some of it — it checks every row shown. "Shown" is after the query,
+the period filter, and any search have narrowed it, not the whole archive, so
+a second `ctrl+a` undoes the first rather than being a one-way ratchet. A
+marked row carries a visible check in a leading gutter column (drawn outside
+the ordinary column layout — `colLayout` reserves `selGutterW` columns for it
+before dividing the rest among the data columns, since a `colSpec` cell has no
+way to see selection state), and the pane title carries the count
 (`12/340  3 selected`) so it stays visible from any pane, not only while the
 table has focus. `esc` backs out one visible thing at a time, same as
 everywhere else it does that: unzoom first, then clear the selection.
@@ -361,19 +365,33 @@ for stats, the agent explorer, or devices. A mark surviving any of those would
 be a mark on rows nobody looked at when they pressed `space` — worth a
 reselect, not worth the risk to whatever the checked set feeds.
 
-Delete is the first (and, so far, only) consumer: `d`/`ctrl+d` act on the
-checked set when one exists, falling back to the single row under the cursor
-otherwise, and the confirmation names which — `delete 3 records?` for a
-selection, the single command's text for the cursor path — so answering `y`
-never deletes more than what was just asked about. `proto.OpDelete` tombstones
-one record per call; there is no batch delete in the daemon protocol, so a
-bulk delete is N round trips over the same connection. A failure partway
-through does not abort the rest — every call is attempted regardless of an
-earlier one failing, since a row already tombstoned by a prior call cannot be
-un-deleted by giving up early — and the flash reports both counts when any
-fail (`deleted 10, 2 failed`) rather than losing the difference between what
-was asked for and what happened. Rows whose call failed stay in the table and
-stay checked, so they can be retried without reselecting.
+Delete and tag are the two consumers, and both act on the checked set when one
+exists, falling back to the single row under the cursor otherwise — `d`/`ctrl+d`
+and `ctrl+t` make the same split, and both prompts name which is about to
+happen (`delete 3 records?`, `tag 3 records: `) so answering never affects more
+than what was just asked about. Neither operation has a batch call in the
+daemon protocol — `proto.OpDelete` tombstones and `rec.TypeTag` tags one record
+per call — so a bulk action is N round trips over the same connection, run off
+the event loop (`bulkDeleteCmd`/`bulkTagCmd`) so the UI keeps redrawing for
+however long the batch takes rather than freezing for the whole run with
+nothing to tell it from a hang. A failure partway through does not abort the
+rest for either — every call is attempted regardless of an earlier one
+failing, since a row already tombstoned (or tagged) by a prior call in the same
+batch cannot be undone by giving up early — and the flash reports both counts
+when any fail (`deleted 10, 2 failed`, `tagged 10, 2 failed`) rather than
+losing the difference between what was asked for and what happened.
+
+The two differ in what happens to the checked set once a run finishes, because
+they differ in what happens to the *rows*: a deleted row leaves the table, so
+`applyBulkDelete` drops its id from `checked` along with it and only a failed
+id remains, ready for a retry. A tagged row survives — tagging is additive,
+not destructive — so `applyBulkTag` never touches `checked` at all: the whole
+selection carries forward, success or failure, so tagging the same batch
+`wip` and then `review` needs exactly one selection, not two. The optimistic
+tag itself is applied to both `allRows` and `rows` (not `rows` alone), for the
+same reason `removeRows` touches both for delete: `applyPeriodFilter` rebuilds
+`rows` from `allRows` on every `1`-`5` press, so a tag that reached only `rows`
+would silently disappear the next time the period changed.
 
 **Keys are described once** (`internal/tui/keyhelp`, driven by each UI's
 `keys.go`). One table of bindings feeds two renderings: the one-line footer that

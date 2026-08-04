@@ -186,6 +186,16 @@ type bulkDeleteDoneMsg struct {
 	err     error
 }
 
+// bulkTagDoneMsg carries the result of a bulk tag — the ctrl+t mirror of
+// bulkDeleteDoneMsg, and for the same reason: N checked rows means N
+// SubmitRecord round trips, which must not run on the event loop.
+type bulkTagDoneMsg struct {
+	name   string
+	tagged map[string]struct{}
+	failed int
+	err    error
+}
+
 // Model is the Bubble Tea model backing the browser. Exported so tests can
 // drive Update directly.
 type Model struct {
@@ -535,6 +545,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case bulkDeleteDoneMsg:
 		return m.applyBulkDelete(msg)
 
+	case bulkTagDoneMsg:
+		return m.applyBulkTag(msg)
+
 	case flashExpireMsg:
 		if msg.id == m.flashID {
 			m.flash = ""
@@ -831,8 +844,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.tagging {
 		switch s {
 		case "esc", "ctrl+c":
-			m.tagging = false
-			m.tagInput.Blur()
+			m.closeTagInput()
 			return m, nil
 		case "enter":
 			return m.submitTag()
@@ -945,11 +957,22 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "A":
 		return m.toggleHideAgents()
 	case "ctrl+t":
-		if m.sel >= 0 && m.sel < len(m.rows) {
-			m.tagging = true
-			m.tagInput.SetValue("")
-			m.tagInput.Focus()
+		// With rows checked, ctrl+t tags the whole checked set instead of the
+		// cursor row — submitTag decides which, the same split doDelete makes
+		// for d — so the prompt says how many records are about to be tagged
+		// rather than showing the single-row "tag: " while acting on twelve.
+		n := m.checkedCount()
+		if n == 0 && (m.sel < 0 || m.sel >= len(m.rows)) {
+			return m, nil
 		}
+		m.tagging = true
+		m.tagInput.SetValue("")
+		if n > 0 {
+			m.tagInput.Prompt = "tag " + plural(n, "record") + ": "
+		} else {
+			m.tagInput.Prompt = "tag: "
+		}
+		m.tagInput.Focus()
 		return m, nil
 	case "tab":
 		m.cycleFocus(1)
@@ -1034,11 +1057,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// of its own that means nothing else here.
 			m.toggleChecked()
 		case "ctrl+a":
-			// Check every row the table is CURRENTLY SHOWING — after the query,
-			// the period filter and any search have narrowed it — not the whole
-			// archive, so "select all" means all of what is on screen to select
-			// from, the same way ctrl+a means in a text field.
-			m.checkAll()
+			// Master-checkbox tri-state: if everything shown is already checked,
+			// clear it; otherwise check everything shown. See toggleCheckAll for
+			// why "shown" is not "the whole archive".
+			m.toggleCheckAll()
 		case "d":
 			// Delete stays a single-key action (with y/n confirm) in both
 			// keymaps; vim's "dd" is intentionally NOT implemented. With rows
@@ -2087,35 +2109,139 @@ func (m Model) copySelected() (tea.Model, tea.Cmd) {
 	return m.copyText(cmd.Cmd, "✓ copied")
 }
 
-// submitTag sends a user-tag record for the selected row and optimistically
-// shows the tag at once (the daemon folds it on ingest; a later query confirms).
-func (m Model) submitTag() (tea.Model, tea.Cmd) {
-	name := strings.ToLower(strings.TrimSpace(m.tagInput.Value()))
+// closeTagInput blurs the tag box and puts its prompt back to the single-row
+// default. Without this, opening ctrl+t on a selection (which sets a
+// "tag N records: " prompt) and later closing it and opening it again on the
+// cursor row alone would still show that stale count.
+func (m *Model) closeTagInput() {
 	m.tagging = false
 	m.tagInput.Blur()
-	if name == "" || m.sel < 0 || m.sel >= len(m.rows) {
+	m.tagInput.Prompt = "tag: "
+}
+
+// submitTag sends a user-tag record for the row under the cursor and
+// optimistically shows the tag at once (the daemon folds it on ingest; a
+// later query confirms). With rows checked it tags the whole checked set
+// instead — the exact mirror of doDelete's single-row/checked-set split — and
+// that path runs off the event loop (see tagChecked).
+func (m Model) submitTag() (tea.Model, tea.Cmd) {
+	name := strings.ToLower(strings.TrimSpace(m.tagInput.Value()))
+	m.closeTagInput()
+	if name == "" {
 		return m, nil
 	}
-	r := m.rows[m.sel]
+	if m.checkedCount() > 0 {
+		return m.tagChecked(name)
+	}
+	if m.sel < 0 || m.sel >= len(m.rows) {
+		return m, nil
+	}
+	id := m.rows[m.sel].ID
 	m.flashID++
-	if err := m.b.SubmitRecord(rec.Record{ID: rec.NewID(), Type: rec.TypeTag, TagName: name, TargetID: r.ID}); err != nil {
+	if err := m.b.SubmitRecord(rec.Record{ID: rec.NewID(), Type: rec.TypeTag, TagName: name, TargetID: id}); err != nil {
 		m.flash = "tag failed"
 		m.lastErr = err
 		return m, flashTick(m.flashID)
 	}
-	dup := false
-	for _, tg := range m.rows[m.sel].Tags {
-		if tg == name {
-			dup = true
-			break
-		}
-	}
-	if !dup {
-		m.rows[m.sel].Tags = append(m.rows[m.sel].Tags, name)
-		m.hasTags = true
-	}
+	m.applyTagLocal(id, name)
 	m.flash = "tagged: " + name
 	return m, flashTick(m.flashID)
+}
+
+// tagChecked submits name for every checked record. It mirrors deleteChecked:
+// proto has no batch tag call, so N checked rows costs N SubmitRecord round
+// trips over the same connection, run off the event loop the same way (see
+// bulkTagCmd) so the UI keeps redrawing for however long the batch takes.
+func (m Model) tagChecked(name string) (tea.Model, tea.Cmd) {
+	ids := make([]string, 0, len(m.checked))
+	for id := range m.checked {
+		ids = append(ids, id)
+	}
+	// In-progress flash with no expiry tick: replaced by applyBulkTag when the
+	// run ends, so it shows for the real duration however long that is — see
+	// deleteChecked's flash for the same reasoning.
+	m.flash = "tagging " + plural(len(ids), "record") + "…"
+	m.flashID++
+	return m, m.bulkTagCmd(ids, name)
+}
+
+// bulkTagCmd submits name for ids one at a time off the event loop. Every id
+// is attempted even after a failure — the same policy as bulkDeleteCmd — so a
+// partial run still tags everything it can rather than giving up on the rest
+// because one call failed.
+func (m Model) bulkTagCmd(ids []string, name string) tea.Cmd {
+	b := m.b
+	return func() tea.Msg {
+		msg := bulkTagDoneMsg{name: name, tagged: make(map[string]struct{}, len(ids))}
+		for _, id := range ids {
+			if err := b.SubmitRecord(rec.Record{ID: rec.NewID(), Type: rec.TypeTag, TagName: name, TargetID: id}); err != nil {
+				msg.failed++
+				msg.err = err
+				continue
+			}
+			msg.tagged[id] = struct{}{}
+		}
+		return msg
+	}
+}
+
+// applyBulkTag folds a finished bulk tag back into the table, applying the
+// tag optimistically to every record that succeeded. Unlike applyBulkDelete,
+// it never drops anything from m.checked: tagging is additive and the rows
+// survive it, so a user tagging "wip" then "review" over the same checked set
+// should not have to reselect between the two — and an id whose call failed
+// stays checked regardless, so a retry acts on exactly what failed.
+func (m Model) applyBulkTag(msg bulkTagDoneMsg) (tea.Model, tea.Cmd) {
+	for id := range msg.tagged {
+		m.applyTagLocal(id, msg.name)
+	}
+	m.flashID++
+	switch {
+	case msg.failed == 0:
+		m.flash = "✓ tagged " + plural(len(msg.tagged), "record")
+	case len(msg.tagged) == 0:
+		m.flash = "tag failed"
+		m.lastErr = msg.err
+	default:
+		m.flash = fmt.Sprintf("tagged %d, %d failed", len(msg.tagged), msg.failed)
+		m.lastErr = msg.err
+	}
+	return m, flashTick(m.flashID)
+}
+
+// applyTagLocal appends name to the Tags of the record with the given id in
+// BOTH m.rows and m.allRows, skipping the append where it is already there.
+// Touching only m.rows (as the single-row path used to) works until the next
+// period-tab change: applyPeriodFilter rebuilds rows from allRows on every
+// 1..5 press, so a tag that never reached allRows would silently vanish the
+// moment the period changed — the same class of bug removeRows exists to
+// prevent for delete.
+func (m *Model) applyTagLocal(id, name string) {
+	changed := appendTag(m.allRows, id, name)
+	if appendTag(m.rows, id, name) {
+		changed = true
+	}
+	if changed {
+		m.hasTags = true
+	}
+}
+
+// appendTag adds name to the Tags of the record with the given id within
+// rows, unless it is already there, and reports whether it changed anything.
+func appendTag(rows []rec.Record, id, name string) bool {
+	for i := range rows {
+		if rows[i].ID != id {
+			continue
+		}
+		for _, tg := range rows[i].Tags {
+			if tg == name {
+				return false
+			}
+		}
+		rows[i].Tags = append(rows[i].Tags, name)
+		return true
+	}
+	return false
 }
 
 // doDelete carries out the confirmed delete: the checked set if anything is
@@ -2409,14 +2535,30 @@ func (m *Model) toggleChecked() {
 	}
 }
 
-// checkAll marks every row the table is currently showing (ctrl+a) — after
-// the query, the period filter and any search have narrowed it, not the whole
-// archive, since that is what "all" means on screen to select from.
-func (m *Model) checkAll() {
+// toggleCheckAll implements ctrl+a's master-checkbox tri-state, the same
+// convention as a table header's "select all" checkbox: if every row the
+// table is CURRENTLY SHOWING is already checked, it clears the selection
+// outright; otherwise — nothing checked, or only some of it — it checks every
+// row shown. "Shown" means after the query, the period filter and any search
+// have narrowed it, not the whole archive, since that is what "all" means on
+// screen to select from. A second press after a full select-all is what
+// clears it, so the key is a toggle rather than a one-way ratchet.
+func (m *Model) toggleCheckAll() {
 	if len(m.rows) == 0 {
 		// Select-all of nothing is nothing, not "leave whatever was checked
 		// before alone" — otherwise ctrl+a on an empty table would be a no-op
 		// that quietly preserves a selection made over rows no longer shown.
+		m.checked = nil
+		return
+	}
+	allChecked := true
+	for _, r := range m.rows {
+		if !m.isChecked(r.ID) {
+			allChecked = false
+			break
+		}
+	}
+	if allChecked {
 		m.checked = nil
 		return
 	}
