@@ -30,6 +30,7 @@ type fakeBackend struct {
 	hostsCalls int // Hosts() invocations; the sidebar may re-fetch repeatedly
 	deleted    []string
 	delErr     error
+	failIDs    map[string]bool // Delete fails for exactly these ids, regardless of delErr
 	submitted  []rec.Record
 	submitErr  error
 	devices    proto.DevicesInfo
@@ -68,6 +69,9 @@ func (f *fakeBackend) Delete(id string) error {
 	defer f.mu.Unlock()
 	if f.delErr != nil {
 		return f.delErr
+	}
+	if f.failIDs[id] {
+		return errors.New("delete failed")
 	}
 	f.deleted = append(f.deleted, id)
 	return nil
@@ -168,6 +172,8 @@ func press(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyEnter}
 	case "esc":
 		return tea.KeyMsg{Type: tea.KeyEsc}
+	case "ctrl+a":
+		return tea.KeyMsg{Type: tea.KeyCtrlA}
 	case "ctrl+d":
 		return tea.KeyMsg{Type: tea.KeyCtrlD}
 	case "ctrl+u":
@@ -368,6 +374,243 @@ func TestDeleteConfirmNo(t *testing.T) {
 	require.False(t, m.confirmDelete, "`n` did not dismiss the confirmation")
 	require.Empty(t, f.deleted, "Delete should not be called on `n`")
 	require.Len(t, m.rows, 2)
+}
+
+// --- bulk selection --------------------------------------------------------
+
+func TestCheckToggleAndCount(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("a", "b", "c"))})
+
+	require.Zero(t, m.checkedCount())
+	require.NotContains(t, strip(m.View()), "selected")
+
+	m, _ = step(t, m, press(" "))
+	require.Equal(t, 1, m.checkedCount())
+	require.True(t, m.isChecked(m.rows[0].ID), "the row under the cursor should be the one marked")
+	require.Contains(t, strip(m.View()), "1 selected", "the count must be visible on screen")
+
+	// Space toggles: pressing it again on the same row unmarks it.
+	m, _ = step(t, m, press(" "))
+	require.Zero(t, m.checkedCount())
+	require.NotContains(t, strip(m.View()), "selected")
+}
+
+func TestCheckAll(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("a", "b", "c"))})
+
+	m, _ = step(t, m, press("ctrl+a"))
+	require.Equal(t, 3, m.checkedCount())
+	for _, r := range m.rows {
+		require.Truef(t, m.isChecked(r.ID), "row %s should be checked by select-all", r.ID)
+	}
+	require.Contains(t, strip(m.View()), "3 selected")
+
+	// With nothing on screen, select-all has nothing to mark.
+	m, _ = step(t, m, queryResultMsg{seq: 2, resp: mkResp(nil)})
+	m, _ = step(t, m, press("ctrl+a"))
+	require.Zero(t, m.checkedCount())
+}
+
+func TestCheckClearOnEsc(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("a", "b"))})
+	m, _ = step(t, m, press("ctrl+a"))
+	require.Equal(t, 2, m.checkedCount())
+
+	m, _ = step(t, m, press("esc"))
+	require.Zero(t, m.checkedCount(), "esc should clear an active selection")
+}
+
+// TestCheckSurvivesUnzoomEsc: esc backs out one visible thing at a time — the
+// zoom first, then the selection — the same "innermost first" rule the agent
+// explorer's esc already follows.
+func TestCheckSurvivesUnzoomEsc(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("a", "b"))})
+	m, _ = step(t, m, press("ctrl+a"))
+	m, _ = step(t, m, press("z"))
+	require.True(t, m.zoom)
+
+	m, _ = step(t, m, press("esc"))
+	require.False(t, m.zoom, "the first esc should unzoom")
+	require.Equal(t, 2, m.checkedCount(), "the first esc must not also drop the selection")
+
+	m, _ = step(t, m, press("esc"))
+	require.Zero(t, m.checkedCount(), "the second esc should clear the now-visible selection")
+}
+
+func TestCheckedRowShowsAMarker(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("alpha"))})
+
+	before := strip(m.View())
+	m, _ = step(t, m, press(" "))
+	after := strip(m.View())
+	require.NotEqual(t, before, after, "checking a row should visibly change the table")
+	require.Contains(t, after, "✓", "a checked row should carry a visible marker")
+}
+
+func TestDeleteConfirmShowsCheckedCount(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("a", "b", "c"))})
+	m, _ = step(t, m, press(" ")) // check row 0
+	m, _ = step(t, m, press("down"))
+	m, _ = step(t, m, press(" ")) // check row 1 too
+
+	m, _ = step(t, m, press("d"))
+	require.True(t, m.confirmDelete)
+	out := strip(m.View())
+	require.Contains(t, out, "delete 2 records?",
+		"a bulk delete must confirm with the count, not the generic single-record prompt")
+	require.NotContains(t, out, "delete this command?")
+}
+
+// TestDeleteConfirmSingleCheckedUsesCountPrompt: even one row EXPLICITLY
+// checked goes through the bulk (count) prompt rather than the cursor-based
+// one — the user went through the selection mechanism on purpose, and the two
+// prompts confirm different things (a set of ids vs. "whatever the cursor is
+// on right now").
+func TestDeleteConfirmSingleCheckedUsesCountPrompt(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("only-one"))})
+	m, _ = step(t, m, press(" "))
+
+	m, _ = step(t, m, press("d"))
+	out := strip(m.View())
+	require.Contains(t, out, "delete 1 record?")
+	require.NotContains(t, out, "delete this command?")
+}
+
+func TestBulkDeleteRemovesExactlySelected(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("keep-a", "drop-b", "keep-c", "drop-d"))})
+
+	m, _ = step(t, m, press("down")) // row 1: drop-b
+	m, _ = step(t, m, press(" "))
+	m, _ = step(t, m, press("down"))
+	m, _ = step(t, m, press("down")) // row 3: drop-d
+	m, _ = step(t, m, press(" "))
+
+	m, _ = step(t, m, press("d"))
+	m, _ = step(t, m, press("y"))
+
+	require.ElementsMatch(t, []string{"1", "3"}, f.deleted, "exactly the checked records must be deleted")
+	require.Len(t, m.rows, 2)
+	require.Len(t, m.allRows, 2, "allRows must also drop deleted records, or a period switch would resurrect them")
+	for _, r := range m.rows {
+		require.NotEqualf(t, "drop-b", r.Cmd, "deleted row still present: %+v", m.rows)
+		require.NotEqualf(t, "drop-d", r.Cmd, "deleted row still present: %+v", m.rows)
+	}
+	require.Zero(t, m.checkedCount(), "the selection should be cleared after a successful delete")
+}
+
+// TestBulkDeletePartialFailure: one delete call in the batch fails. The others
+// must still go through, the failed row must stay put (and stay checked, so
+// it can be retried), and the flash must report both counts rather than
+// picking one of "asked for 3" / "deleted 2" to report.
+func TestBulkDeletePartialFailure(t *testing.T) {
+	f := &fakeBackend{failIDs: map[string]bool{"1": true}}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("a", "b", "c"))})
+	m, _ = step(t, m, press("ctrl+a"))
+
+	m, _ = step(t, m, press("d"))
+	m, _ = step(t, m, press("y"))
+
+	require.ElementsMatch(t, []string{"0", "2"}, f.deleted, "the failing id must not be reported as deleted")
+	require.Len(t, m.rows, 1, "only the row whose delete failed should remain")
+	require.Equal(t, "1", m.rows[0].ID)
+	require.Contains(t, strip(m.View()), "1 failed", "a partial failure must be reported, not silently swallowed")
+	require.True(t, m.isChecked("1"), "a row whose delete failed should stay checked so it can be retried")
+}
+
+// TestBulkDeleteAllFail: every call in the batch fails. Nothing local should
+// change, and the selection survives for a retry.
+func TestBulkDeleteAllFail(t *testing.T) {
+	f := &fakeBackend{delErr: errors.New("boom")}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("a", "b"))})
+	m, _ = step(t, m, press("ctrl+a"))
+
+	m, _ = step(t, m, press("d"))
+	m, _ = step(t, m, press("y"))
+
+	require.Empty(t, f.deleted)
+	require.Len(t, m.rows, 2, "nothing should be removed locally if every delete failed")
+	require.Contains(t, strip(m.View()), "delete failed")
+	require.Equal(t, 2, m.checkedCount(), "a fully failed bulk delete should leave the selection intact for retry")
+}
+
+// --- selection goes stale ---------------------------------------------------
+//
+// Every path that can change which records the table shows must drop a bulk
+// selection made under the old rows — a mark that survived would be a mark on
+// data the user never looked at, and the one consumer today is delete.
+
+func TestCheckClearedOnNewSearch(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("a", "b"))})
+	m, _ = step(t, m, press("ctrl+a"))
+	require.Equal(t, 2, m.checkedCount())
+
+	m, _ = step(t, m, press("/"))
+	m, _ = step(t, m, press("x")) // typing narrows the query and re-issues it
+	require.Zero(t, m.checkedCount(), "a new search must drop a selection made over the old results")
+}
+
+func TestCheckClearedOnHostChange(t *testing.T) {
+	f := &fakeBackend{hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 2}}}}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("a", "b"))})
+	m, _ = step(t, m, press("ctrl+a"))
+	require.Equal(t, 2, m.checkedCount())
+
+	m, _ = step(t, m, press("H")) // cycles the host scope: a new query
+	require.Zero(t, m.checkedCount(), "changing the host scope must drop the old selection")
+}
+
+func TestCheckClearedOnPeriodChange(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("a", "b"))})
+	m, _ = step(t, m, press("ctrl+a"))
+	require.Equal(t, 2, m.checkedCount())
+
+	m, _ = step(t, m, press("2")) // narrows the period filter client-side
+	require.Zero(t, m.checkedCount(), "changing the period must drop the old selection")
+}
+
+func TestCheckClearedOnViewSwitch(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		key  string
+	}{
+		{"stats", "s"},
+		{"agents", "a"},
+		{"devices", "D"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &fakeBackend{}
+			m := ready(t, f, 120, 30)
+			m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("a", "b"))})
+			m, _ = step(t, m, press("ctrl+a"))
+			require.Equal(t, 2, m.checkedCount())
+
+			m, _ = step(t, m, press(tc.key))
+			require.Zero(t, m.checkedCount(), "leaving the browse table for "+tc.name+" must drop the selection")
+		})
+	}
 }
 
 func TestAcceptOnEnter(t *testing.T) {

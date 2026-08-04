@@ -340,6 +340,41 @@ position, and `Tab` cycles focus within the active view.
   the pointer. The zero value means "never dragged", so browse keeps its
   long-standing default layout until a seam is actually moved.
 
+**Bulk selection** (browse table only). `space` marks or unmarks the row under
+the cursor; `ctrl+a` marks every row the table is *currently showing* — after
+the query, the period filter, and any search have narrowed it, not the whole
+archive. A marked row carries a visible check in a leading gutter column (drawn
+outside the ordinary column layout — `colLayout` reserves `selGutterW` columns
+for it before dividing the rest among the data columns, since a `colSpec`
+cell has no way to see selection state), and the pane title carries the count
+(`12/340  3 selected`) so it stays visible from any pane, not only while the
+table has focus. `esc` backs out one visible thing at a time, same as
+everywhere else it does that: unzoom first, then clear the selection.
+
+The set is held **by record ID**, not table index, so a resort or a delete
+earlier in the same batch never silently carries a mark onto a different row's
+data. It is cleared on every path that can change which records the table
+shows — a new search, host, or tag/executor filter (all of which route through
+`issueQuery`, the one place a query is dispatched), a period-tab change
+(applied client-side, so it clears separately), and leaving the browse table
+for stats, the agent explorer, or devices. A mark surviving any of those would
+be a mark on rows nobody looked at when they pressed `space` — worth a
+reselect, not worth the risk to whatever the checked set feeds.
+
+Delete is the first (and, so far, only) consumer: `d`/`ctrl+d` act on the
+checked set when one exists, falling back to the single row under the cursor
+otherwise, and the confirmation names which — `delete 3 records?` for a
+selection, the single command's text for the cursor path — so answering `y`
+never deletes more than what was just asked about. `proto.OpDelete` tombstones
+one record per call; there is no batch delete in the daemon protocol, so a
+bulk delete is N round trips over the same connection. A failure partway
+through does not abort the rest — every call is attempted regardless of an
+earlier one failing, since a row already tombstoned by a prior call cannot be
+un-deleted by giving up early — and the flash reports both counts when any
+fail (`deleted 10, 2 failed`) rather than losing the difference between what
+was asked for and what happened. Rows whose call failed stay in the table and
+stay checked, so they can be retried without reselecting.
+
 **Keys are described once** (`internal/tui/keyhelp`, driven by each UI's
 `keys.go`). One table of bindings feeds two renderings: the one-line footer that
 is always on screen, and the full grouped panel behind `?`. They cannot drift

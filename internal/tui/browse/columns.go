@@ -764,8 +764,14 @@ func (m Model) tableLayout(t colTable, w int) colLayout {
 	return l
 }
 
-// colLayout is the browse table's layout at its own pane width.
-func (m Model) colLayout() colLayout { return m.tableLayout(ctBrowse, m.tableWidth) }
+// colLayout is the browse table's layout at its own pane width, less the
+// selection gutter every row leads with (see selGutterW): that glyph column
+// is drawn outside this layout entirely, by the browse table's own header and
+// row renderers, so the columns here must add up to tableWidth minus it for
+// the two to line up under one another.
+func (m Model) colLayout() colLayout {
+	return m.tableLayout(ctBrowse, maxInt(1, m.tableWidth-selGutterW))
+}
 
 // --- header --------------------------------------------------------------
 
@@ -1121,7 +1127,7 @@ func (m Model) renderColumns(w, h int) string {
 func (m Model) paneLayout(t colTable, fallback int) colLayout {
 	switch t {
 	case ctBrowse:
-		return m.tableLayout(ctBrowse, m.tableWidth)
+		return m.colLayout() // shares colLayout's selection-gutter adjustment
 	case ctPrompts:
 		return m.tableLayout(ctPrompts, maxInt(1, m.geo.p[apPrompts].w-2))
 	case ctCommands:

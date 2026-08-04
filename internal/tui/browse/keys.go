@@ -78,7 +78,9 @@ func (m Model) browseGroups() []keyhelp.Group {
 	panes = append(panes,
 		row("z", "zoom the pane", "z"),
 		row("Z", "zoom, keeping the detail pane beside it", "Z"),
-		row("esc", "unzoom", "esc"),
+		// esc backs out one visible thing at a time, same as the agent
+		// explorer: the zoom first, then a bulk selection still on screen.
+		row("esc", "unzoom, then clear the selection", "esc"),
 		mouseRow("click", "focus a pane"),
 		mouseRow("drag", "resize panes"),
 		mouseRow("wheel", "scroll under the pointer"),
@@ -90,9 +92,9 @@ func (m Model) browseGroups() []keyhelp.Group {
 		row("^t", "tag this command", "ctrl+t"),
 	}
 	if m.vim {
-		act = append(act, row("d", "delete", "d"))
+		act = append(act, row("d", "delete (the selection, if any)", "d"))
 	} else {
-		act = append(act, row("d/^d", "delete", "d", "ctrl+d"))
+		act = append(act, row("d/^d", "delete (the selection, if any)", "d", "ctrl+d"))
 	}
 
 	return []keyhelp.Group{
@@ -108,6 +110,10 @@ func (m Model) browseGroups() []keyhelp.Group {
 		}},
 		{Title: "COLUMNS", Rows: []keyhelp.Row{
 			row("c", "show, hide, and sort by column", "c"),
+		}},
+		{Title: "SELECT", Rows: []keyhelp.Row{
+			row("space", "check this row for a bulk action", " "),
+			row("^a", "check every row shown", "ctrl+a"),
 		}},
 		{Title: "ACT", Rows: act},
 		{Title: "GO", Rows: globalRows("")},

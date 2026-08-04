@@ -270,7 +270,13 @@ func (m Model) browsePaneHeading(f focus) (name, suffix string) {
 		if m.total == 0 {
 			return "COMMANDS", "0"
 		}
-		return "COMMANDS", fmt.Sprintf("%d/%d", m.sel+1, m.total)
+		suffix := fmt.Sprintf("%d/%d", m.sel+1, m.total)
+		// The one place a bulk selection is visible whichever pane holds focus
+		// — a mark you cannot see is a trap for the delete key.
+		if n := m.checkedCount(); n > 0 {
+			suffix += fmt.Sprintf("  %d selected", n)
+		}
+		return "COMMANDS", suffix
 	default:
 		r, ok := m.selected()
 		if !ok {
@@ -377,15 +383,42 @@ func (m Model) tableInner(w, h int) string {
 	return padLines(lines, w, h)
 }
 
+// selGutterW is the width of the bulk-selection marker that leads every browse
+// table row: a glyph plus its trailing space. It is carried outside the
+// colSpec system (columns.go) rather than as a column of its own, because a
+// colSpec's cell renders one row with no way to see the Model's selection
+// state — and the prompt, command, device and token tables share that same
+// colLayout machinery, so giving cell that signature for one browse-only
+// column would mean plumbing it through every table for a concept only one of
+// them has. colLayout (columns.go) subtracts this out of the pane's content
+// width before dividing it among the data columns, so the gutter this file
+// prepends and the columns colLayout resolved always add back up to exactly
+// the pane's width.
+const selGutterW = 2
+
+// checkGlyph draws the leading marker cell: a filled check for a row in the
+// bulk selection, two blank columns otherwise.
+func (m Model) checkGlyph(id string) styledSeg {
+	if m.isChecked(id) {
+		return styledSeg{text: "✓ ", style: m.th.Accent}
+	}
+	return styledSeg{text: strings.Repeat(" ", selGutterW), raw: true}
+}
+
 // tableHeader names each visible column of the results table; the shared builder
-// puts the sort arrow on the ordered one where its cell can hold it.
+// puts the sort arrow on the ordered one where its cell can hold it. The
+// selection gutter has no heading of its own — the pane title already carries
+// the count — so it is just blank space here, aligning the header with the
+// glyph column every row draws.
 func (m Model) tableHeader(l colLayout, w int) string {
-	return composeSegs(m.tableHeaderSegs(l), false, w, m.th)
+	segs := append([]styledSeg{{text: strings.Repeat(" ", selGutterW), raw: true}}, m.tableHeaderSegs(l)...)
+	return composeSegs(segs, false, w, m.th)
 }
 
 func (m Model) renderRow(r rec.Record, l colLayout, q match.Query, selected bool, w int, now int64) string {
 	th := m.th
-	segs := rowSegs(th, ctBrowse, browseSpecs, l, r, now)
+	segs := []styledSeg{m.checkGlyph(r.ID)}
+	segs = append(segs, rowSegs(th, ctBrowse, browseSpecs, l, r, now)...)
 	if l.w[colCmd] > 0 {
 		if selected && m.focus == focusTable && m.hscroll > 0 {
 			// The selected row scrolls horizontally to reveal a truncated command
@@ -565,6 +598,13 @@ func (m Model) statusBar(w int) string {
 	th := m.th
 
 	if m.confirmDelete {
+		// A bulk delete gets its own prompt, with the count in it: "delete this
+		// command?" answered with y while 12 rows are checked would delete all
+		// 12 under a question that only ever asked about one.
+		if n := m.checkedCount(); n > 0 {
+			prompt := th.ExitErr.Render("delete "+plural(n, "record")+"? ") + th.Accent.Render("(y/n)")
+			return clipW(prompt, w)
+		}
 		if r, ok := m.selected(); ok {
 			prompt := th.ExitErr.Render("delete this command? ") + th.Accent.Render("(y/n)")
 			hint := th.Dim.Render("  " + truncCols(firstLine(r.Cmd), maxInt(0, w-40)))

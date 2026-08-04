@@ -1,6 +1,7 @@
 package browse
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"sort"
@@ -255,13 +256,27 @@ type Model struct {
 	appliedStats uint64
 
 	// interaction state
-	view           viewMode
-	focus          focus
-	vim            bool // vi-style navigation (from Options.Keymap == "vim")
-	searching      bool
-	tagging        bool // ctrl+t: entering a freeform tag for the selected row
-	tagInput       textinput.Model
-	confirmDelete  bool
+	view          viewMode
+	focus         focus
+	vim           bool // vi-style navigation (from Options.Keymap == "vim")
+	searching     bool
+	tagging       bool // ctrl+t: entering a freeform tag for the selected row
+	tagInput      textinput.Model
+	confirmDelete bool
+	// checked is the bulk-selection set behind the space key: record IDs marked
+	// for a multi-row action, keyed by ID rather than table index so a resort (the
+	// c pane) or a delete earlier in the same batch never silently carries a mark
+	// onto a different row's data. Nil is empty — every reader and mutator treats
+	// a nil map as such — so a Model with nothing checked costs nothing extra to
+	// copy on every Update, which happens on every keystroke.
+	//
+	// It is cleared on every path that can change which records the table shows:
+	// issueQuery (a new search, host, tag/executor filter, or hide-agents toggle),
+	// setPeriod (the period filter is applied client-side, without a query), and
+	// leaving the browse view for stats/agents/devices. A mark that survived any
+	// of those would be a mark on rows the user never looked at — and the one
+	// consumer today is delete.
+	checked        map[string]struct{}
 	showHelp       bool   // ?: the key panel, over whichever view is beneath it
 	helpTop        int    // first visible row of that panel, when it overflows
 	executorFilter string // active executor filter (e / E); "" = no filter
@@ -666,8 +681,17 @@ func (m Model) applyStats(msg statsResultMsg) (tea.Model, tea.Cmd) {
 
 // --- commands -----------------------------------------------------------
 
+// issueQuery is the one choke point every search/host/filter/hide-agents
+// change and every background refresh (sync now, the warm loop) routes
+// through to ask the daemon for a fresh table. A bulk selection is cleared
+// here rather than only on the paths that obviously change the row set: the
+// daemon's answer to the SAME query can differ between two calls (a sync just
+// landed new rows, a warm-loop tick converged the remote cache), and a mark
+// left checked across that gap would be a mark on rows nobody looked at when
+// they pressed space — worth a reselect, not worth the risk to delete.
 func (m Model) issueQuery() (Model, tea.Cmd) {
 	m.seq++
+	m.clearChecked()
 	return m, m.queryCmd(m.seq, m.buildReq())
 }
 
@@ -880,9 +904,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Browse-view keys.
 	switch s {
 	case "esc":
+		// Back out one visible thing at a time, innermost first, same as the
+		// agent explorer's esc: the zoom, then a bulk selection the table is
+		// still showing checkmarks for.
 		if m.zoom {
 			return m.toggleZoom()
 		}
+		m.clearChecked()
 		return m, nil
 	case "/":
 		m.searching = true
@@ -963,7 +991,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.vim {
 				m.moveSel(m.halfPage())
 				m.syncDetail()
-			} else if len(m.rows) > 0 {
+			} else if len(m.rows) > 0 || m.checkedCount() > 0 {
 				m.confirmDelete = true
 			}
 		case "g", "home":
@@ -985,10 +1013,24 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.acceptSelected()
 		case "y":
 			return m.copySelected()
+		case " ":
+			// Mark the row under the cursor for a bulk action (currently just
+			// delete). Space rather than enter or y: both of those already do
+			// something to the single highlighted row, and a toggle needs a key
+			// of its own that means nothing else here.
+			m.toggleChecked()
+		case "ctrl+a":
+			// Check every row the table is CURRENTLY SHOWING — after the query,
+			// the period filter and any search have narrowed it — not the whole
+			// archive, so "select all" means all of what is on screen to select
+			// from, the same way ctrl+a means in a text field.
+			m.checkAll()
 		case "d":
 			// Delete stays a single-key action (with y/n confirm) in both
-			// keymaps; vim's "dd" is intentionally NOT implemented.
-			if len(m.rows) > 0 {
+			// keymaps; vim's "dd" is intentionally NOT implemented. With rows
+			// checked it acts on the checked set instead of the cursor row —
+			// doDelete decides which.
+			if len(m.rows) > 0 || m.checkedCount() > 0 {
 				m.confirmDelete = true
 			}
 		}
@@ -1096,6 +1138,11 @@ func (m Model) setPeriod(p int) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.period = p
+	// The period filter narrows rows client-side (see applyPeriodFilter), so
+	// unlike a search or a host change it never goes through issueQuery — it
+	// needs its own clear, for the same reason: the row set the table shows is
+	// about to be different.
+	m.clearChecked()
 	m.drillSel, m.infoTop = 0, 0
 	m.applyPeriodFilter()
 	if m.sel >= len(m.rows) {
@@ -1343,6 +1390,10 @@ func (m Model) toggleAgents() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.view = viewAgents
+	// Leaving the browse table for a view with no checkmarks to show — a
+	// selection you cannot see is a trap for whatever presses d after coming
+	// back and finding the cursor somewhere else entirely.
+	m.clearChecked()
 	m.apane = apPrompts
 	m.zoom, m.zoomDetail = false, false
 	m.promptSel = 0
@@ -1935,6 +1986,7 @@ func (m Model) toggleStats() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.view = viewStats
+	m.clearChecked() // leaving the table: see toggleAgents for why
 	m.statsSeq++
 	return m, m.statsCmd(m.statsSeq)
 }
@@ -2052,8 +2104,14 @@ func (m Model) submitTag() (tea.Model, tea.Cmd) {
 	return m, flashTick(m.flashID)
 }
 
+// doDelete carries out the confirmed delete: the checked set if anything is
+// marked, otherwise the single row under the cursor — the y/n prompt (and its
+// count) already told the user which of the two is about to happen.
 func (m Model) doDelete() (tea.Model, tea.Cmd) {
 	m.confirmDelete = false
+	if m.checkedCount() > 0 {
+		return m.deleteChecked()
+	}
 	if len(m.rows) == 0 {
 		return m, nil
 	}
@@ -2064,21 +2122,109 @@ func (m Model) doDelete() (tea.Model, tea.Cmd) {
 		m.flashID++
 		return m, flashTick(m.flashID)
 	}
-	m.rows = append(m.rows[:m.sel], m.rows[m.sel+1:]...)
-	if m.total > 0 {
-		m.total--
+	m.removeRows(map[string]struct{}{id: {}})
+	m.clampSel()
+	m.clampWindow()
+	m.syncDetail()
+	m.flash = "✓ deleted"
+	m.flashID++
+	return m, flashTick(m.flashID)
+}
+
+// deleteChecked deletes every checked record. proto.OpDelete tombstones one
+// record per call — there is no batch delete in the daemon protocol — so N
+// checked rows costs N round trips over the same unix-socket connection the
+// rest of the browser already uses.
+//
+// A failure partway through does not abort the rest: every call is attempted
+// regardless of an earlier one failing, because stopping early would leave
+// the choice of which rows survive up to network timing rather than the
+// user's selection, and a row already tombstoned by a prior call in this same
+// batch cannot be un-deleted by giving up on the ones after it. Rows whose
+// call succeeded are dropped locally; rows whose call failed stay in the
+// table (and checked, so the user can retry) and the flash reports both
+// counts — "deleted 10, 2 failed" — rather than silently losing the
+// difference between what was asked for and what actually happened.
+func (m Model) deleteChecked() (tea.Model, tea.Cmd) {
+	ids := make([]string, 0, len(m.checked))
+	for id := range m.checked {
+		ids = append(ids, id)
 	}
+	removed := make(map[string]struct{}, len(ids))
+	failed := 0
+	var lastErr error
+	for _, id := range ids {
+		if err := m.b.Delete(id); err != nil {
+			failed++
+			lastErr = err
+			continue
+		}
+		removed[id] = struct{}{}
+		delete(m.checked, id)
+	}
+	m.removeRows(removed)
+	m.clampSel()
+	m.clampWindow()
+	m.syncDetail()
+	m.flashID++
+	switch {
+	case failed == 0:
+		m.flash = "✓ deleted " + plural(len(removed), "record")
+	case len(removed) == 0:
+		m.flash = "delete failed"
+		m.lastErr = lastErr
+	default:
+		m.flash = fmt.Sprintf("deleted %d, %d failed", len(removed), failed)
+		m.lastErr = lastErr
+	}
+	return m, flashTick(m.flashID)
+}
+
+// removeRows drops every record in ids from both allRows and the
+// period-filtered rows the table renders — the one place a confirmed daemon
+// delete is reflected locally, single or bulk. Touching allRows too (the
+// earlier single-delete path did not) matters because applyPeriodFilter
+// rebuilds rows from allRows on every period-tab change: leaving a deleted
+// record in allRows would resurrect it the next time 1..5 was pressed, right
+// back into a table that no longer has it selected or checked.
+//
+// Both filters allocate a fresh backing array rather than compacting in
+// place: applyPeriodFilter hands rows the SAME slice as allRows outright when
+// the period is "All" (the default), so a compaction of one in place would
+// silently mutate the array the other still reads through its own,
+// unrelated length — corrupting rows that were never asked to be removed.
+func (m *Model) removeRows(ids map[string]struct{}) {
+	if len(ids) == 0 {
+		return
+	}
+	all := make([]rec.Record, 0, len(m.allRows))
+	for _, r := range m.allRows {
+		if _, gone := ids[r.ID]; !gone {
+			all = append(all, r)
+		}
+	}
+	m.srvTotal -= len(m.allRows) - len(all)
+	m.allRows = all
+
+	rows := make([]rec.Record, 0, len(m.rows))
+	for _, r := range m.rows {
+		if _, gone := ids[r.ID]; !gone {
+			rows = append(rows, r)
+		}
+	}
+	m.total -= len(m.rows) - len(rows)
+	m.rows = rows
+}
+
+// clampSel keeps the cursor in range after rows have been removed from under
+// it — the same clamp doDelete always did, now shared with the bulk path.
+func (m *Model) clampSel() {
 	if m.sel >= len(m.rows) {
 		m.sel = len(m.rows) - 1
 	}
 	if m.sel < 0 {
 		m.sel = 0
 	}
-	m.clampWindow()
-	m.syncDetail()
-	m.flash = "✓ deleted"
-	m.flashID++
-	return m, flashTick(m.flashID)
 }
 
 func flashTick(id int) tea.Cmd {
@@ -2190,6 +2336,64 @@ func (m Model) selected() (rec.Record, bool) {
 		return rec.Record{}, false
 	}
 	return m.rows[m.sel], true
+}
+
+// --- bulk selection -------------------------------------------------------
+//
+// The browse table's rows can be marked (space), independently of the cursor,
+// for an action that operates on more than one row at a time. Delete is the
+// first consumer; a second action can read the same checked set without
+// touching any of this.
+
+// checkedCount is how many rows are currently marked.
+func (m Model) checkedCount() int { return len(m.checked) }
+
+// isChecked reports whether a record is in the bulk-selection set — what the
+// table's marker column and the pane title's count both read.
+func (m Model) isChecked(id string) bool {
+	_, ok := m.checked[id]
+	return ok
+}
+
+// toggleChecked marks or unmarks the row under the cursor (the space key).
+func (m *Model) toggleChecked() {
+	r, ok := m.selected()
+	if !ok {
+		return
+	}
+	if m.checked == nil {
+		m.checked = make(map[string]struct{})
+	}
+	if _, on := m.checked[r.ID]; on {
+		delete(m.checked, r.ID)
+	} else {
+		m.checked[r.ID] = struct{}{}
+	}
+}
+
+// checkAll marks every row the table is currently showing (ctrl+a) — after
+// the query, the period filter and any search have narrowed it, not the whole
+// archive, since that is what "all" means on screen to select from.
+func (m *Model) checkAll() {
+	if len(m.rows) == 0 {
+		// Select-all of nothing is nothing, not "leave whatever was checked
+		// before alone" — otherwise ctrl+a on an empty table would be a no-op
+		// that quietly preserves a selection made over rows no longer shown.
+		m.checked = nil
+		return
+	}
+	m.checked = make(map[string]struct{}, len(m.rows))
+	for _, r := range m.rows {
+		m.checked[r.ID] = struct{}{}
+	}
+}
+
+// clearChecked drops the bulk selection outright. Called from esc, and from
+// every path that can change which records the table shows — see the checked
+// field's own comment for the full list — so a mark can never survive onto
+// rows the user never looked at.
+func (m *Model) clearChecked() {
+	m.checked = nil
 }
 
 // --- layout -------------------------------------------------------------

@@ -198,7 +198,8 @@ leaving everything else — including the agent's own auth — exactly as it was
   by any column of whichever list you are in — the results table, the explorer's
   prompts or its commands, the devices view's machines or tokens, each keeping
   its own choices — `Ctrl+T` tags a row,
-  `S` sync-now; Enter recalls, `y` copies. (yore
+  `S` sync-now; Enter recalls, `y` copies, `space`/`ctrl+a` check rows for a
+  bulk `d` delete (confirms with the count). (yore
   leaves your own `h` alone.) Pane sizes you drag **and the columns you show,
   hide, and sort by** persist to `~/.config/yore/ui.toml` — kept out of your
   hand-edited `config.toml`, and stored by column *name* so the file survives
@@ -276,6 +277,7 @@ in [architecture.md](docs/architecture.md)); all state lives under
 | Resize the panes | drag the border between them with the mouse (remembered in `~/.config/yore/ui.toml`) |
 | Keep a table's columns and sort between runs | nothing to do — `c` writes them to `ui.toml` as you make them |
 | Read a command/prompt that's cut off with `…` | `←`/`→` scroll the selected row horizontally |
+| Delete several commands at once | `space` in `hb` to check rows (`ctrl+a` for every row shown), then `d` — it confirms with the count |
 | Capture what Claude Code / Devin runs + let it query history (MCP) | `yore init claude-code` \| `yore init devin` (once) |
 | See only what an agent ran | `yore search --executor claude-code` |
 | Tag commands/sessions and filter by tag | `yore tag add refactor` · `yore search --tag refactor` · `T` in the browser |
