@@ -15,7 +15,7 @@ role it plays:
 | Search UIs | `search` (inline Ctrl-R TUI + `--headless`), `browse` (full-screen), `stats` / `agents` (the browser, opened on one of its screens) |
 | Background daemon | `daemon` (`run`/`stop`/`status`), `status`, `stop`, `sync` |
 | Enrollment / devices | `setup`, `devices` (the browser's devices pane; `token` mints an enrollment credential) |
-| Sync server | `server` (`stop`), `healthcheck` |
+| Sync server | `server` (`stop`), `healthcheck` (hidden — the container's HEALTHCHECK probe, not a command you type) |
 | Setup / misc | `init`, `uninit`, `import`, `doctor`, `gen-id`, `version` |
 
 Because everything is pure Go with `CGO_ENABLED=0`, it cross-compiles with no

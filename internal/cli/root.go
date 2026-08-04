@@ -700,7 +700,13 @@ func newHealthcheckCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "healthcheck",
 		Short: "Probe a server's /v1/health (container HEALTHCHECK)",
-		Args:  cobra.NoArgs,
+		// Hidden because nobody types it: the container's HEALTHCHECK runs it, and
+		// the distroless image ships no curl, so the binary probing itself is the
+		// only option. A person asking whether the server is up wants `yore doctor`,
+		// which probes it and explains what it found. Listing both only invites the
+		// question of which one to use.
+		Hidden: true,
+		Args:   cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			return code(runHealthcheck(url))
 		},
