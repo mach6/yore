@@ -26,8 +26,8 @@ type renderCase struct {
 // cases covers each shell × integration mode, with the alias toggle where it is
 // meaningful (capture mode emits no aliases regardless).
 var cases = func() []renderCase {
-	cs := make([]renderCase, 0, 10)
-	for _, sh := range []string{"zsh", "bash"} {
+	cs := make([]renderCase, 0, 15)
+	for _, sh := range []string{"zsh", "bash", "fish"} {
 		for _, mode := range []string{"takeover", "coexist"} {
 			for _, al := range []bool{true, false} {
 				suffix := "aliases"
@@ -96,7 +96,14 @@ func TestSyntax(t *testing.T) {
 // invoked and the bare default never leaks in.
 func TestAbsoluteBin(t *testing.T) {
 	const bin = "/usr/local/bin/yore"
-	for _, sh := range []string{"zsh", "bash"} {
+	// zsh/bash join the headless query with bash's "$*"; fish has no such
+	// operator, so _yore_hs joins $argv itself into $query first.
+	headless := map[string]string{
+		"zsh":  `command ` + bin + ` search --headless --scope "$scope" "$*"`,
+		"bash": `command ` + bin + ` search --headless --scope "$scope" "$*"`,
+		"fish": `command ` + bin + ` search --headless --scope "$scope" "$query"`,
+	}
+	for _, sh := range []string{"zsh", "bash", "fish"} {
 		t.Run(sh, func(t *testing.T) {
 			got, err := shell.Init(sh, shell.Options{Aliases: true, Bin: bin})
 			require.NoError(t, err)
@@ -105,7 +112,7 @@ func TestAbsoluteBin(t *testing.T) {
 				"command " + bin + " record",
 				"command " + bin + ` search --query "`,
 				"command " + bin + " browse",
-				"command " + bin + ` search --headless --scope "$scope" "$*"`,
+				headless[sh],
 			} {
 				require.Contains(t, got, w, "missing invocation")
 			}
@@ -115,7 +122,7 @@ func TestAbsoluteBin(t *testing.T) {
 }
 
 func TestAliasToggle(t *testing.T) {
-	for _, sh := range []string{"zsh", "bash"} {
+	for _, sh := range []string{"zsh", "bash", "fish"} {
 		t.Run(sh, func(t *testing.T) {
 			on, err := shell.Init(sh, shell.Options{Aliases: true, Bin: "yore"})
 			require.NoError(t, err)
@@ -141,6 +148,12 @@ func TestModes(t *testing.T) {
 		{"bash", "takeover", []string{"unset HISTFILE", "history -r", "__yore_bash_gate"}, nil},
 		{"bash", "coexist", []string{`bind -x '"\eyore"`}, []string{"unset HISTFILE", "__yore_bash_gate"}},
 		{"bash", "capture", nil, []string{"unset HISTFILE", `bind -x '"\eyore"`, "alias h="}},
+		// fish has no `!N`/`!!` expansion and no separate in-memory history list to
+		// seed or gate, so takeover needs only fish_private_mode — nothing else
+		// changes between takeover and coexist besides that and the Up binding.
+		{"fish", "takeover", []string{"fish_private_mode", `bind \cr`}, []string{"_yore_bind_up_arrow"}},
+		{"fish", "coexist", []string{`bind \cr`, "_yore_bind_up_arrow"}, []string{"fish_private_mode"}},
+		{"fish", "capture", nil, []string{"fish_private_mode", `bind \cr`, "function hb"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.sh+"_"+tc.mode, func(t *testing.T) {
@@ -193,8 +206,53 @@ func TestDefaultModeIsTakeover(t *testing.T) {
 }
 
 func TestUnknownShell(t *testing.T) {
-	_, err := shell.Init("fish", shell.Options{Bin: "yore"})
+	_, err := shell.Init("ksh", shell.Options{Bin: "yore"})
 	require.Error(t, err, "expected an error for an unknown shell")
+}
+
+// TestFishFieldsAndIdioms checks the fish hook captures the same fields as
+// zsh/bash (command, exit, duration, cwd, session) using fish's own idioms
+// ($status, $CMD_DURATION, $PWD) rather than a manually tracked timestamp, and
+// keeps the record call off the prompt path (backgrounded + disowned, no db/
+// network/crypto).
+func TestFishFieldsAndIdioms(t *testing.T) {
+	got, err := shell.Init("fish", shell.Options{Aliases: true, Bin: "yore", Mode: "takeover"})
+	require.NoError(t, err)
+	for _, w := range []string{
+		"--on-event fish_preexec",
+		"--on-event fish_postexec",
+		"set -l exit $status", // $status captured before anything else can disturb it
+		"CMD_DURATION",        // duration: fish's own builtin, no hand-rolled timestamp math
+		`--cwd "$PWD"`,
+		`--session "$YORE_SESSION"`,
+		"printf '%s' \"$__yore_cmd\" | command yore record",
+		"&>/dev/null &", // backgrounded
+		"disown",        // and disowned, so no job-control notice ever prints
+	} {
+		require.Contains(t, got, w)
+	}
+	require.NotContains(t, got, "__yore_start", "fish should not need a hand-tracked start timestamp")
+}
+
+// TestFishNoSubstitutionInsideQuotes guards the one way a script ported from
+// zsh/bash silently does nothing in fish: `"$(cmd)"` translated to `"(cmd)"`.
+// Fish expands `(cmd)` only OUTSIDE quotes, so the quoted form is a literal
+// string — every `test "(...)" = true` is then false forever and every
+// `--query "(commandline -b)"` searches for that text. Nothing errors, so no
+// golden file and no substring assertion catches it. Substitute into a variable
+// first and quote the variable instead.
+func TestFishNoSubstitutionInsideQuotes(t *testing.T) {
+	for _, mode := range []string{"coexist", "takeover", "capture"} {
+		t.Run(mode, func(t *testing.T) {
+			got, err := shell.Init("fish", shell.Options{Aliases: true, Bin: "yore", Mode: mode})
+			require.NoError(t, err)
+			for i, line := range strings.Split(got, "\n") {
+				code, _, _ := strings.Cut(line, "#")
+				require.NotContainsf(t, code, `"(`,
+					"line %d substitutes inside double quotes, which fish treats as a literal: %s", i+1, line)
+			}
+		})
+	}
 }
 
 // TestVendoredPreexec verifies the pinned bash-preexec is present, carries our

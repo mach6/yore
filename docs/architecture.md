@@ -105,7 +105,7 @@ Concise map by role. Leaf-contract packages import nothing else in the tree.
   remote ones, and the device enroll / approve / revoke+rotate primitives.
 
 **Integration:**
-- **shell** — the embedded zsh/bash hook scripts (+ vendored bash-preexec),
+- **shell** — the embedded zsh/bash/fish hook scripts (+ vendored bash-preexec),
   rendered per integration mode via `text/template`.
 - **importer** — zsh (extended-history, unmetafy, multiline) and bash parsers.
   Bash history is only timestamped when the writing shell had `HISTTIMEFORMAT`
@@ -1047,27 +1047,43 @@ TUI and an agent asking about the same command always agree.
 `config.integration` (default `takeover`, overridable per `yore init --mode`)
 controls how deeply the emitted hooks take over the shell, all via `yore init`:
 
-- **takeover** — yore is the single source of truth. The shell's persistent
-  history is disabled (no unredacted `~/.zsh_history`); its in-memory list is
-  seeded from yore (`yore export --shell`, one `fc -R` / `history -r` at startup)
-  and gated by yore's redaction (`yore filter` from zsh's `zshaddhistory`, best-
-  effort in bash), so `!N` / up-arrow work against yore-consistent, secret-free
-  history. zsh is exact; bash is coarser (multiline collapses to one line).
+- **takeover** — yore is the single source of truth. For zsh/bash, the shell's
+  persistent history is disabled (no unredacted `~/.zsh_history`); its in-memory
+  list is seeded from yore (`yore export --shell`, one `fc -R` / `history -r` at
+  startup) and gated by yore's redaction (`yore filter` from zsh's
+  `zshaddhistory`, best-effort in bash), so `!N` / up-arrow work against
+  yore-consistent, secret-free history. zsh is exact; bash is coarser (multiline
+  collapses to one line). fish has neither problem to solve: it has no `!N`/`!!`
+  expansion and no separate in-memory list, so takeover there is just
+  `set -g fish_private_mode 1` — fish's own switch for "don't touch the history
+  file," checked on every write rather than cached at shell start, so setting it
+  mid-session (from a sourced init script) still takes effect. Native Up-arrow
+  is simply replaced by yore's widget in all three shells.
 - **coexist** — record alongside the untouched native history; rebind Ctrl-R and
-  add the aliases. Native `!N` works against native history.
+  add the aliases. Native `!N` works against native history (zsh/bash).
 - **capture** — record only; no keybinding or alias changes.
 
 **Mechanics.** zsh installs `zshaddhistory` (calls `yore filter`, returns nonzero
 to drop) and rebinds `^R` (and optionally Up, `bind_up_arrow`) to a widget that
 runs the search TUI. bash uses vendored bash-preexec for capture and a best-
-effort gate. Scoped convenience aliases (unless `--no-aliases`): `hb` (browse,
-drop pick onto the next prompt), `hs` (search this host), and siblings `hsa`
-(all hosts), `hss` (session), `hsc` (cwd), `hsw` (workspace). `yore` never
-rebinds `h`. Two support subcommands back this: `yore filter` (reads a command
-on stdin, exits 1 to drop) and `yore export --shell [--format zsh|bash]` (the
-history seed) — neither is on the prompt fast path (`filter` runs synchronously
-from `zshaddhistory` in single-digit ms; `export` runs once per shell start and
-is best-effort: no daemon means it prints nothing and exits 0).
+effort gate. fish needs no third-party shim — `--on-event fish_preexec` /
+`--on-event fish_postexec` are native — and gets the command's duration for
+free from fish's own `$CMD_DURATION` (already integer milliseconds), where
+zsh/bash have to timestamp in preexec and subtract in precmd; `$status` and
+`$PWD` cover exit code and cwd the same way. `bind` takes literal escape
+sequences (`\cr`, `\e\[A`, `\eOA`), not fish 4's key names or fish 3's `bind -k
+up`, so one binding works unchanged across fish versions — mirroring why
+zsh/bash bind raw sequences instead of symbolic keys. Scoped convenience
+aliases (unless `--no-aliases`): `hb` (browse, drop pick onto the next prompt
+in zsh via `print -z`; fish and bash just print it, since `commandline` and
+readline can't reach past a command that has already run) and `hs` (search this
+host) and siblings `hsa` (all hosts), `hss` (session), `hsc` (cwd), `hsw`
+(workspace). `yore` never rebinds `h`. Two support subcommands back this: `yore
+filter` (reads a command on stdin, exits 1 to drop — zsh/bash only, since fish
+has no native history to gate) and `yore export --shell [--format zsh|bash]`
+(the zsh/bash history seed) — neither is on the prompt fast path (`filter` runs
+synchronously from `zshaddhistory` in single-digit ms; `export` runs once per
+shell start and is best-effort: no daemon means it prints nothing and exits 0).
 
 ## Key hierarchy & E2E (summary)
 

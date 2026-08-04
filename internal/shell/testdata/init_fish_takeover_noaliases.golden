@@ -1,0 +1,96 @@
+# yore — fish shell integration (takeover mode).
+# Emitted by `yore init fish`; load with:  yore init fish | source
+# Sourcing repeatedly is safe and produces no output during normal operation.
+
+# Only run in interactive shells; no-op (and never error) everywhere else.
+# Like bash's ~/.bashrc (and unlike zsh's ~/.zshrc), fish's own
+# ~/.config/fish/config.fish is sourced for non-interactive invocations too.
+status is-interactive
+or return
+
+# Idempotence: initialize at most once per shell.
+set -q __YORE_INITED
+and return
+set -g __YORE_INITED 1
+
+# One stable session id per shell. Exported so it survives subshells and exec;
+# only generated when unset so a re-exec'd shell keeps the same id.
+set -q YORE_SESSION
+or set -gx YORE_SESSION (command yore gen-id 2>/dev/null)
+
+# preexec runs immediately before the command executes. It performs ZERO
+# process spawns: it only records the command text.
+function _yore_preexec --on-event fish_preexec
+	set -g __yore_cmd $argv[1]
+end
+
+# postexec runs after the command finishes. $status is captured first, before
+# anything else in this function can disturb it. Duration comes straight from
+# fish's own $CMD_DURATION (already integer milliseconds) — unlike zsh/bash,
+# there is no start timestamp to capture in preexec and no math to do here.
+function _yore_postexec --on-event fish_postexec
+	set -l exit $status
+	if set -q __yore_cmd
+		set -l dur
+		set -q CMD_DURATION
+		and set dur --duration-ms $CMD_DURATION
+		# Command text goes in on stdin (printf), never argv: immune to quoting
+		# quirks and E2BIG. Backgrounded and disowned so the prompt never waits
+		# and no job-control notice ever prints.
+		printf '%s' "$__yore_cmd" | command yore record \
+			--exit "$exit" $dur \
+			--session "$YORE_SESSION" --cwd "$PWD" &>/dev/null &
+		disown
+		set -e __yore_cmd
+	end
+end
+
+# --- History takeover: yore is the single source of truth ---------------------
+# fish_private_mode is fish's own switch for "don't touch the history file"
+# (see fish's interactive-docs "Private mode") — setting it here, after the
+# shell has already started, still works because fish checks it on every
+# history write, not just at launch, so takeover needs no fish_history=''
+# trick and no re-exec. Fish also has no `!N`/`!!` expansion to keep working,
+# so — unlike zsh/bash — there is no in-memory list to seed from yore and no
+# addhistory gate to install: native Up-arrow and history search are simply
+# replaced by yore's widget below.
+set -g fish_private_mode 1
+
+# Whether accepting a Ctrl-R result should run it immediately (Atuin parity).
+# Default: run the picked command on Enter; opt out with
+# `yore set-config enter_executes false` to insert it for review instead. Asked
+# of yore at call time — NOT cached at source time — so the setting takes effect
+# without re-sourcing. Fails open to the default (run) if yore is unavailable.
+function _yore_enter_executes
+	# Substituted into a variable first, then quoted: fish only expands `(cmd)`
+	# OUTSIDE quotes, so "(cmd)" would compare the literal text and always win.
+	set -l v (command yore get-config enter_executes 2>/dev/null)
+	test "$v" != false
+end
+
+# Interactive search widget. The TUI draws on /dev/tty, so this command
+# substitution captures only the final selection printed to stdout. A missing
+# binary or a cancelled search leaves the command line untouched. With
+# enter_executes on, a successful selection runs immediately instead of being
+# left on the line for review.
+function _yore_search_widget
+	set -l buf (commandline -b)
+	set -l selected (command yore search --query "$buf" 2>/dev/null)
+	if test -n "$selected"
+		commandline -r -- $selected
+		if _yore_enter_executes
+			commandline -f repaint
+			commandline -f execute
+			return
+		end
+	end
+	commandline -f repaint
+end
+
+# Raw escape sequences (not fish 4's named keys, not fish 3's `bind -k up`) so
+# one binding works unchanged across fish versions — the same reasoning that
+# has zsh/bash bind literal sequences instead of symbolic key names.
+bind \cr _yore_search_widget
+# Takeover: Up arrow opens yore search (normal + application cursor keys).
+bind \e\[A _yore_search_widget
+bind \eOA _yore_search_widget

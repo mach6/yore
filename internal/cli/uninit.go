@@ -24,8 +24,8 @@ func newUninitCmd() *cobra.Command {
 			"and MCP-server registration, preserving everything else in each config\n" +
 			"file (including the agent's own auth). Pass the same --bin you used for\n" +
 			"init, and --project to target the project-scoped config.\n\n" +
-			"Shells (zsh/bash) aren't agents — remove the `eval \"$(yore init …)\"` line\n" +
-			"from your rc file by hand.",
+			"Shells (zsh/bash/fish) aren't agents — remove the `eval \"$(yore init …)\"`\n" +
+			"(fish: `yore init fish | source`) line from your rc file by hand.",
 		Args:      cobra.ExactArgs(1),
 		ValidArgs: []cobra.Completion{"claude-code", "cursor", "opencode", "codex", "devin"},
 		RunE: func(_ *cobra.Command, args []string) error {

@@ -8,10 +8,12 @@ import (
 	"yore/internal/shell"
 )
 
-// runInit prints the shell integration script for eval'ing in rc files:
+// runInit prints the shell integration script for eval'ing (zsh/bash) or
+// sourcing (fish) in rc files:
 //
 //	eval "$(yore init zsh)"    # ~/.zshrc
 //	eval "$(yore init bash)"   # ~/.bashrc
+//	yore init fish | source    # ~/.config/fish/config.fish
 //
 // The integration mode is the --mode flag if given, else config.integration
 // (default "takeover").

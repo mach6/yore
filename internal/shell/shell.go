@@ -46,7 +46,7 @@ type tmplData struct {
 }
 
 // Init returns the full shell-integration script for the given shell, which
-// must be "zsh" or "bash". It returns an error for any other shell.
+// must be "zsh", "bash", or "fish". It returns an error for any other shell.
 func Init(sh string, o Options) (string, error) {
 	bin := o.Bin
 	if bin == "" {
@@ -77,8 +77,10 @@ func Init(sh string, o Options) (string, error) {
 			return "", fmt.Errorf("shell: reading vendored bash-preexec: %w", err)
 		}
 		data.Preexec = string(pe)
+	case "fish":
+		asset = "assets/init.fish"
 	default:
-		return "", fmt.Errorf("shell: unknown shell %q (want \"zsh\" or \"bash\")", sh)
+		return "", fmt.Errorf("shell: unknown shell %q (want \"zsh\", \"bash\", or \"fish\")", sh)
 	}
 
 	raw, err := assets.ReadFile(asset)

@@ -364,12 +364,13 @@ func newInitCmd() *cobra.Command {
 		project, prnt bool
 	)
 	cmd := &cobra.Command{
-		Use:   "init zsh|bash|claude-code",
+		Use:   "init zsh|bash|fish|claude-code",
 		Short: "Set up shell or agent integration",
 		Long: "init wires yore into a shell or an agent.\n\n" +
-			"Shells print a script to eval in your rc file:\n" +
-			"  eval \"$(yore init zsh)\"   # ~/.zshrc\n" +
-			"  eval \"$(yore init bash)\"  # ~/.bashrc\n" +
+			"Shells print a script to eval/source in your rc file:\n" +
+			"  eval \"$(yore init zsh)\"     # ~/.zshrc\n" +
+			"  eval \"$(yore init bash)\"    # ~/.bashrc\n" +
+			"  yore init fish | source      # ~/.config/fish/config.fish\n" +
 			"Integration mode comes from --mode, else config.integration (default\n" +
 			"takeover). Modes: takeover (single source of truth), coexist, capture.\n\n" +
 			"claude-code installs Claude Code hooks that record every Bash command\n" +
@@ -395,7 +396,7 @@ func newInitCmd() *cobra.Command {
 			"  yore init devin --project         # ./.devin/config.json\n" +
 			"  yore init devin --print           # print the JSON, install by hand",
 		Args:      cobra.ExactArgs(1),
-		ValidArgs: []cobra.Completion{"zsh", "bash", "claude-code", "cursor", "opencode", "codex", "devin"},
+		ValidArgs: []cobra.Completion{"zsh", "bash", "fish", "claude-code", "cursor", "opencode", "codex", "devin"},
 		RunE: func(_ *cobra.Command, args []string) error {
 			switch args[0] {
 			case "claude-code":

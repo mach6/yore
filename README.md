@@ -8,7 +8,7 @@
 
 ---
 
-`yore` records every command you run (zsh + bash) and makes your history
+`yore` records every command you run (zsh + bash + fish) and makes your history
 searchable on every machine you use — pointed at a sync server you host, and
 **end-to-end encrypted** so the server only ever holds ciphertext. Reach it with
 `Ctrl-R`, the `hb`/`hs` aliases, or `yore search`. It's one static, CGO-free Go
@@ -66,7 +66,7 @@ structured, agent-queryable history and only ever work on one machine.
 | …and it covers agent prompts too | Yes | n/a | n/a | n/a |
 | …and it gates sync | Yes | — | n/a | n/a |
 | Exit code, duration, cwd, session per command | Yes | Yes | Yes | No |
-| Cross-shell (zsh + bash) | Yes | Yes | Yes | Yes |
+| Cross-shell (zsh + bash + fish) | Yes | Yes | Yes | Yes |
 | Rich interactive TUI | Yes | Yes | Yes | No (basic `Ctrl-R`) |
 | Agent/executor tagging | Yes | No | Yes — wider agent coverage | No |
 | Prompt → the commands it triggered | Yes | No | Yes | No |
@@ -104,6 +104,11 @@ eval "$(yore init zsh)"
 
 # ~/.bashrc
 eval "$(yore init bash)"
+```
+
+```fish
+# ~/.config/fish/config.fish
+yore init fish | source
 ```
 
 That's the whole single-machine setup — fast, redacted, searchable local history.
@@ -153,7 +158,8 @@ Multi-tenant hosting, server backups, and revocation:
 ### Uninstall
 
 Un-wire any agents you set up, remove the `eval "$(yore init …)"` line from your
-`~/.zshrc` / `~/.bashrc` (reopen your shell), then:
+`~/.zshrc` / `~/.bashrc` (or the `yore init fish | source` line from
+`~/.config/fish/config.fish`), reopen your shell, then:
 
 ```bash
 yore uninit claude-code       # …and cursor / opencode / codex / devin
