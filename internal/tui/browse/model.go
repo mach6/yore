@@ -291,12 +291,20 @@ type Model struct {
 	// a nil map as such — so a Model with nothing checked costs nothing extra to
 	// copy on every Update, which happens on every keystroke.
 	//
-	// It is cleared on every path that can change which records the table shows:
-	// issueQuery (a new search, host, tag/executor filter, or hide-agents toggle),
-	// setPeriod (the period filter is applied client-side, without a query), and
-	// leaving the browse view for stats/agents/devices. A mark that survived any
-	// of those would be a mark on rows the user never looked at — and the one
-	// consumer today is delete.
+	// It is cleared on every path where the USER changed which records the table
+	// shows: issueQuery (a new search, host, tag/executor filter, or hide-agents
+	// toggle), setPeriod (the period filter is applied client-side, without a
+	// query), and leaving the browse view for stats/agents/devices. A mark that
+	// survived any of those would be a mark on rows the user never looked at —
+	// and the one consumer today is delete.
+	//
+	// A BACKGROUND refresh of the same query (refreshQuery: the init-time warm
+	// loop, a finished sync) does not clear it — it only prunes, in applyResult,
+	// to the rows the refresh actually returned. Clearing there would wipe a
+	// selection out from under the user a second after they made it, since the
+	// warm loop re-queries once a second for the first several seconds of every
+	// session; pruning keeps the invariant that matters (a mark can never end up
+	// on a row nobody looked at) without the marks being unmakeable.
 	checked        map[string]struct{}
 	showHelp       bool   // ?: the key panel, over whichever view is beneath it
 	helpTop        int    // first visible row of that panel, when it overflows
@@ -636,6 +644,7 @@ func (m Model) applyResult(msg queryResultMsg) (tea.Model, tea.Cmd) {
 	m.hidden = msg.resp.HiddenAgents
 	m.remote = msg.resp.Remote
 	m.applyPeriodFilter()
+	m.pruneChecked()
 	m.sel = 0
 	if selID != "" {
 		for i, r := range m.rows {
@@ -709,16 +718,27 @@ func (m Model) applyStats(msg statsResultMsg) (tea.Model, tea.Cmd) {
 // --- commands -----------------------------------------------------------
 
 // issueQuery is the one choke point every search/host/filter/hide-agents
-// change and every background refresh (sync now, the warm loop) routes
-// through to ask the daemon for a fresh table. A bulk selection is cleared
-// here rather than only on the paths that obviously change the row set: the
-// daemon's answer to the SAME query can differ between two calls (a sync just
-// landed new rows, a warm-loop tick converged the remote cache), and a mark
-// left checked across that gap would be a mark on rows nobody looked at when
-// they pressed space — worth a reselect, not worth the risk to delete.
+// change routes through to ask the daemon for a fresh table. A bulk selection
+// is cleared here, not only on the paths that obviously change the row set:
+// the user asked for a different set of rows, so a mark made against the old
+// one is a mark on rows they are no longer looking at — worth a reselect, not
+// worth the risk to delete.
 func (m Model) issueQuery() (Model, tea.Cmd) {
 	m.seq++
 	m.clearChecked()
+	return m, m.queryCmd(m.seq, m.buildReq())
+}
+
+// refreshQuery re-asks the SAME question on the app's own initiative — the
+// init-time warm loop, a sync that just landed — with no keystroke behind it.
+// It keeps the bulk selection: the warm loop fires once a second for the first
+// several seconds of a session, so clearing here made a space or ctrl+a in that
+// window appear to undo itself a beat later. The daemon's answer to the same
+// query can still differ between calls (a pull converged the remote cache), so
+// applyResult prunes the marks to the rows that came back rather than trusting
+// them wholesale.
+func (m Model) refreshQuery() (Model, tea.Cmd) {
+	m.seq++
 	return m, m.queryCmd(m.seq, m.buildReq())
 }
 
@@ -762,7 +782,7 @@ func (m Model) applySync(msg syncDoneMsg) (tea.Model, tea.Cmd) {
 		return m, flashTick(m.flashID)
 	}
 	m.flash = "✓ synced"
-	mm, qcmd := m.issueQuery()
+	mm, qcmd := m.refreshQuery()
 	cmds := []tea.Cmd{flashTick(mm.flashID), qcmd, mm.hostsCmd()}
 	if mm.view == viewStats {
 		mm.statsSeq++
@@ -2436,7 +2456,7 @@ func (m Model) onHostsTick() (tea.Model, tea.Cmd) {
 	}
 	// Still syncing / unavailable (or state not yet known): re-issue both and
 	// reschedule the single chain.
-	mm, qcmd := m.issueQuery()
+	mm, qcmd := m.refreshQuery()
 	return mm, tea.Batch(qcmd, mm.hostsCmd(), hostsTick())
 }
 
@@ -2565,6 +2585,28 @@ func (m *Model) toggleCheckAll() {
 	m.checked = make(map[string]struct{}, len(m.rows))
 	for _, r := range m.rows {
 		m.checked[r.ID] = struct{}{}
+	}
+}
+
+// pruneChecked drops marks for records the table no longer shows. It runs on
+// every applied result, so a background refresh (refreshQuery) can keep a
+// selection the user made without a mark ever outliving its row: it only
+// removes, and rows the refresh newly brought in are never marked by it.
+func (m *Model) pruneChecked() {
+	if len(m.checked) == 0 {
+		return
+	}
+	shown := make(map[string]struct{}, len(m.rows))
+	for _, r := range m.rows {
+		shown[r.ID] = struct{}{}
+	}
+	for id := range m.checked {
+		if _, ok := shown[id]; !ok {
+			delete(m.checked, id)
+		}
+	}
+	if len(m.checked) == 0 {
+		m.checked = nil // back to the nil-is-empty representation
 	}
 }
 

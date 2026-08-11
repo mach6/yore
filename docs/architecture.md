@@ -365,6 +365,17 @@ for stats, the agent explorer, or devices. A mark surviving any of those would
 be a mark on rows nobody looked at when they pressed `space` — worth a
 reselect, not worth the risk to whatever the checked set feeds.
 
+A refresh the *app* initiates is the other half of that rule and behaves the
+opposite way. The init-time warm loop re-queries once a second while the remote
+cache converges, and a finished sync re-queries too; both route through
+`refreshQuery`, which asks the same question and keeps the selection. Clearing
+there made `space`/`ctrl+a` in a freshly-opened browser appear to undo itself a
+beat later, then start working once the loop stopped — a mark that is
+unmakeable for the first several seconds of every session. The invariant that
+matters is kept by pruning instead: `applyResult` drops marks for records the
+refreshed table no longer shows, so a mark can still never outlive its row, and
+rows a refresh newly brings in are never marked by it.
+
 Delete and tag are the two consumers, and both act on the checked set when one
 exists, falling back to the single row under the cursor otherwise — `d`/`ctrl+d`
 and `ctrl+t` make the same split, and both prompts name which is about to

@@ -703,6 +703,83 @@ func TestCheckClearedOnViewSwitch(t *testing.T) {
 	}
 }
 
+// A BACKGROUND refresh is the other half of that rule: nobody asked for
+// different rows, so a selection has to survive it. The init-time warm loop
+// re-queries once a second for the first several seconds of every session, so
+// clearing there made space/ctrl+a in a freshly-opened browser look like it
+// undid itself a beat later — and then start working once the loop stopped.
+
+func TestCheckSurvivesWarmLoopRefresh(t *testing.T) {
+	rows := mkRows("a", "b", "c")
+	f := &fakeBackend{resp: func() proto.QueryResp {
+		r := mkResp(rows)
+		r.Remote = proto.RemoteInfo{State: proto.RemoteSyncing} // keeps the loop ticking
+		return r
+	}()}
+	m := NewModel(f, Options{Now: now})
+	m, _ = step(t, m, tea.WindowSizeMsg{Width: 120, Height: 30})
+	m, _ = step(t, m, initMsg{})
+	m, _ = step(t, m, queryResultMsg{seq: m.seq, resp: f.resp})
+
+	m, _ = step(t, m, press("ctrl+a"))
+	require.Equal(t, 3, m.checkedCount())
+
+	// A warm-loop tick re-issues the same query...
+	m, _ = step(t, m, hostsTickMsg{})
+	require.True(t, m.ticking, "the warm loop should still be running for this test to mean anything")
+	require.Equal(t, 3, m.checkedCount(), "issuing a background refresh must not drop the selection")
+
+	// ...and its answer — the same rows — arrives and keeps every mark.
+	m, _ = step(t, m, queryResultMsg{seq: m.seq, resp: f.resp})
+	require.Equal(t, 3, m.checkedCount(), "a background refresh returning the same rows must keep the selection")
+
+	// The same holds for a single row marked with space.
+	m, _ = step(t, m, press("esc"))
+	m, _ = step(t, m, press(" "))
+	require.Equal(t, 1, m.checkedCount())
+	m, _ = step(t, m, hostsTickMsg{})
+	m, _ = step(t, m, queryResultMsg{seq: m.seq, resp: f.resp})
+	require.Equal(t, 1, m.checkedCount(), "space in a freshly-opened browser must not be undone by the warm loop")
+}
+
+func TestCheckSurvivesSyncRefresh(t *testing.T) {
+	rows := mkRows("a", "b")
+	f := &fakeBackend{resp: mkResp(rows)}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 10, resp: f.resp})
+	m, _ = step(t, m, press("ctrl+a"))
+	require.Equal(t, 2, m.checkedCount())
+
+	m, _ = step(t, m, syncDoneMsg{})
+	m, _ = step(t, m, queryResultMsg{seq: 11, resp: f.resp})
+	require.Equal(t, 2, m.checkedCount(), "a refresh after sync must keep a selection over rows that are still there")
+}
+
+// A background refresh keeps marks by pruning, not by trusting: rows the
+// refresh no longer returns lose theirs, so a mark can never end up on a
+// different row's data — and rows the refresh newly brings in are never marked.
+func TestRefreshPrunesChecksForVanishedRows(t *testing.T) {
+	rows := mkRows("a", "b", "c")
+	f := &fakeBackend{resp: mkResp(rows)}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 10, resp: f.resp})
+	m, _ = step(t, m, press("ctrl+a"))
+	require.Equal(t, 3, m.checkedCount())
+
+	// The refresh comes back without the middle row, plus one the user has
+	// never seen.
+	fresh := []rec.Record{{ID: "new", Cmd: "z", StartMs: now + 1000}, rows[0], rows[2]}
+	m, _ = step(t, m, queryResultMsg{seq: 11, resp: mkResp(fresh)})
+	require.Equal(t, 2, m.checkedCount(), "a vanished row's mark must be dropped, and a new row must not be marked")
+	require.True(t, m.isChecked("0"))
+	require.True(t, m.isChecked("2"))
+	require.False(t, m.isChecked("new"), "a row the refresh newly brought in must not arrive checked")
+
+	// Once nothing is left checked the set is back to empty.
+	m, _ = step(t, m, queryResultMsg{seq: 12, resp: mkResp([]rec.Record{{ID: "other", Cmd: "q", StartMs: now}})})
+	require.Zero(t, m.checkedCount(), "a refresh sharing no rows with the selection clears it")
+}
+
 func TestAcceptOnEnter(t *testing.T) {
 	f := &fakeBackend{}
 	m := ready(t, f, 120, 30)
