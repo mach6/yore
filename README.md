@@ -1,102 +1,36 @@
 # yore
 
-**Your shell history — every machine, end-to-end encrypted, searchable, fast.**
+**Your shell history, on every machine, encrypted, searchable, fast.**
 
-<!-- demo: paste the asciinema embed here, e.g.
-[![asciicast](https://asciinema.org/a/REPLACE.svg)](https://asciinema.org/a/REPLACE) -->
-<!-- (repo stays binary-free per house rules; a committed GIF works too) -->
+`yore` records every command you run in zsh, bash, and fish, and makes that
+history searchable from any machine you use. Point it at a sync server you run
+yourself and your machines share one history — encrypted on your machine before
+it is uploaded, so the server only ever stores ciphertext.
 
----
+It also captures what your AI coding agents run — Claude Code, Cursor, OpenCode,
+Codex, the Devin CLI — alongside the prompt that caused it, and lets those
+agents search your history back.
 
-`yore` records every command you run (zsh + bash + fish) and makes your history
-searchable on every machine you use — pointed at a sync server you host, and
-**end-to-end encrypted** so the server only ever holds ciphertext. Reach it with
-`Ctrl-R`, the `hb`/`hs` aliases, or `yore search`. It's one static, CGO-free Go
-binary: client, background daemon, TUIs, importer, **and** sync server.
+It is one static binary with no runtime dependencies. The same binary is the
+recorder, the search UI, the background service, the importer, and the sync
+server.
 
-It also gives your **AI coding agents** a memory: it captures what Claude Code,
-Cursor, OpenCode, Codex, and the Devin CLI run (traced to the prompt that caused
-it) and serves your cross-machine history back to them over **MCP** — E2E,
-nothing leaving your devices.
+## Install
 
-## Why yore
-
-Built for a threat model most history tools don't serve:
-
-- **The server can't read your history** — only ciphertext and device public keys.
-- **No master key to copy.** Per-device keypairs; the shared key is wrapped per
-  device. Enroll a machine by approving it from another; **revoke** one without
-  re-encrypting a single record.
-- **No standing credential at all.** A device authenticates with its own key on
-  every request — there is no bearer token to leak. Adding a machine takes a
-  **single-use enrollment token** minted by one already enrolled.
-- **A recovery phrase, so per-device keys can't lock you out.** Shown once when
-  you create the group; it is the way back if you lose every machine.
-- **Other machines' plaintext never touches this disk** — only the ciphertext
-  the server already holds is cached locally, and it's decrypted into the
-  daemon's RAM.
-- **Secrets never get recorded, and never sync** — a default-on, editable
-  redaction gate masks the credential and keeps the command, so you still have
-  the history without ever storing the key.
-- **A captured request can't tamper** — every request, reads included, is signed
-  with the device's key (safe against a TLS-inspecting proxy).
-- **One source of truth** (optional takeover mode): no second, unredacted
-  `~/.zsh_history`, and `!N` / `!!` / Up still work — against yore's history.
-
-[Atuin](https://atuin.sh) is more mature and a great choice if you don't need
-this specific key model. [suvadu](https://suvadu.sh) is excellent if you want the
-structured, agent-queryable history and only ever work on one machine.
-
-## How it compares
-
-| | **yore** | **Atuin** | **suvadu** | **plain history** |
-|---|---|---|---|---|
-| Sync across machines | Yes | Yes | No — 100% local | No |
-| E2E (server can't read history) | Yes | Yes | n/a — no server | n/a |
-| No shared master key (per-device keys) | Yes | No — one key you copy | n/a | n/a |
-| Per-device revocation | Yes | No | n/a | n/a |
-| Single-use enrollment (no standing token) | Yes | No | n/a | n/a |
-| Recovery phrase if every device is lost | Yes | n/a — copy the key | n/a | n/a |
-| Other hosts' plaintext never stored locally | Yes — ciphertext only | No — replicated to each | n/a | n/a |
-| Per-device request signing (incl. reads) | Yes | No | n/a | n/a |
-| Secrets in the OS keyring | Yes | No | n/a | n/a |
-| Self-hostable server | Yes | Yes | n/a | No |
-| Multi-tenant server | Yes | Yes | n/a | n/a |
-| Secrets redaction | Yes — default-on, **masks** the value | Opt-in filter | Yes — default-on, **masks** the value | No |
-| …and it covers agent prompts too | Yes | n/a | n/a | n/a |
-| …and it gates sync | Yes | — | n/a | n/a |
-| Exit code, duration, cwd, session per command | Yes | Yes | Yes | No |
-| Cross-shell (zsh + bash + fish) | Yes | Yes | Yes | Yes |
-| Rich interactive TUI | Yes | Yes | Yes | No (basic `Ctrl-R`) |
-| Agent/executor tagging | Yes | No | Yes — wider agent coverage | No |
-| Prompt → the commands it triggered | Yes | No | Yes | No |
-| AI agents query your history (MCP) | Yes — cross-machine | Yes — cross-machine | Yes — local only | No |
-| History-aware risk assessment for agents | Yes | — | Yes | No |
-| Single static binary | Yes | Yes | Yes | n/a |
-
-Blank cells (`—`) aren't guessed. **Atuin** does E2E sync, but with a **single key
-you copy to each machine** (no per-device keys or revocation) and **replicates
-full history to every machine**; it also ships an MCP server, so the
-agent-facing half is no longer a yore differentiator — the key model is.
-**suvadu** is the closest thing to yore's agent story and is very good at it, but
-it is deliberately local-only: no sync, no server, nothing cross-machine. Plain
-history is a plaintext file with no sync.
-
-## Quickstart
-
-### Install (Go 1.26+)
+Requires Go 1.26+ to build:
 
 ```bash
-git clone <your-fork> && cd yore
+git clone <repo-url> && cd yore
 make build && sudo install -m755 bin/yore /usr/local/bin/yore
 ```
 
-`make release` cross-compiles Linux / macOS / FreeBSD (amd64/arm64; WSL runs the
-Linux build).
+`make release` cross-compiles Linux and macOS (amd64 and arm64) plus FreeBSD
+(amd64). WSL runs the Linux build; native Windows is not supported.
 
-### Shell setup
+## Set up your shell
 
-Add one line to your shell rc, **after** your own `HISTFILE`/`SAVEHIST` settings:
+Add one line to your shell config, **after** any `HISTFILE` / `SAVEHIST`
+settings of your own:
 
 ```bash
 # ~/.zshrc
@@ -111,198 +45,240 @@ eval "$(yore init bash)"
 yore init fish | source
 ```
 
-That's the whole single-machine setup — fast, redacted, searchable local history.
-Choose how deeply it integrates with `yore init --mode takeover|coexist|capture`
-(default `takeover`; details in [architecture.md](docs/architecture.md)).
+Open a new shell and you have fast, searchable, secret-free local history. Press
+`Ctrl-R` to search it.
 
-### Sync across machines (optional)
+By default yore takes over as your shell's history: your shell stops writing its
+own plaintext history file, and `!!`, `!N`, and Up-arrow work against yore's
+copy instead. If you would rather leave your shell's history alone, use
+`yore init --mode coexist` (record and add the search UI, change nothing else)
+or `--mode capture` (record only).
 
-Host the server (same binary, ciphertext only), then enroll each machine:
+### Bring your old history with you
+
+```bash
+yore import auto
+```
+
+This is safe to run more than once — re-importing the same file adds nothing.
+
+One caveat on timestamps: zsh's extended history stores a time per command, but
+bash only does if `HISTTIMEFORMAT` was set in the shell that wrote the file. A
+default `~/.bash_history` has no times in it at all, so those commands import
+with an unknown time (shown as `—`). `yore import` tells you when this happens.
+The times are not recoverable afterwards — set `HISTTIMEFORMAT` to get them on
+future commands.
+
+## Sync across machines
+
+Sync is optional. You host the server yourself; it never sees anything but
+ciphertext.
 
 ```bash
 # on a server your machines can reach
 openssl rand -base64 32 | docker secret create yore_token -
 docker build -f docker/Dockerfile -t yore:latest .
 docker stack deploy -c docker/swarm/stack.yml yore
-
-# first machine: uses the server's own token, forms the group, prints a
-# RECOVERY PHRASE — write it down, it is shown once and never stored
-yore setup
-
-# each other machine needs a single-use token from one already enrolled:
-yore devices token                   # on an enrolled machine
-yore setup --token <token>           # on the new machine: registers PENDING
-yore devices                         # back on the enrolled one: pick it, press
-                                     # a, and check the code matches
 ```
 
-`yore devices` also lists every enrollment token and what became of it — open
-(with the time it has left counting down), claimed (by which machine), expired,
-or revoked — so an outstanding invitation into your history is something you can
-see and cancel (`x`), not something you wait out. `n` mints one there and `y`
-copies it; it is shown once and never again, because the server keeps only its
-hash. `S` refetches both lists — the same key that syncs everywhere else — so the
-machine you are waiting on appears without leaving the screen, and nothing on
-that screen moves until you press it, because it is also the screen a token has
-to be read off. `c` sorts or hides either list's columns.
-
-Lost every machine? `yore recover` asks for the recovery phrase and re-enrols
-this one. Client secrets (the device key) live in your **OS keyring**, falling
-back to a `0600` file on headless servers and in containers.
-
-Multi-tenant hosting, server backups, and revocation:
-[`docker/swarm/stack.yml`](docker/swarm/stack.yml) and
-[`docs/protocol.md`](docs/protocol.md). A local container playground is in
-[`docker/sandbox/`](docker/sandbox/).
-
-### Uninstall
-
-Un-wire any agents you set up, remove the `eval "$(yore init …)"` line from your
-`~/.zshrc` / `~/.bashrc` (or the `yore init fish | source` line from
-`~/.config/fish/config.fish`), reopen your shell, then:
+Then on your first machine:
 
 ```bash
-yore uninit claude-code       # …and cursor / opencode / codex / devin
-rm -f /usr/local/bin/yore     # or wherever you installed it
-rm -rf ~/.config/yore         # all of yore's state
+yore setup
 ```
 
-`uninit` removes only yore's hooks and MCP entry from each agent's config,
-leaving everything else — including the agent's own auth — exactly as it was.
+This forms the group and prints a **recovery phrase**. Write it down. It is
+shown once, never stored, and it is the only way back in if you lose every
+machine.
 
-## Highlights
+Every machine after the first needs a single-use invitation from one that is
+already in:
 
-- **`Ctrl-R` search** — scopes (local / all / host / session / cwd / git-repo),
-  frecency and fuzzy matching, syntax highlighting; Enter puts the pick on the
-  prompt for review, or runs it outright with `enter_executes`.
-- **`hb` browser** — hosts / commands / details panes, plus full-screen **stats**
-  (`s`: KPIs, top programs/commands/dirs, per-host, and three full-width graphs —
-  a contribution heatmap with a month ruler, a daily trend, and an hour-of-day
-  histogram, all of which show *more history* on a wider terminal — with period
-  tabs), an **agent explorer** (`a`: five panes — an executor sidebar and a
-  HOSTS pane that each filter everything, every prompt, the exact commands the
-  highlighted prompt triggered, and a details pane that keeps whichever record
-  you pointed it at — focus it to scroll or `z` it to read the whole thing; `H` cycles the
-  host filter from anywhere and `A` the agent, and the host column appears only
-  when the rows can disagree about it), and
-  **devices** (`D`: enrolled machines over enrollment tokens, both sortable
-  tables; `S` refetches them). Any pane can
-  be **expanded to the full terminal** (`z`) or **resized by dragging its
-  border** with the mouse — and the sizes you pick are remembered between runs;
-  the wheel scrolls whatever the pointer is over. One **time window** (`1`-`5`:
-  Today / 7d / 30d / 90d / All) drives every view, including the command table,
-  with its tabs in the same top-right corner everywhere. `yore stats` and
-  `yore agents` open straight on those two screens. Separate `exec` and `tags`
-  columns, `e`/`t` filter by the row's executor/tag and `E`/`T` by any you type,
-  `H` cycles the host scope, `c` opens a **columns pane** to show, hide, and sort
-  by any column of whichever list you are in — the results table, the explorer's
-  prompts or its commands, the devices view's machines or tokens, each keeping
-  its own choices — `Ctrl+T` tags a row, `S` sync-now; Enter recalls, `y`
-  copies, `space` checks a row and `ctrl+a` checks every row shown (pressed
-  again once everything shown is checked, it clears the selection instead) for
-  a bulk `d` delete or `Ctrl+T` tag — both act on the checked set instead of
-  the cursor row when one exists, and confirm/prompt with the count. (yore
-  leaves your own `h` alone.) Pane sizes you drag **and the columns you show,
-  hide, and sort by** persist to `~/.config/yore/ui.toml` — kept out of your
-  hand-edited `config.toml`, and stored by column *name* so the file survives
-  upgrades.
-  Commands are **syntax-highlighted everywhere they appear** — the table, both
-  details panes, the top-commands stats — hosts *and* executors carry stable
-  identity hues, and every command's details carry a verdict on how dangerous it
-  is (`Risk  ⚠ high (script-exec)`, `Risk  ✓ safe`) using the same rules as the
-  MCP `assess_risk` tool.
-- **`hs` + scoped `hsa`/`hss`/`hsc`/`hsw`** search aliases; `yore search
-  --headless` for scripts and pipes.
-- **Freeform tags** — label commands and sessions (`yore tag add refactor`,
-  filter `yore search --tag refactor`); a record can carry several, `auto_tags`
-  labels by directory, and they sync E2E. Tagging a session covers the work that
-  shell has already done and everything it does next. `yore tag list` counts
-  commands, not labellings. Which agent ran a command is a *separate* axis —
-  `--executor`, never `--tag`.
-- **AI-agent capture** — records which agent ran what (`--executor claude-code`);
-  `yore init claude-code | cursor | opencode | codex | devin` installs each one's
-  native hooks/plugin so even their non-interactive shells are captured,
-  prompt-traced, with exit status and — via a PreToolUse start-stamp — real
-  command durations even when the agent's payload omits timing.
-  `yore uninit <agent>` cleanly reverses it (removing only yore's hooks + MCP,
-  preserving the agent's own config), and `yore doctor` shows what's wired up.
-- **Agent memory over MCP** — the same `init` registers a local, read-only MCP
-  server so an agent can query your history back — search, failures, prompts,
-  stats, and a history-aware `assess_risk` (*"run 3× across your machines, 1
-  failed"*) — **across every machine you own**. `yore doctor` verifies it.
-  The classifier judges a command by what it would *run*, not by what it
-  contains — the line is parsed into command segments, so `sudo rm -rf /` is an
-  `rm` and `grep -rn "rm -rf" docs/` is a grep — and it covers destructive
-  shell, git, SQL, disk, cloud and IaC, containers, packages and publishing,
-  permissions, accounts, secrets, and system state. Risk rules are yours to
-  extend: `~/.config/yore/risk.toml` adds `[[rule]]` patterns and an `ignore`
-  list on top of the built-ins, fail-safe like `redact.yml`, and the browser and
-  `assess_risk` read the same file. Risk is **advisory** — yore labels commands,
-  it never blocks one.
-- **Secrets redaction** from an editable, fail-safe `~/.config/yore/redact.yml`;
-  runs on capture, on import, and on the history seed. It **masks the credential
-  and keeps the command** — `export DB_PASSWORD=⟪redacted:generic-token-assign⟫`
-  — so you keep the history and the marker says which rule took the value. It
-  gates agent prompts as well as commands. (Two things still drop a record
-  outright, because you asked for it: `ignore_dirs` and `ignore_patterns`.)
-- **Import** your existing history idempotently (`yore import auto`). Zsh's
-  extended history carries a timestamp per entry; **bash only does when
-  `HISTTIMEFORMAT` is set** in the shell that wrote the file, so a default
-  `~/.bash_history` imports with no times at all (shown as `—`, not as 1970).
-  `yore import` says so when it happens. The dates are not recoverable after the
-  fact — set `HISTTIMEFORMAT` to get them on future entries.
-- **Shell completions** (bash / zsh / fish); `vim` or `emacs` TUI keymaps.
-- **Diagnostics**: `yore doctor`, `yore status`.
+```bash
+yore devices token          # on a machine already enrolled — prints a token
+yore setup --token <token>  # on the new machine — registers it as pending
+yore devices                # back on the first machine: select it, press a,
+                            # and check the verification code matches
+```
 
-Configure via `~/.config/yore/config.toml` — a plain TOML file, or use
-`yore get-config <key>` / `yore set-config <key> <value>` (every key + default is
-in [architecture.md](docs/architecture.md)); all state lives under
-`~/.config/yore/`.
+`yore devices` is also where you manage the group: which machines are enrolled,
+which invitations are still outstanding and how long they have left, `x` to
+cancel an invitation or revoke a machine, `S` to refresh.
+
+Lost every machine? `yore recover` asks for the recovery phrase and re-enrolls.
+
+Your device key is kept in your OS keyring where one is available, and in a
+`0600` file otherwise (headless servers, containers).
+
+Multi-tenant hosting, backups, and the full server configuration are in
+[`docker/swarm/stack.yml`](docker/swarm/stack.yml) and
+[`docs/protocol.md`](docs/protocol.md). There is a local container playground in
+[`docker/sandbox/`](docker/sandbox/).
+
+## What you get
+
+**`Ctrl-R` search.** Type to filter. Press `Ctrl-R` again to cycle scope — this
+machine, every machine, one machine, this session, this directory, this git
+repo. Frecency ranking and fuzzy matching are toggles. Enter puts the command on
+your prompt to review; set `enter_executes` if you would rather it just run.
+
+**`hb`, the browser.** A full-screen view of your history with four screens:
+
+- the **command table**, with a host sidebar and a details pane;
+- **stats** (`s`) — totals, top commands and directories, an activity heatmap, a
+  daily trend, and an hour-of-day histogram;
+- the **agent explorer** (`a`) — every agent prompt and the exact commands it
+  triggered, filterable by agent and by machine;
+- **devices** (`D`) — enrolled machines and outstanding invitations.
+
+Any pane zooms to full screen with `z` or resizes by dragging its border, and
+the sizes you choose are remembered. `c` shows, hides, and sorts columns in
+whichever list you are in, also remembered. `1`–`5` narrows every screen to
+today, 7, 30, or 90 days, or everything. `?` lists every key that works on the
+screen you are on.
+
+`Enter` recalls a command, `y` copies it, `space` checks rows and `ctrl+a`
+checks everything shown, so `d` deletes or `Ctrl+T` tags the whole selection at
+once. `yore stats` and `yore agents` open straight onto those screens.
+
+**Search from scripts.** `hs <query>` searches this machine; `hsa`, `hss`,
+`hsc`, `hsw` search all machines, this session, this directory, this repo.
+`yore search --headless` prints plain lines for pipes.
+
+**Secrets stay out of your history.** A default-on filter catches credentials —
+API keys, tokens, passwords on command lines, and the same things stated in an
+agent prompt — and masks just the credential, keeping the rest of the command:
+
+```
+export DB_PASSWORD=⟪redacted:generic-token-assign⟫
+```
+
+You keep the history; the secret is never written down or uploaded. The rules
+live in `~/.config/yore/redact.yml` and you can edit them.
+
+**Tags.** Label commands or whole sessions (`yore tag add refactor`) and filter
+by them (`yore search --tag refactor`, or `T` in the browser). Tagging a session
+covers everything that shell has already done and everything it does next.
+`auto_tags` labels by directory.
+
+**AI agent capture.** `yore init claude-code` (or `cursor`, `opencode`, `codex`,
+`devin`) installs that agent's own hooks, so commands it runs in non-interactive
+shells are captured too — with the prompt that caused them, the exit status, and
+how long they took. The same command registers a local, read-only MCP server so
+the agent can search your history across every machine you own: what you have
+run before, what failed, what a command does. It can also ask how risky a
+command is — yore rates commands `safe` through `critical` from a fixed set of
+rules you can extend in `~/.config/yore/risk.toml`. That rating is advisory. It
+labels history; it never blocks anything.
+
+`yore uninit <agent>` reverses any of it, removing only yore's own entries and
+leaving the rest of the agent's configuration alone. `yore doctor` shows what is
+wired up.
+
+**Diagnostics.** `yore doctor` checks your setup end to end; `yore status` shows
+the daemon and sync state.
+
+Everything is configured in `~/.config/yore/config.toml`, or with
+`yore get-config <key>` and `yore set-config <key> <value>`. Every key and
+default is listed in [architecture.md](docs/architecture.md). All state lives
+under `~/.config/yore/`.
+
+## Security, honestly
+
+yore encrypts your history on your machine before it leaves, using standard,
+well-regarded primitives, and the full design — every byte on the wire — is
+written down in [`docs/protocol.md`](docs/protocol.md) so you can judge it for
+yourself.
+
+But be clear about what that is and is not:
+
+- **It has not been audited.** No independent review, no pentest. It is a
+  best-effort design by someone who cares about getting it right, not a
+  reviewed security product. **Use it at your own risk.**
+- **It is meaningfully better than what you have now.** A plaintext
+  `~/.zsh_history` is readable by anything that can read your disk, and a
+  history sync service that can read your commands is a service that can leak
+  them. yore is a real improvement on both.
+- **It is not proof against a determined attacker with access to your
+  machine.** Your device key is on your machine, and the daemon holds decrypted
+  history in memory. yore protects history in transit and at rest on the
+  server; it cannot protect a machine that is already compromised.
+- **The secret filter is pattern-based, so it is not exhaustive.** It catches
+  the common shapes of credentials, and it will miss a secret shaped like
+  nothing it knows. Treat it as a strong safety net, not a guarantee.
+
+If you need audited guarantees, yore is not that. If you want your shell history
+off a plaintext file and off other people's servers, it does that well.
+
+## How it compares
+
+[Atuin](https://atuin.sh) is the mature, widely used option and a good choice.
+[suvadu](https://suvadu.sh) is excellent at structured, agent-queryable history
+on a single machine. The differences worth choosing on:
+
+| | **yore** | **Atuin** | **suvadu** |
+|---|---|---|---|
+| Sync across machines | Yes | Yes | No — local only |
+| Key model | A key per device; no master key to copy | One key you copy to each machine | n/a |
+| Revoke one machine | Yes, without re-encrypting history | No | n/a |
+| Other machines' history on this disk | Ciphertext only | Full plaintext copy | n/a |
+| Adding a machine | Single-use invitation, approved out of band | Copy the key over | n/a |
+| Agent history for agents to query | Yes, across every machine | Yes, across every machine | Yes, this machine |
+
+The short version: yore's difference is the key model. Everything else it does,
+one of the other two also does well. If you don't need per-device keys and
+per-device revocation, Atuin is more mature. If you only ever work on one
+machine and want structured history for agents, suvadu is built for exactly
+that.
 
 ## Everyday use
 
 | You want to… | Do this |
 |---|---|
-| Search and recall a command | `Ctrl-R` (or Up, in takeover), type, `Enter` |
-| Re-run an event by number | `!N`, `!!`, `!$` — native, against yore's history |
-| Cycle search scope (host / all / session / dir / repo) | `Ctrl-R` again inside the search |
-| Rank by frequency×recency, or fuzzy-match | frecency / fuzzy toggles inside the search |
-| Browse, get stats, watch agents, manage devices | `hb` — `s` stats, `a` agents, `D` devices; `Enter` recalls, `y` copies |
-| Read your own history without an agent's noise in it | nothing — `hb` and `Ctrl-R` hide agent commands by default (`A` / `⌥a` shows them; `hide_agent_commands` sets the default) |
-| See every key that works on the screen you're on | `?` in `hb` · `⌥/` inside `Ctrl-R` search |
-| Jump straight to stats or the agent explorer | `yore stats` · `yore agents` |
-| See an agent's prompt and the commands it triggered | `yore agents` — `Tab` cycles the five panes, the sidebar filters to one agent |
-| Find one prompt, or one command an agent ran | `/` in `yore agents` — filters whichever list has focus; `Esc` clears it |
-| See one machine's agent work | the HOSTS pane in `yore agents`, or `H` to cycle the host filter from anywhere (`A` cycles the agent) |
-| Narrow any view to a time window | `1`-`5` — Today (the calendar day) / 7d / 30d / 90d / All |
-| Give one pane the whole screen | `z` (again to restore) |
-| Resize the panes | drag the border between them with the mouse (remembered in `~/.config/yore/ui.toml`) |
-| Keep a table's columns and sort between runs | nothing to do — `c` writes them to `ui.toml` as you make them |
-| Read a command/prompt that's cut off with `…` | `←`/`→` scroll the selected row horizontally |
-| Delete or tag several commands at once | `space` in `hb` to check rows (`ctrl+a` for every row shown, again to clear), then `d` or `Ctrl+T` — both confirm/prompt with the count |
-| Capture what Claude Code / Devin runs + let it query history (MCP) | `yore init claude-code` \| `yore init devin` (once) |
+| Search and recall a command | `Ctrl-R` (or Up-arrow), type, `Enter` |
+| Re-run a command by number | `!N`, `!!`, `!$` |
+| Change search scope | `Ctrl-R` again inside the search |
+| Browse, get stats, watch agents, manage devices | `hb` — then `s`, `a`, `D` |
+| See every key on the screen you're on | `?` in `hb`, `⌥/` in `Ctrl-R` |
+| Read your history without agent noise | nothing — agent commands are hidden by default (`A` shows them) |
+| Jump to stats or the agent explorer | `yore stats`, `yore agents` |
+| See an agent's prompt and what it ran | `yore agents` — `Tab` cycles panes |
+| Filter one machine's agent work | `H` in `yore agents` |
+| Narrow to a time window | `1`–`5` — today, 7d, 30d, 90d, all |
+| Give one pane the whole screen | `z` |
+| Resize panes | drag the border with the mouse |
+| Delete or tag several commands | `space` to check rows (`ctrl+a` for all), then `d` or `Ctrl+T` |
+| Search from a script | `hs <query>`, or `yore search --headless <query>` |
 | See only what an agent ran | `yore search --executor claude-code` |
-| Tag commands/sessions and filter by tag | `yore tag add refactor` · `yore search --tag refactor` · `T` in the browser |
-| Sort by duration, or hide a column you don't need | `c` in any list — `s` sorts by the highlighted column, `space` hides it |
-| Sort an agent's prompts by how many commands they ran | `a`, then `c` on the prompt list, `s` on `cmds` |
-| See what your tags actually cover | `yore tag list` (counts commands; `--scope all` for every machine) |
-| Let an agent check a command's risk / history | it calls the `assess_risk` MCP tool |
-| Grep history in a script | `hs <query>` \| … or `yore search --headless <query>` |
-| Force a sync now | `yore sync` (or `S` in `hb`) |
-| Add another machine | `n` in `yore devices` (or `yore devices token`), then `yore setup --token …` there, then approve it with `a` |
-| Approve or revoke a machine | `yore devices` — `a` approves, `x` revokes, both ask first |
-| See which enrollment tokens are outstanding | `yore devices`, tokens pane — open (counting down) / claimed (by which machine) / expired / revoked; `x` cancels an open one |
-| Watch for a machine you are enrolling right now | stay in `yore devices` and press `S` to refetch |
-| Get back in after losing every machine | `yore recover` (needs the recovery phrase) |
-| Diagnose / status | `yore doctor` / `yore status` |
-| Stop the daemon / server | `yore stop` / `yore server stop` |
+| Tag and filter by tag | `yore tag add refactor`, `yore search --tag refactor` |
+| See what your tags cover | `yore tag list` (`--scope all` for every machine) |
+| Force a sync now | `yore sync`, or `S` in `hb` |
+| Add a machine | `n` in `yore devices`, then `yore setup --token …` there, then `a` to approve |
+| Approve or revoke a machine | `yore devices` — `a` or `x`, both ask first |
+| Get back in after losing every machine | `yore recover` |
+| Check your setup | `yore doctor`, `yore status` |
+| Stop the daemon or server | `yore stop`, `yore server stop` |
 
-## Docs & contributing
+## Uninstall
 
-- [`docs/architecture.md`](docs/architecture.md) — the design: data flow,
-  packages, the daemon, search, integration modes, key hierarchy, config, and the
-  single-directory footprint.
-- [`docs/protocol.md`](docs/protocol.md) — the sync HTTP API, the crypto scheme
-  (exact bytes), and the daemon socket protocol.
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) — build, test, the CI gates, conventions.
+Remove the `eval "$(yore init …)"` line from your shell config (or the
+`yore init fish | source` line), reopen your shell, then:
+
+```bash
+yore uninit claude-code       # and cursor / opencode / codex / devin
+rm -f /usr/local/bin/yore
+rm -rf ~/.config/yore
+```
+
+`uninit` removes only yore's hooks and MCP entry from each agent's config and
+leaves everything else — including the agent's own credentials — untouched.
+
+## Docs
+
+- [`docs/architecture.md`](docs/architecture.md) — how it is built and why.
+- [`docs/protocol.md`](docs/protocol.md) — the sync API, the crypto scheme, and
+  the local daemon protocol, in exact detail.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — build, test, and the CI gates.
 - [`LICENSE`](LICENSE) — MIT.
+</content>
+</invoke>

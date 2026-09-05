@@ -54,15 +54,15 @@ Drone (`.drone.yml`): `yamllint` → `golangci-lint` → `go test` (gotestfmt, c
 ## Workspace Rules
 
 - **No transient files in the working tree.** Debug scripts, scratch output, throwaway test data → `.agents/` (gitignored). Never litter the repo.
-- **No planning references in code or comments.** No roadmap/phase numbers, token IDs, group names, or session notes in source — a comment explains the code to a contributor who has never seen the plan. Planning docs live under `docs/`.
-- **Docs are maintained.** Update `README.md` and `docs/` (`architecture.md`, `protocol.md`) when you change a capability; explain design and rationale, not what the code makes obvious.
+- **No planning references in code or comments.** No roadmap/phase numbers, token IDs, group names, or session notes in source — a comment explains the code to a contributor who has never seen the plan. Plan docs do not belong in the repo at all: roadmaps, phases, and open issues live in the issue tracker.
+- **Docs are maintained, and each has one tone.** Update them when you change a capability. `README.md` is user-facing — what it does and how to use it, no internals. `docs/architecture.md` is a design doc for engineers — how the pieces fit and why, not what the code makes obvious. `docs/protocol.md` is the exact formats. Docs describe what is true now: never a changelog, a roadmap, or a list of known issues, and never a reference to any particular person, machine, or filesystem.
 
 ## Reference Projects
 
-Two sibling projects sit alongside this repo (in `../`) as reference material — read them for prior art and design comparison, but they are not part of yore's build:
+Two projects are useful prior art. Neither is part of yore's build, and neither one's location is recorded here — ask if you need a checkout.
 
-- **`../atuin`** — "magical shell history", the well-known Rust shell-history sync tool. The closest prior art to yore; consult it for protocol, sync, and UX design decisions.
-- **`../suvadu`** ([suvadu.sh](https://suvadu.sh/)) — a Rust shell-history replacement that stores structured history in SQLite and exposes it as queryable "shared memory" for AI agents. Reference for structured-history modeling and agent-facing query design.
+- **Atuin** ([atuin.sh](https://atuin.sh/)) — "magical shell history", the well-known Rust shell-history sync tool, and the closest prior art to yore. Consult it for protocol, sync, and UX design decisions.
+- **suvadu** ([suvadu.sh](https://suvadu.sh/)) — a Rust shell-history replacement storing structured history in SQLite and exposing it as queryable "shared memory" for AI agents. Reference for structured-history modeling and agent-facing query design.
 
 ## Shortcuts & Personas
 

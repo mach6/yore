@@ -78,7 +78,9 @@ These are enforced by review (see `CLAUDE.md`):
   throwaway data go in `.agents/` (gitignored). Never litter the repo.
 - **No planning references in code or comments** — no roadmap/phase numbers,
   token IDs, or session notes. A comment explains the code to someone who has
-  never seen the plan; planning lives under `docs/`.
+  never seen the plan. Design rationale belongs in `docs/architecture.md`;
+  roadmaps, phases, and open issues belong in the issue tracker, not in the
+  repo.
 - **Never commit secrets or real history.** Device keys, tokens, and history live
   under `~/.config/yore/`, never in the repo or tests. `*.db` and `.env` are
   gitignored — keep it that way.
@@ -91,11 +93,15 @@ These are enforced by review (see `CLAUDE.md`):
 
 When you change a capability, update it in the same PR:
 
-- **`README.md`** — the user-facing feature set and the comparison table.
-- **`docs/architecture.md`** — design and rationale.
-- **`docs/protocol.md`** — the sync HTTP API.
+- **`README.md`** — user-facing. What it does and how to use it, in the tone of
+  something you hand a stranger. No internals.
+- **`docs/architecture.md`** — a design doc for engineers. How the pieces fit and
+  why they are shaped that way, not what the code makes obvious.
+- **`docs/protocol.md`** — the exact formats: the sync API, the crypto scheme,
+  the daemon socket protocol.
 
-Explain design and rationale, not what the code makes obvious.
+Docs describe what is true now. They are not a changelog, a roadmap, or a place
+to track known issues.
 
 ## Manual end-to-end testing
 
