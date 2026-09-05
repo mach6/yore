@@ -56,6 +56,16 @@ const recordsPrefix = "records:"
 // metaHKVersion is the meta key holding the current HK version (decimal string).
 const metaHKVersion = "hk_version"
 
+// metaReadyProbe is the meta key the readiness probe writes. Its value (a
+// unix-millis stamp) is never read back: what is being tested is the commit,
+// not the contents.
+const metaReadyProbe = "ready_probe"
+
+// readyProbeTTL bounds how often /v1/ready actually touches storage. The
+// endpoint is open, so without a cached verdict anyone who can reach the server
+// could turn it into a write amplifier.
+const readyProbeTTL = 10 * time.Second
+
 // maxBody caps every request body.
 const maxBody = 10 << 20 // 10 MiB
 
@@ -204,6 +214,48 @@ type Server struct {
 	// a scan of every tenant's device bucket per request.
 	routeMu sync.RWMutex
 	route   map[string]*tenant
+
+	// ready caches the last storage probe (see probeStorage).
+	readyMu  sync.Mutex
+	readyAt  time.Time
+	readyErr error
+}
+
+// probeStorage reports whether every tenant db can still commit a write,
+// caching the verdict for readyProbeTTL.
+//
+// A bbolt read is served from the existing mmap and needs no write at all, so a
+// server whose volume has filled (or gone read-only, or started failing I/O)
+// keeps answering every GET perfectly while every mutation fails — the archive
+// looks alive and silently stops accepting history. Nothing short of an actual
+// commit detects that, which is why this writes.
+func (s *Server) probeStorage(now time.Time) error {
+	s.readyMu.Lock()
+	defer s.readyMu.Unlock()
+	if !s.readyAt.IsZero() && now.Sub(s.readyAt) < readyProbeTTL {
+		return s.readyErr
+	}
+	var probeErr error
+	for _, t := range s.tenants {
+		err := t.db.Update(func(tx *bbolt.Tx) error {
+			return tx.Bucket(bucketMeta).Put([]byte(metaReadyProbe),
+				[]byte(strconv.FormatInt(now.UnixMilli(), 10)))
+		})
+		if err != nil {
+			probeErr = fmt.Errorf("tenant %q: %w", t.name, err)
+			break
+		}
+	}
+	// Log only the transitions: a probe that keeps failing is one incident, and
+	// a recovery is the line an operator looks for after fixing the disk.
+	switch {
+	case probeErr != nil && s.readyErr == nil:
+		log.Printf("storage unwritable: %v", probeErr)
+	case probeErr == nil && s.readyErr != nil:
+		log.Printf("storage writable again")
+	}
+	s.readyAt, s.readyErr = now, probeErr
+	return probeErr
 }
 
 // ctxKey is the private type for request-context values so no other package can
@@ -235,7 +287,7 @@ func tenantFromContext(r *http.Request) string {
 func mustDB(w http.ResponseWriter, r *http.Request) (*bbolt.DB, bool) {
 	db := dbFromContext(r)
 	if db == nil {
-		writeErr(w, http.StatusInternalServerError, "internal error")
+		logInternal(w, r, errors.New("no tenant bound to the request"))
 		return nil, false
 	}
 	return db, true
@@ -361,7 +413,7 @@ func (s *Server) requireSignature(w http.ResponseWriter, r *http.Request, db *bb
 			known = true
 			return json.Unmarshal(raw, &dev)
 		}); err != nil {
-			writeErr(w, http.StatusInternalServerError, "internal error")
+			logInternal(w, r, fmt.Errorf("read device %q: %w", deviceID, err))
 			return false
 		}
 		// An unknown device is refused without a hint: there is no key to check a
@@ -520,6 +572,7 @@ func (s *Server) Close() error {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/health", s.handleHealth)
+	mux.HandleFunc("GET /v1/ready", s.handleReady)
 
 	// Reads are signed exactly like mutations: with no bearer token, the device
 	// key is the only credential there is.
@@ -639,7 +692,7 @@ func (s *Server) limitBody(next http.Handler) http.Handler {
 // long-lived shared secret exists to leak. Requests that predate having a
 // device record carry their own routing instead:
 //
-//   - /v1/health is open.
+//   - /v1/health and /v1/ready are open.
 //   - enrollment (POST /v1/devices) routes by its X-Yore-Token header.
 //   - recovery routes by the recovery public key that signed it.
 //
@@ -648,7 +701,7 @@ func (s *Server) limitBody(next http.Handler) http.Handler {
 // rejected 401 with no detail about which tenants exist.
 func (s *Server) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v1/health" {
+		if isOpenPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -670,6 +723,13 @@ func (s *Server) auth(next http.Handler) http.Handler {
 		ctx = context.WithValue(ctx, ctxKeyTenant, matched.name)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// isOpenPath reports whether path is one of the two endpoints that answer
+// before any identity is established: liveness and readiness. Neither touches a
+// tenant's history, so neither needs one.
+func isOpenPath(path string) bool {
+	return path == "/v1/health" || path == "/v1/ready"
 }
 
 // isEnrollPath reports whether r is a device registration, which routes by
@@ -814,12 +874,28 @@ func writeCodedErr(w http.ResponseWriter, status int, code, msg string) {
 }
 
 // writeAPIErr maps an error out of a transaction to its status, or 500.
-func writeAPIErr(w http.ResponseWriter, err error) {
+//
+// An *apiError is a decision this package made about the request, and its
+// message is the client's answer. Anything else is a storage or encoding
+// failure the client can do nothing about and is deliberately told nothing
+// about — which makes this the only place the cause can be recorded. The access
+// log carries the status and never the reason, so without this line a failed
+// write transaction (a full disk, a read-only volume, an I/O error) is
+// invisible from both ends of the connection.
+func writeAPIErr(w http.ResponseWriter, r *http.Request, err error) {
 	var ae *apiError
 	if errors.As(err, &ae) {
 		writeErr(w, ae.status, ae.msg)
 		return
 	}
+	logInternal(w, r, err)
+}
+
+// logInternal records the cause of a 500 for operators and answers the client
+// with the generic error. Every 500 in this package goes through here.
+func logInternal(w http.ResponseWriter, r *http.Request, cause error) {
+	log.Printf("internal error: tenant=%q %s %s: %v",
+		tenantFromContext(r), r.Method, r.URL.Path, cause)
 	writeErr(w, http.StatusInternalServerError, "internal error")
 }
 

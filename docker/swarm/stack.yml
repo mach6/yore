@@ -52,6 +52,13 @@ services:
       - yore-data:/data
     networks:
       - proxy
+    # Liveness only. /v1/health touches no database on purpose: a restart is the
+    # only thing this can do, and the failure it must NOT trigger on is a full or
+    # read-only /data — the server still serves reads there, and restarting it
+    # into a volume it cannot write turns that into a crash loop. For "is it
+    # still accepting history?" point monitoring at GET /v1/ready, which commits
+    # a probe transaction and answers 503 when storage is gone (`yore doctor`
+    # asks it too).
     healthcheck:
       test: ["CMD", "/yore", "healthcheck", "--url", "http://localhost:8080/v1/health"]
       interval: 30s

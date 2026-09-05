@@ -13,6 +13,11 @@ import (
 	"go.etcd.io/bbolt"
 )
 
+// tempPrefix names an in-progress snapshot. It is deliberately not the
+// data-<millis>.db shape a finished backup has, so a half-written file is never
+// mistaken for one — by prune, or by whoever restores.
+const tempPrefix = ".tmp-"
+
 // backupDir returns the directory holding one tenant's rolling snapshots:
 // <dir(DBPath)>/backups/<tenant>/. A single-token server's one tenant uses
 // "default".
@@ -67,7 +72,7 @@ func (s *Server) backupTenant(t *tenant) error {
 
 	// Write to a temp file first so a crash mid-snapshot never leaves a partial
 	// data-*.db that prune (or a restore) would treat as a real backup.
-	tmp := filepath.Join(dir, fmt.Sprintf(".tmp-%d.db", time.Now().UnixNano()))
+	tmp := filepath.Join(dir, fmt.Sprintf("%s%d.db", tempPrefix, time.Now().UnixNano()))
 	n, err := snapshotDB(t.db, tmp)
 	if err != nil {
 		_ = os.Remove(tmp)
@@ -110,8 +115,9 @@ func snapshotDB(db *bbolt.DB, path string) (int64, error) {
 	return n, f.Close()
 }
 
-// pruneBackups removes all but the newest keep data-*.db files in dir. A remove
-// error is returned but does not stop the remaining removals.
+// pruneBackups removes all but the newest keep data-*.db files in dir, plus
+// every leftover snapshot temp file. A remove error is returned but does not
+// stop the remaining removals.
 func pruneBackups(dir string, keep int) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -124,12 +130,32 @@ func pruneBackups(dir string, keep int) error {
 		}
 	}
 	var rmErr error
-	for _, name := range backupsToPrune(names, keep) {
+	for _, name := range append(backupsToPrune(names, keep), tempsToPrune(names)...) {
 		if rerr := os.Remove(filepath.Join(dir, name)); rerr != nil && rmErr == nil {
 			rmErr = rerr
 		}
 	}
 	return rmErr
+}
+
+// tempsToPrune returns the abandoned snapshot temp files in names.
+//
+// backupTenant removes its own temp file when the snapshot fails, but a process
+// killed mid-snapshot cannot: the file is left behind, it is a full-size copy of
+// the db, and — not matching data-<millis>.db — backupsToPrune never counted it.
+// A server that restarts repeatedly therefore writes a permanent copy of its own
+// database on every start until the volume fills, which is the failure a backup
+// is supposed to protect against. Collecting them here is safe: backups run on a
+// single goroutine and prune only after the rename, and one bbolt file has one
+// owning process, so no temp file in this directory is being written now.
+func tempsToPrune(names []string) []string {
+	var out []string
+	for _, name := range names {
+		if strings.HasPrefix(name, tempPrefix) && strings.HasSuffix(name, ".db") {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // backupsToPrune returns the backup filenames to delete so only the newest keep

@@ -164,6 +164,14 @@ func runDoctor() int {
 			}
 		} else {
 			ok("server reachable: " + cfg.ServerURL)
+			// Reachable is not the same as recording: the server serves reads out
+			// of its mmap whether or not its storage can still commit, so a full
+			// or read-only volume shows up as a healthy server that rejects every
+			// push. Ask it directly rather than reporting a green check for it.
+			if err := http.Ready(ctx); err != nil && !syncer.ErrNotFound(err) {
+				fail("server is up but cannot write — every push will fail: " + err.Error())
+				u.note("its storage is full, read-only, or failing; the server log names the cause")
+			}
 			if cfg.ServerPin != "" {
 				u.step("certificate pin matches", "SPKI "+pinLabel(cfg.ServerPin))
 			}

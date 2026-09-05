@@ -2,6 +2,8 @@ package syncer
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -174,4 +176,25 @@ func TestVerificationCodeStableAndDistinct(t *testing.T) {
 	require.NotEqual(t, VerificationCode(a), VerificationCode(b), "VerificationCode collided for distinct keys")
 	// Format: 6 groups of 4 => 6*4 + 5 separators = 29 chars.
 	require.Len(t, VerificationCode(a), 29, "code length")
+}
+
+// TestErrNotFound covers the one distinction a rollout depends on: a server that
+// predates an endpoint must not read as that endpoint's failure.
+func TestErrNotFound(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"404 from the server", &APIError{Status: http.StatusNotFound, Msg: "not found"}, true},
+		{"wrapped 404", fmt.Errorf("ready: %w", &APIError{Status: http.StatusNotFound}), true},
+		{"503 is a real failure", &APIError{Status: http.StatusServiceUnavailable, Msg: "storage unavailable"}, false},
+		{"transport failure", errors.New("connection refused"), false},
+		{"no error", nil, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, ErrNotFound(tc.err))
+		})
+	}
 }

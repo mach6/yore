@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -24,8 +25,28 @@ const (
 	maxLimit       = 1000
 )
 
-// GET /v1/health (no auth)
+// GET /v1/health (no auth) — liveness: the process is up and serving.
+//
+// Deliberately shallow, because it is what the container HEALTHCHECK polls and
+// a restart is its only remedy. A server that cannot write is not something a
+// restart fixes — it is something a restart turns into a crash loop, since
+// openTenantDB creates its buckets on the way up — so that condition is
+// reported by /v1/ready and never from here.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// GET /v1/ready (no auth) — readiness: storage still accepts a write.
+//
+// 503 here means the server is answering reads it cannot back with writes: a
+// client can pull, and everything it pushes will fail. The body says only that
+// much — the endpoint is open, and the cause is an operator's business, so it
+// goes to the log (see probeStorage).
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	if err := s.probeStorage(time.Now()); err != nil {
+		writeErr(w, http.StatusServiceUnavailable, "storage unavailable")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -70,7 +91,7 @@ func (s *Server) handleMintToken(w http.ResponseWriter, r *http.Request) {
 
 	token, err := newToken()
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal error")
+		logInternal(w, r, fmt.Errorf("mint token: %w", err))
 		return
 	}
 	now := time.Now()
@@ -85,7 +106,7 @@ func (s *Server) handleMintToken(w http.ResponseWriter, r *http.Request) {
 		return tx.Bucket(bucketTokens).Put(hashToken(token), val)
 	})
 	if err != nil {
-		writeAPIErr(w, err)
+		writeAPIErr(w, r, err)
 		return
 	}
 	// The plaintext token exists only in this response; the server kept a hash.
@@ -157,7 +178,7 @@ func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
 		})
 	})
 	if err != nil {
-		writeAPIErr(w, err)
+		writeAPIErr(w, r, err)
 		return
 	}
 	// Newest first: the one you just minted is the one you are looking for.
@@ -199,7 +220,7 @@ func (s *Server) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
 		return putToken(tx, sum, st)
 	})
 	if err != nil {
-		writeAPIErr(w, err)
+		writeAPIErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -218,7 +239,7 @@ func (s *Server) handleRecoverySalt(w http.ResponseWriter, r *http.Request) {
 	}
 	init, found, err := loadRecovery(db)
 	if err != nil {
-		writeAPIErr(w, err)
+		writeAPIErr(w, r, err)
 		return
 	}
 	if !found {
@@ -240,7 +261,7 @@ func (s *Server) handleGetRecovery(w http.ResponseWriter, r *http.Request) {
 	}
 	init, found, err := loadRecovery(db)
 	if err != nil {
-		writeAPIErr(w, err)
+		writeAPIErr(w, r, err)
 		return
 	}
 	if !found {
@@ -300,7 +321,7 @@ func (s *Server) handleInitRecovery(w http.ResponseWriter, r *http.Request) {
 		return b.Put(recoveryKey, val)
 	})
 	if err != nil {
-		writeAPIErr(w, err)
+		writeAPIErr(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -320,7 +341,7 @@ func (s *Server) handleRecoveryToken(w http.ResponseWriter, r *http.Request) {
 	}
 	init, found, err := loadRecovery(db)
 	if err != nil {
-		writeAPIErr(w, err)
+		writeAPIErr(w, r, err)
 		return
 	}
 	if !found {
@@ -337,7 +358,7 @@ func (s *Server) handleRecoveryToken(w http.ResponseWriter, r *http.Request) {
 
 	token, err := newToken()
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal error")
+		logInternal(w, r, fmt.Errorf("mint token: %w", err))
 		return
 	}
 	now := time.Now()
@@ -351,7 +372,7 @@ func (s *Server) handleRecoveryToken(w http.ResponseWriter, r *http.Request) {
 		return tx.Bucket(bucketTokens).Put(hashToken(token), val)
 	})
 	if err != nil {
-		writeAPIErr(w, err)
+		writeAPIErr(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, wire.TokenResp{Token: token, ExpiresMs: st.ExpiresMs})
@@ -371,7 +392,7 @@ func (s *Server) handleRecoveryActivate(w http.ResponseWriter, r *http.Request) 
 	}
 	init, found, err := loadRecovery(db)
 	if err != nil {
-		writeAPIErr(w, err)
+		writeAPIErr(w, r, err)
 		return
 	}
 	if !found {
@@ -428,7 +449,7 @@ func (s *Server) handleRecoveryActivate(w http.ResponseWriter, r *http.Request) 
 		return devB.Put([]byte(id), devVal)
 	})
 	if err != nil {
-		writeAPIErr(w, err)
+		writeAPIErr(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": wire.DeviceActive})
@@ -469,7 +490,7 @@ func (s *Server) handleHosts(w http.ResponseWriter, r *http.Request) {
 		})
 	})
 	if err != nil {
-		writeAPIErr(w, err)
+		writeAPIErr(w, r, err)
 		return
 	}
 	sort.Slice(hosts, func(i, j int) bool { return hosts[i].HostID < hosts[j].HostID })
@@ -541,7 +562,7 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	if err != nil {
-		writeAPIErr(w, err)
+		writeAPIErr(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -597,7 +618,7 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	if err != nil {
-		writeAPIErr(w, err)
+		writeAPIErr(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -673,7 +694,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return devB.Put([]byte(req.ID), val)
 	})
 	if err != nil {
-		writeAPIErr(w, err)
+		writeAPIErr(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, wire.RegisterResp{Device: dev, GroupFormed: !bootstrap})
@@ -697,7 +718,7 @@ func (s *Server) handleListDevices(w http.ResponseWriter, r *http.Request) {
 		})
 	})
 	if err != nil {
-		writeAPIErr(w, err)
+		writeAPIErr(w, r, err)
 		return
 	}
 	sort.Slice(devices, func(i, j int) bool { return devices[i].ID < devices[j].ID })
@@ -851,7 +872,7 @@ func (s *Server) handleActivate(w http.ResponseWriter, r *http.Request) {
 		return devB.Put([]byte(id), devVal)
 	})
 	if err != nil {
-		writeAPIErr(w, err)
+		writeAPIErr(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": wire.DeviceActive})
@@ -892,7 +913,7 @@ func (s *Server) handleRevoke(w http.ResponseWriter, r *http.Request) {
 		return tx.Bucket(bucketHKWraps).Delete([]byte(id))
 	})
 	if err != nil {
-		writeAPIErr(w, err)
+		writeAPIErr(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": wire.DeviceRevoked})
@@ -916,7 +937,7 @@ func (s *Server) handleGetHK(w http.ResponseWriter, r *http.Request) {
 		return json.Unmarshal(v, &wrap)
 	})
 	if err != nil {
-		writeAPIErr(w, err)
+		writeAPIErr(w, r, err)
 		return
 	}
 	if !found {
@@ -969,7 +990,7 @@ func (s *Server) handleListDEK(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	if err != nil {
-		writeAPIErr(w, err)
+		writeAPIErr(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -1025,7 +1046,7 @@ func (s *Server) handlePostDEK(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	if err != nil {
-		writeAPIErr(w, err)
+		writeAPIErr(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]int{"stored": stored})
@@ -1133,7 +1154,7 @@ func (s *Server) handleRotate(w http.ResponseWriter, r *http.Request) {
 		return setHKVersion(tx, req.HKVersion)
 	})
 	if err != nil {
-		writeAPIErr(w, err)
+		writeAPIErr(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]int{"hk_version": req.HKVersion})

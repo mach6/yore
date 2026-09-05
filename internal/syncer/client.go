@@ -68,6 +68,16 @@ func ErrRevoked(err error) bool {
 	return errors.As(err, &ae) && ae.Code == wire.CodeDeviceRevoked
 }
 
+// ErrNotFound reports whether err is a 404 from the server: that endpoint does
+// not exist there. A client is routinely newer than the server it syncs with —
+// upgrading every machine at once is not a thing anyone does — so "this server
+// predates the endpoint" has to be distinguishable from "the server refused",
+// or every new endpoint turns into a false alarm during a rollout.
+func ErrNotFound(err error) bool {
+	var ae *APIError
+	return errors.As(err, &ae) && ae.Status == http.StatusNotFound
+}
+
 // PinError is a TLS certificate pin mismatch: the server presented a leaf key
 // that is not the pinned one. Want is the configured pin, Got what the server
 // sent — both base64 SHA-256 of the certificate's SubjectPublicKeyInfo.
@@ -267,6 +277,15 @@ func parseServerError(data []byte) (msg, code string) {
 // Health checks server liveness. It sends no auth token (the endpoint is open).
 func (c *HTTPClient) Health(ctx context.Context) error {
 	return c.do(ctx, http.MethodGet, "/v1/health", nil, nil, nil, nil)
+}
+
+// Ready checks that the server's storage still accepts a write. A live server
+// that is not ready serves every read and fails every push, so this is the
+// difference between "the archive is reachable" and "the archive is recording".
+// The endpoint is open, like Health. A server older than the endpoint answers
+// 404 — see ErrNotFound; that is not a storage failure.
+func (c *HTTPClient) Ready(ctx context.Context) error {
+	return c.do(ctx, http.MethodGet, "/v1/ready", nil, nil, nil, nil)
 }
 
 // Hosts lists every host stream the server knows.
