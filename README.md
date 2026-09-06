@@ -15,6 +15,30 @@ It is one static binary with no runtime dependencies. The same binary is the
 recorder, the search UI, the background service, the importer, and the sync
 server.
 
+## What it looks like
+
+The browser, over three machines at once. Which machine ran it, whether it
+worked, how long it took and any label you put on it are all in the table; the
+pane below adds the directory, the time, and how risky the command is.
+
+![The yore browser, showing commands from three machines](docs/images/browse.png)
+
+`Ctrl-R` at the prompt, narrowing as you type. Enter puts the command you pick
+on your prompt to edit.
+
+![Ctrl-R search, filtered to git commands](docs/images/search.png)
+
+`yore stats`: what you run, where you run it, and when.
+
+![The stats screen, with an activity calendar](docs/images/stats.png)
+
+`yore agents`: every prompt an agent was given, and the exact commands it ran
+for each one.
+
+![The agent explorer, showing prompts and their commands](docs/images/agents.png)
+
+The history in these is invented, not anyone's.
+
 ## Install
 
 Requires Go 1.26+ to build:
