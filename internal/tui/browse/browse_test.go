@@ -30,6 +30,7 @@ type fakeBackend struct {
 	hostsCalls   int // Hosts() invocations; the sidebar may re-fetch repeatedly
 	deleted      []string
 	delErr       error
+	onDelete     func(id string) // runs before each Delete is served; see fakeBackend.Delete
 	failIDs      map[string]bool // Delete fails for exactly these ids, regardless of delErr
 	submitted    []rec.Record
 	submitErr    error
@@ -66,6 +67,11 @@ func (f *fakeBackend) hostsCallCount() int {
 }
 
 func (f *fakeBackend) Delete(id string) error {
+	// The hook runs outside the lock, and before the call is served, so a test
+	// can act on the browser (press a key, say) part way through a batch.
+	if f.onDelete != nil {
+		f.onDelete(id)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.delErr != nil {
@@ -573,7 +579,8 @@ func TestBulkDeleteDoesNotBlockUpdate(t *testing.T) {
 
 	require.Empty(t, f.deleted, "confirming must not delete inline: the work belongs in the command")
 	require.Len(t, m.rows, 3, "no row may leave the table before the deletes have run")
-	require.Contains(t, strip(m.View()), "deleting 3 records…", "the in-progress flash must be showing while the command runs")
+	require.Contains(t, strip(m.View()), "deleting 0/3… esc to stop",
+		"the in-progress flash must be showing while the command runs, counting and naming the key that stops it")
 	require.NotNil(t, cmd, "confirming must hand back the command that does the work")
 
 	for _, msg := range collect(cmd) {
@@ -1492,7 +1499,8 @@ func TestBulkTagDoesNotBlockUpdate(t *testing.T) {
 	for _, r := range m.rows {
 		require.Emptyf(t, r.Tags, "no row may show the tag before the command has run: %+v", r)
 	}
-	require.Contains(t, strip(m.View()), "tagging 3 records…", "the in-progress flash must be showing while the command runs")
+	require.Contains(t, strip(m.View()), "tagging 0/3… esc to stop",
+		"the in-progress flash must be showing while the command runs, counting and naming the key that stops it")
 	require.NotNil(t, cmd, "confirming must hand back the command that does the work")
 
 	for _, msg := range collect(cmd) {

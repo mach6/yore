@@ -258,6 +258,8 @@ func globalRows(except string) []keyhelp.Row {
 // is a help panel pretending to be a footer.
 func (m Model) footerRows() []keyhelp.Row {
 	switch {
+	case m.bulk != nil:
+		return bulkRows()
 	case m.confirmDelete:
 		return confirmDeleteRows()
 	case m.searching:
@@ -397,6 +399,16 @@ func (m Model) footerRows() []keyhelp.Row {
 
 // The modal states. Each swallows nearly all input, so its footer lists what is
 // left rather than the keys the view underneath would have offered.
+
+// bulkRows is the footer while a batch runs. It is the shortest of them all
+// because it is the whole truth: those two keys are the only ones the browser
+// answers to until the run ends, and the flash beside it is counting.
+func bulkRows() []keyhelp.Row {
+	return []keyhelp.Row{
+		row("esc", "stop", "esc"),
+		row("^c", "quit", "ctrl+c"),
+	}
+}
 
 func confirmDeleteRows() []keyhelp.Row {
 	return []keyhelp.Row{

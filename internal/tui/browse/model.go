@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/charmbracelet/bubbles/cursor"
@@ -181,8 +182,60 @@ type syncDoneMsg struct{ err error }
 // whole run, with no redraw and nothing to tell it from a hang.
 type bulkDeleteDoneMsg struct {
 	removed map[string]struct{}
+	asked   int // ids the batch set out to delete, which stopped makes < the sum
 	failed  int
+	stopped bool // the user pressed esc: the ids after the break were never tried
 	err     error
+}
+
+// bulkTickMsg redraws a running batch's progress. The worker cannot reach the
+// event loop on its own, so the loop reads its counter on a timer rather than
+// the worker sending one message per call: an archive-sized run would otherwise
+// flood the loop it is deliberately kept off in the first place.
+type bulkTickMsg struct{}
+
+const bulkTickInterval = 100 * time.Millisecond
+
+// bulkRun is what a running batch and the event loop share. The worker bumps
+// done as each call returns and asks canceled before starting the next; the loop
+// reads done on a tick to draw progress, and closes stop when the user presses
+// esc. done is atomic because it crosses the goroutine boundary. stop is closed
+// exactly once (stopping guards it) and only ever from the loop, which is also
+// the only reader and writer of stopping, so it needs nothing of its own.
+type bulkRun struct {
+	done     atomic.Int64
+	total    int
+	verb     string // "deleting", "tagging", "untagging": what the flash says
+	stop     chan struct{}
+	stopping bool
+}
+
+func newBulkRun(verb string, total int) *bulkRun {
+	return &bulkRun{total: total, verb: verb, stop: make(chan struct{})}
+}
+
+// canceled reports whether the user has asked the run to stop. The worker calls
+// it between calls, never during one: a round trip already sent is always seen
+// through to its answer, so what the daemon did and what the flash reports
+// cannot come apart.
+func (r *bulkRun) canceled() bool {
+	select {
+	case <-r.stop:
+		return true
+	default:
+		return false
+	}
+}
+
+// progress is the flash a running batch shows. It names the key that stops it,
+// because a run whose end the user cannot see is exactly when they reach for
+// one, and the alternative is guessing at a browser that has stopped answering.
+func (r *bulkRun) progress() string {
+	return fmt.Sprintf("%s %d/%d… esc to stop", r.verb, r.done.Load(), r.total)
+}
+
+func bulkTick() tea.Cmd {
+	return tea.Tick(bulkTickInterval, func(time.Time) tea.Msg { return bulkTickMsg{} })
 }
 
 // bulkTagDoneMsg carries the result of a bulk tag: the ctrl+t mirror of
@@ -195,7 +248,9 @@ type bulkTagDoneMsg struct {
 	name    string
 	remove  bool
 	applied map[string]struct{}
+	asked   int
 	failed  int
+	stopped bool
 	err     error
 }
 
@@ -386,13 +441,13 @@ type Model struct {
 	gone    map[string]struct{}
 	goneSeq uint64
 
-	// bulkBusy is a bulk delete or tag running off the event loop. The event
-	// loop keeps processing keys for the whole run, so without this every key
-	// is live over a table the batch is halfway through changing: a second d/y
-	// starts an overlapping batch, S re-queries mid-run, enter leaves the
-	// browser with the rest of the deletes unmade. Keys are swallowed while it
-	// is set; the in-progress flash is already on screen saying why.
-	bulkBusy bool
+	// bulk is the batch (delete or tag) currently running off the event loop,
+	// nil when none is. The loop keeps processing keys for the whole run, so
+	// without it every key is live over a table the batch is halfway through
+	// changing: a second d/y starts an overlapping batch, S re-queries mid-run,
+	// enter leaves the browser with the rest of the deletes unmade. It is also
+	// how the run is watched and stopped; see bulkRun.
+	bulk *bulkRun
 
 	// remote-cache convergence: hostsRemote is the remote host count the sidebar
 	// currently reflects; a query result reporting a different count triggers a
@@ -556,6 +611,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case hostsTickMsg:
 		return m.onHostsTick()
+
+	case bulkTickMsg:
+		return m.onBulkTick()
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -852,14 +910,16 @@ func (m Model) buildReq() proto.QueryReq {
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	s := msg.String()
 
-	// A bulk delete or tag in flight swallows every key but the interrupt. The
-	// batch runs off the event loop, so the table is mid-change and the rows
-	// under the cursor are not the rows the daemon still has; acting on them is
-	// acting on a snapshot that is already wrong. ctrl+c is kept because a run
-	// over an archive can be long and refusing to let the user out of it is
-	// worse than leaving the tail of the batch unmade.
-	if m.bulkBusy {
-		if s == "ctrl+c" {
+	// A bulk delete or tag in flight swallows every key but the two that are
+	// about the run itself. The batch works off the event loop, so the table is
+	// mid-change and the rows under the cursor are not the rows the daemon still
+	// has; acting on them is acting on a snapshot that is already wrong. esc
+	// stops the run, ctrl+c leaves.
+	if m.bulk != nil {
+		switch s {
+		case "esc":
+			return m.cancelBulk()
+		case "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
 		}
@@ -2304,27 +2364,33 @@ func (m Model) tagChecked(name string, remove bool) (tea.Model, tea.Cmd) {
 	// In-progress flash with no expiry tick: replaced by applyBulkTag when the
 	// run ends, so it shows for the real duration however long that is; see
 	// deleteChecked's flash for the same reasoning.
-	m.flash = verbsFor(remove).ing + " " + plural(len(ids), "record") + "…"
-	m.bulkBusy = true
-	return m, m.bulkTagCmd(ids, name, remove)
+	run := newBulkRun(verbsFor(remove).ing, len(ids))
+	m.bulk = run
+	m.flash = run.progress()
+	return m, tea.Batch(m.bulkTagCmd(ids, name, remove, run), bulkTick())
 }
 
 // bulkTagCmd submits name for ids one at a time off the event loop. Every id
 // is attempted even after a failure (the same policy as bulkDeleteCmd) so a
 // partial run still tags everything it can rather than giving up on the rest
 // because one call failed.
-func (m Model) bulkTagCmd(ids []string, name string, remove bool) tea.Cmd {
+func (m Model) bulkTagCmd(ids []string, name string, remove bool, run *bulkRun) tea.Cmd {
 	b := m.b
 	op := tagOp(remove)
 	return func() tea.Msg {
-		msg := bulkTagDoneMsg{name: name, remove: remove, applied: make(map[string]struct{}, len(ids))}
+		msg := bulkTagDoneMsg{name: name, remove: remove, applied: make(map[string]struct{}, len(ids)), asked: len(ids)}
 		for _, id := range ids {
+			if run.canceled() {
+				msg.stopped = true
+				break
+			}
 			if err := b.SubmitRecord(rec.Record{ID: rec.NewID(), Type: rec.TypeTag, TagName: name, TargetID: id, TagOp: op}); err != nil {
 				msg.failed++
 				msg.err = err
-				continue
+			} else {
+				msg.applied[id] = struct{}{}
 			}
-			msg.applied[id] = struct{}{}
+			run.done.Add(1)
 		}
 		return msg
 	}
@@ -2338,7 +2404,7 @@ func (m Model) bulkTagCmd(ids []string, name string, remove bool) tea.Cmd {
 // the two, and an id whose call failed stays checked regardless, so a retry
 // acts on exactly what failed.
 func (m Model) applyBulkTag(msg bulkTagDoneMsg) (tea.Model, tea.Cmd) {
-	m.bulkBusy = false
+	m.bulk = nil
 	for id := range msg.applied {
 		if msg.remove {
 			m.removeTagLocal(id, msg.name)
@@ -2349,6 +2415,12 @@ func (m Model) applyBulkTag(msg bulkTagDoneMsg) (tea.Model, tea.Cmd) {
 	v := verbsFor(msg.remove)
 	m.flashID++
 	switch {
+	case msg.stopped:
+		m.flash = fmt.Sprintf("stopped: %s %d of %d", v.ed, len(msg.applied), msg.asked)
+		if msg.failed > 0 {
+			m.flash += fmt.Sprintf(", %d failed", msg.failed)
+			m.lastErr = msg.err
+		}
 	case msg.failed == 0:
 		m.flash = "✓ " + v.ed + " " + plural(len(msg.applied), "record")
 	case len(msg.applied) == 0:
@@ -2482,32 +2554,70 @@ func (m Model) deleteChecked() (tea.Model, tea.Cmd) {
 	for id := range m.checked {
 		ids = append(ids, id)
 	}
-	// In-progress flash with no expiry tick: replaced by applyBulkDelete when
-	// the run ends, so it shows for the real duration however long that is.
-	m.flash = "deleting " + plural(len(ids), "record") + "…"
+	// In-progress flash with no expiry tick: rewritten on every bulk tick while
+	// the run lasts and replaced by applyBulkDelete when it ends, so it shows
+	// for the real duration however long that is.
+	run := newBulkRun("deleting", len(ids))
+	m.bulk = run
+	m.flash = run.progress()
 	m.flashID++
-	m.bulkBusy = true
-	return m, m.bulkDeleteCmd(ids)
+	return m, tea.Batch(m.bulkDeleteCmd(ids, run), bulkTick())
 }
 
 // bulkDeleteCmd tombstones ids one at a time off the event loop. Every id is
 // attempted even after a failure: a record already tombstoned cannot be
 // un-tombstoned by giving up early, so stopping would leave the run half done
-// with no way to tell which half.
-func (m Model) bulkDeleteCmd(ids []string) tea.Cmd {
+// with no way to tell which half. A cancel is the one thing that does stop it,
+// and it is the user's own decision rather than a timing accident, so the run
+// ends where it is and reports how far it got.
+func (m Model) bulkDeleteCmd(ids []string, run *bulkRun) tea.Cmd {
 	b := m.b
 	return func() tea.Msg {
-		msg := bulkDeleteDoneMsg{removed: make(map[string]struct{}, len(ids))}
+		msg := bulkDeleteDoneMsg{removed: make(map[string]struct{}, len(ids)), asked: len(ids)}
 		for _, id := range ids {
+			if run.canceled() {
+				msg.stopped = true
+				break
+			}
 			if err := b.Delete(id); err != nil {
 				msg.failed++
 				msg.err = err
-				continue
+			} else {
+				msg.removed[id] = struct{}{}
 			}
-			msg.removed[id] = struct{}{}
+			run.done.Add(1)
 		}
 		return msg
 	}
+}
+
+// onBulkTick redraws a running batch's progress and reschedules itself. The
+// chain lives exactly as long as the run: the tick that finds no run has been
+// overtaken by the done message, which has already set the closing flash, and
+// rescheduling from there would keep a timer alive for the rest of the session.
+func (m Model) onBulkTick() (tea.Model, tea.Cmd) {
+	if m.bulk == nil {
+		return m, nil
+	}
+	if !m.bulk.stopping {
+		m.flash = m.bulk.progress() // "stopping…" is not overwritten by a count
+	}
+	return m, bulkTick()
+}
+
+// cancelBulk asks a running batch to give up before its next call. What it has
+// already done stands: a tombstone is not the browser's to take back, and the
+// worker answers with its usual done message, so the part that did land is
+// folded in and counted the ordinary way. Rows it never reached are untouched
+// and still checked, which is what makes a stopped run resumable with the same
+// keypress that started it.
+func (m Model) cancelBulk() (tea.Model, tea.Cmd) {
+	if !m.bulk.stopping {
+		m.bulk.stopping = true
+		close(m.bulk.stop)
+	}
+	m.flash = "stopping…" // the call in flight still has to come back
+	return m, nil
 }
 
 // applyBulkDelete folds a finished bulk delete back into the table. Records
@@ -2516,7 +2626,7 @@ func (m Model) bulkDeleteCmd(ids []string) tea.Cmd {
 // counts rather than silently losing the difference between what was asked for
 // and what happened.
 func (m Model) applyBulkDelete(msg bulkDeleteDoneMsg) (tea.Model, tea.Cmd) {
-	m.bulkBusy = false
+	m.bulk = nil
 	for id := range msg.removed {
 		delete(m.checked, id)
 	}
@@ -2526,6 +2636,15 @@ func (m Model) applyBulkDelete(msg bulkDeleteDoneMsg) (tea.Model, tea.Cmd) {
 	m.syncDetail()
 	m.flashID++
 	switch {
+	case msg.stopped:
+		// Both numbers, and the one that is not there: the ids past the break
+		// were never sent, so they are neither deleted nor failed, and they are
+		// still checked for a second press of d.
+		m.flash = fmt.Sprintf("stopped: deleted %d of %d", len(msg.removed), msg.asked)
+		if msg.failed > 0 {
+			m.flash += fmt.Sprintf(", %d failed", msg.failed)
+			m.lastErr = msg.err
+		}
 	case msg.failed == 0:
 		m.flash = "✓ deleted " + plural(len(msg.removed), "record")
 	case len(msg.removed) == 0:

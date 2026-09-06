@@ -188,7 +188,7 @@ func TestBulkUntagDoesNotBlockUpdate(t *testing.T) {
 	for _, r := range m.rows {
 		require.Equalf(t, []string{"wip"}, r.Tags, "no row may lose the tag before the command has run: %+v", r)
 	}
-	require.Contains(t, strip(m.View()), "untagging 3 records…")
+	require.Contains(t, strip(m.View()), "untagging 0/3… esc to stop")
 	require.NotNil(t, cmd, "confirming must hand back the command that does the work")
 
 	for _, msg := range collect(cmd) {

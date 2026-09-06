@@ -122,7 +122,7 @@ func TestKeysAreSwallowedWhileABatchRuns(t *testing.T) {
 
 	m, _ = step(t, m, press("d"))
 	m, batch := step(t, m, press("y"))
-	require.True(t, m.bulkBusy, "the batch is in flight until its result comes back")
+	require.NotNil(t, m.bulk, "the batch is in flight until its result comes back")
 
 	m, cmd := step(t, m, press("S"))
 	require.Nil(t, cmd, "S must not re-query over a table the batch is still changing")
@@ -139,7 +139,7 @@ func TestKeysAreSwallowedWhileABatchRuns(t *testing.T) {
 	for _, msg := range collect(batch) {
 		m, _ = step(t, m, msg)
 	}
-	require.False(t, m.bulkBusy)
+	require.Nil(t, m.bulk)
 	m, cmd = step(t, m, press("S"))
 	require.NotNil(t, cmd, "keys have to work again once the batch is done")
 	require.Contains(t, strip(m.View()), "syncing")
@@ -171,7 +171,7 @@ func TestKeysAreSwallowedWhileABulkTagRuns(t *testing.T) {
 	m, _ = step(t, m, press("ctrl+t"))
 	m = typeIn(t, m, "wip")
 	m, batch := step(t, m, press("enter"))
-	require.True(t, m.bulkBusy)
+	require.NotNil(t, m.bulk)
 
 	m, cmd := step(t, m, press("S"))
 	require.Nil(t, cmd, "S must not re-query while the tags are still going out")
@@ -180,5 +180,127 @@ func TestKeysAreSwallowedWhileABulkTagRuns(t *testing.T) {
 	for _, msg := range collect(batch) {
 		m, _ = step(t, m, msg)
 	}
-	require.False(t, m.bulkBusy, "the tag batch releases the keys on its own result")
+	require.Nil(t, m.bulk, "the tag batch releases the keys on its own result")
+}
+
+// --- stopping a batch, and watching one ----------------------------------
+// A confirmed batch is unbounded: buildReq asks for every matching row, so
+// ctrl+a can commit to as many round trips as the archive has records. That
+// makes two things load-bearing rather than nice to have: a way out, and some
+// sign of how far it has got.
+
+// TestEscStopsABatchWhereItIs: esc during a run stops it before the next call.
+// What already went to the daemon stands (a tombstone is not the browser's to
+// take back), the rows it never reached are untouched and still checked, and
+// the flash gives both numbers rather than claiming the whole selection.
+func TestEscStopsABatchWhereItIs(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("a", "b", "c", "d", "e"))})
+	m, _ = step(t, m, press("ctrl+a"))
+
+	// esc goes through the real key path, from inside the third call: a batch is
+	// stopped between round trips, so that call still lands and the two after it
+	// are never sent. Which ids those are is not fixed (the batch walks the
+	// checked set, which is a map), so the count is the assertion and the
+	// survivors are read back from what the fake was actually asked to delete.
+	calls := 0
+	f.onDelete = func(string) {
+		calls++
+		if calls == 3 {
+			m, _ = step(t, m, press("esc"))
+			require.Contains(t, strip(m.View()), "stopping…", "esc has to say something at once")
+		}
+	}
+
+	m, _ = step(t, m, press("d"))
+	m, batch := step(t, m, press("y"))
+	for _, msg := range collect(batch) {
+		m, _ = step(t, m, msg)
+	}
+
+	require.Len(t, f.deleted, 3, "the calls after the stop must never be sent")
+	require.Contains(t, strip(m.View()), "stopped: deleted 3 of 5",
+		"a stopped run must report what it did and what it was asked for")
+	require.Nil(t, m.bulk, "a stopped run still ends, and releases the keys")
+
+	gone := map[string]bool{}
+	for _, id := range f.deleted {
+		gone[id] = true
+	}
+	require.Len(t, m.rows, 2, "the rows the batch never reached must be untouched")
+	for _, r := range m.rows {
+		require.False(t, gone[r.ID], "a deleted row is still in the table")
+		require.Truef(t, m.isChecked(r.ID),
+			"row %s was never reached, so it stays checked and d picks up where it left off", r.ID)
+	}
+}
+
+// esc is a key held down as often as any other; asking to stop twice must not
+// take the browser down with it.
+func TestEscTwiceDuringABatchIsHarmless(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("a", "b"))})
+	m, _ = step(t, m, press("ctrl+a"))
+	m, _ = step(t, m, press("d"))
+	m, batch := step(t, m, press("y"))
+
+	m, _ = step(t, m, press("esc"))
+	m, _ = step(t, m, press("esc"))
+	require.Contains(t, strip(m.View()), "stopping…")
+
+	for _, msg := range collect(batch) {
+		m, _ = step(t, m, msg)
+	}
+	require.Nil(t, m.bulk)
+	require.Empty(t, f.deleted, "a stop before the first call must delete nothing at all")
+	require.Contains(t, strip(m.View()), "stopped: deleted 0 of 2")
+}
+
+// TestABatchShowsItsProgress: the worker cannot reach the event loop, so the
+// loop reads its counter on a tick. The count has to move, and the ticking has
+// to stop with the run rather than outliving it for the session.
+func TestABatchShowsItsProgress(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("a", "b", "c"))})
+	m, _ = step(t, m, press("ctrl+a"))
+
+	m, _ = step(t, m, press("d"))
+	m, batch := step(t, m, press("y"))
+	require.Contains(t, strip(m.View()), "deleting 0/3… esc to stop", "a batch starts by saying what it is doing")
+
+	m.bulk.done.Store(2) // two round trips have come back
+	m, tick := step(t, m, bulkTickMsg{})
+	require.Contains(t, strip(m.View()), "deleting 2/3…", "the tick must redraw the count the worker is keeping")
+	require.NotNil(t, tick, "the tick chain has to reschedule itself while the run lasts")
+
+	for _, msg := range collect(batch) {
+		m, _ = step(t, m, msg)
+	}
+	m, tick = step(t, m, bulkTickMsg{})
+	require.Nil(t, tick, "a tick arriving after the run must not keep the chain alive")
+	require.Contains(t, strip(m.View()), "✓ deleted 3 records", "the result has the last word on the flash")
+}
+
+// The footer says so too: while a batch runs those are the only two keys the
+// browser answers to, and a stop nobody can find is not a stop.
+func TestFooterOffersTheStopWhileABatchRuns(t *testing.T) {
+	f := &fakeBackend{}
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("a", "b"))})
+	m, _ = step(t, m, press("ctrl+a"))
+	m, _ = step(t, m, press("d"))
+	m, batch := step(t, m, press("y"))
+
+	foot := footerText(m)
+	require.Contains(t, foot, "esc stop")
+	require.Contains(t, foot, "quit")
+	require.NotContains(t, foot, "delete", "the keys that act on rows are not live and must not be offered")
+
+	for _, msg := range collect(batch) {
+		m, _ = step(t, m, msg)
+	}
+	require.NotContains(t, footerText(m), "esc stop", "the footer goes back to the table's own keys")
 }

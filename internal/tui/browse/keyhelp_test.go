@@ -104,6 +104,7 @@ func describedKeys(t *testing.T) map[string]bool {
 			m.showCols = false
 		}
 	}
+	rows = append(rows, bulkRows()...)
 	rows = append(rows, confirmDeleteRows()...)
 	rows = append(rows, confirmDeviceRows(false)...)
 	rows = append(rows, confirmDeviceRows(true)...)

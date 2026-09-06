@@ -319,8 +319,16 @@ forward and tagging one batch twice needs one selection.
 
 Running off the event loop keeps the UI alive, which cuts both ways: the loop
 goes on handling every message for the length of the batch. Keys are swallowed
-while one is in flight, all but the interrupt, because a table the batch is
-halfway through changing is a snapshot that is already wrong. Query results are
+while one is in flight, because a table the batch is halfway through changing is
+a snapshot that is already wrong. The two that survive are the ones about the run
+itself: `esc` stops it and `ctrl+c` leaves. A confirmed batch is unbounded, since
+the table holds every matching row, so neither is optional; the flash counts the
+round trips as they come back and names the key that stops them. A stop takes
+effect between calls, never during one, so the call in flight is always seen
+through to its answer and the closing flash can give both numbers. What the run
+already did stands, because a tombstone is not the browser's to take back, and
+the rows it never reached are untouched and still checked, which is what makes a
+stopped run resumable with the key that started it. Query results are
 the harder half. The sequence counter orders *deliveries*, not the daemon state
 each query observed, so an answer computed before a delete and delivered after it
 carries a higher number than anything applied so far and would be accepted, rows
