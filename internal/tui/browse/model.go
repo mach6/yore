@@ -372,6 +372,28 @@ type Model struct {
 	seq        uint64
 	appliedSeq uint64
 
+	// gone is every record this session has deleted whose removal a query
+	// already in flight may not have seen, and goneSeq is the newest query
+	// issued at the moment of that delete. appliedSeq alone cannot protect the
+	// table here: it orders DELIVERIES, and says nothing about which daemon
+	// state each query observed. A query issued before the delete, answered
+	// after it, carries a higher seq than the last applied one and is accepted
+	// on that basis, putting the deleted rows back on screen (unchecked, since
+	// pruneChecked only removes) until something else re-queries. So an applied
+	// result no newer than goneSeq has these ids filtered out of it, and the
+	// first result from a query issued AFTER the delete clears the set: that one
+	// reflects the tombstones, because Delete had returned before it was asked.
+	gone    map[string]struct{}
+	goneSeq uint64
+
+	// bulkBusy is a bulk delete or tag running off the event loop. The event
+	// loop keeps processing keys for the whole run, so without this every key
+	// is live over a table the batch is halfway through changing: a second d/y
+	// starts an overlapping batch, S re-queries mid-run, enter leaves the
+	// browser with the rest of the deletes unmade. Keys are swallowed while it
+	// is set; the in-progress flash is already on screen saying why.
+	bulkBusy bool
+
 	// remote-cache convergence: hostsRemote is the remote host count the sidebar
 	// currently reflects; a query result reporting a different count triggers a
 	// host refetch. hostsTicks/ticking drive a BOUNDED init-time warm loop that
@@ -642,9 +664,11 @@ func (m Model) applyResult(msg queryResultMsg) (tea.Model, tea.Cmd) {
 		selID = m.rows[m.sel].ID
 	}
 	rows := append([]rec.Record(nil), msg.resp.Rows...)
+	total := msg.resp.Total
+	rows, total = m.dropGone(msg.seq, rows, total)
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].StartMs > rows[j].StartMs })
 	m.allRows = rows
-	m.srvTotal = msg.resp.Total
+	m.srvTotal = total
 	m.hidden = msg.resp.HiddenAgents
 	m.remote = msg.resp.Remote
 	m.applyPeriodFilter()
@@ -827,6 +851,20 @@ func (m Model) buildReq() proto.QueryReq {
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	s := msg.String()
+
+	// A bulk delete or tag in flight swallows every key but the interrupt. The
+	// batch runs off the event loop, so the table is mid-change and the rows
+	// under the cursor are not the rows the daemon still has; acting on them is
+	// acting on a snapshot that is already wrong. ctrl+c is kept because a run
+	// over an archive can be long and refusing to let the user out of it is
+	// worse than leaving the tail of the batch unmade.
+	if m.bulkBusy {
+		if s == "ctrl+c" {
+			m.quitting = true
+			return m, tea.Quit
+		}
+		return m, nil
+	}
 
 	// Delete confirmation swallows all other input.
 	if m.confirmDelete {
@@ -2267,6 +2305,7 @@ func (m Model) tagChecked(name string, remove bool) (tea.Model, tea.Cmd) {
 	// run ends, so it shows for the real duration however long that is; see
 	// deleteChecked's flash for the same reasoning.
 	m.flash = verbsFor(remove).ing + " " + plural(len(ids), "record") + "…"
+	m.bulkBusy = true
 	return m, m.bulkTagCmd(ids, name, remove)
 }
 
@@ -2299,6 +2338,7 @@ func (m Model) bulkTagCmd(ids []string, name string, remove bool) tea.Cmd {
 // the two, and an id whose call failed stays checked regardless, so a retry
 // acts on exactly what failed.
 func (m Model) applyBulkTag(msg bulkTagDoneMsg) (tea.Model, tea.Cmd) {
+	m.bulkBusy = false
 	for id := range msg.applied {
 		if msg.remove {
 			m.removeTagLocal(id, msg.name)
@@ -2446,6 +2486,7 @@ func (m Model) deleteChecked() (tea.Model, tea.Cmd) {
 	// the run ends, so it shows for the real duration however long that is.
 	m.flash = "deleting " + plural(len(ids), "record") + "…"
 	m.flashID++
+	m.bulkBusy = true
 	return m, m.bulkDeleteCmd(ids)
 }
 
@@ -2475,6 +2516,7 @@ func (m Model) bulkDeleteCmd(ids []string) tea.Cmd {
 // counts rather than silently losing the difference between what was asked for
 // and what happened.
 func (m Model) applyBulkDelete(msg bulkDeleteDoneMsg) (tea.Model, tea.Cmd) {
+	m.bulkBusy = false
 	for id := range msg.removed {
 		delete(m.checked, id)
 	}
@@ -2512,6 +2554,16 @@ func (m *Model) removeRows(ids map[string]struct{}) {
 	if len(ids) == 0 {
 		return
 	}
+	// Remember them for as long as a query that predates the delete could still
+	// answer, or that answer puts them straight back (see the gone field).
+	if m.gone == nil {
+		m.gone = make(map[string]struct{}, len(ids))
+	}
+	for id := range ids {
+		m.gone[id] = struct{}{}
+	}
+	m.goneSeq = m.seq
+
 	all := make([]rec.Record, 0, len(m.allRows))
 	for _, r := range m.allRows {
 		if _, gone := ids[r.ID]; !gone {
@@ -2529,6 +2581,29 @@ func (m *Model) removeRows(ids map[string]struct{}) {
 	}
 	m.total -= len(m.rows) - len(rows)
 	m.rows = rows
+}
+
+// dropGone filters records this session has deleted out of a query result that
+// may predate the delete, and reports the total the table should show with them
+// gone. A result from a query issued after the delete needs no filtering (the
+// daemon had already tombstoned them when it was asked), and clears the set:
+// holding the ids any longer would hide a record the user deleted and then
+// re-created by running the command again.
+func (m *Model) dropGone(seq uint64, rows []rec.Record, total int) (kept []rec.Record, keptTotal int) {
+	if len(m.gone) == 0 {
+		return rows, total
+	}
+	if seq > m.goneSeq {
+		m.gone = nil
+		return rows, total
+	}
+	kept = rows[:0] // rows is already this call's own copy
+	for _, r := range rows {
+		if _, dead := m.gone[r.ID]; !dead {
+			kept = append(kept, r)
+		}
+	}
+	return kept, total - (len(rows) - len(kept))
 }
 
 // clampSel keeps the cursor in range after rows have been removed from under

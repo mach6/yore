@@ -317,6 +317,18 @@ rows: a deleted row leaves the table, so its id is dropped and only failures
 remain ready to retry, while a tagged row survives, so the selection carries
 forward and tagging one batch twice needs one selection.
 
+Running off the event loop keeps the UI alive, which cuts both ways: the loop
+goes on handling every message for the length of the batch. Keys are swallowed
+while one is in flight, all but the interrupt, because a table the batch is
+halfway through changing is a snapshot that is already wrong. Query results are
+the harder half. The sequence counter orders *deliveries*, not the daemon state
+each query observed, so an answer computed before a delete and delivered after it
+carries a higher number than anything applied so far and would be accepted, rows
+and all. A delete therefore remembers what it removed and filters those ids out
+of any answer no newer than the query that was in flight when it ran. The first
+answer from a query issued after the delete reflects the tombstones, because the
+call had returned before it was asked, and releases them.
+
 ### A UI may filter only if it can disclose
 
 Both interactive search UIs hide agent-run commands by default
