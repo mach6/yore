@@ -30,6 +30,18 @@ Read the source, do not restate it here.
 - **Never use an em-dash.** Not in docs, not in Go doc comments or any other comment, not in a user-visible string, not in a commit message or PR description. Use the punctuation it would have stood for: a colon when what follows explains what came before, parentheses for a bracketed aside, a semicolon or full stop between independent clauses, a comma otherwise. `·` is the UI's glyph for a value a record never carried; see `theme.Unknown`. `grep -rn` for the character across the repo must return nothing.
 - **Docs are maintained, and each has one tone.** Update them when you change a capability. `README.md` is user-facing: what it does and how to use it, no internals. `docs/architecture.md` is a design doc for engineers: how the pieces fit and why, not what the code makes obvious. `docs/protocol.md` is the exact formats. Docs describe what is true now: never a changelog, a roadmap, or a list of known issues, and never a reference to any particular person, machine, or filesystem.
 
+## Commit Messages
+
+The same rules apply to a pull request title and description.
+
+- **One shape, always.** A short summary line, a blank line, then a bullet list. Nothing else: no headings, no tables, no code fences, no closing paragraph.
+- **The summary is one line, lower case, under 72 characters,** and says what the change does. No prefix, no ticket number, no scope tag.
+- **Bullets say what changed and why it changed.** One point each, wrapped at 76 columns, continuation lines indented two spaces. Give the reason a reader could not get from the diff; leave out what the diff already shows.
+- **Plain English.** No jargon, no invented vocabulary, no internal shorthand. Name a thing the way a user would: the browser, the daemon, the search box, an invitation, a machine. If a term needs the code open to understand, rewrite the sentence.
+- **No attribution of any kind.** No `Co-Authored-By` trailer, no tool or model name, no "generated with" line, no review or pull-request URL. The author is the repository owner and nothing else appears.
+- **Never name a person, a machine, a host, or an internal address.** Not the sync server's hostname, not a registry domain, not a filesystem path outside the repo.
+- **No em-dash**, per the workspace rule above.
+
 ## Reference Projects
 
 Two projects are useful prior art. Neither is part of yore's build, and neither one's location is recorded here; ask if you need a checkout.
