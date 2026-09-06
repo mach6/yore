@@ -94,11 +94,11 @@ func (m Model) View() string {
 		b.WriteByte('\n')
 	case len(m.rows) == 0 && m.lastErr == nil:
 		// "no matches" is a lie when the matches are sitting behind the agent
-		// filter — and this panel's whole job is recall, so the one thing it must
+		// filter, and this panel's whole job is recall, so the one thing it must
 		// never do is tell you a command you ran does not exist.
 		msg := "no matches"
 		if note := m.hiddenAgentsNote(); note != "" {
-			msg = note + " — ⌥a shows them"
+			msg = note + "; ⌥a shows them"
 		}
 		b.WriteString(m.th.Dim.Render("  " + msg))
 		b.WriteByte('\n')
@@ -382,7 +382,7 @@ func (m Model) statusLine(w int) string {
 		pieces = append(pieces, statusPiece{note, th.Dim})
 	}
 	if m.remote.State == proto.RemoteOff && (m.scope == proto.ScopeAll || m.scope == proto.ScopeHost) {
-		pieces = append(pieces, statusPiece{"remote sync not configured — showing local only", th.Dim})
+		pieces = append(pieces, statusPiece{"remote sync not configured; showing local only", th.Dim})
 	}
 
 	right := ""

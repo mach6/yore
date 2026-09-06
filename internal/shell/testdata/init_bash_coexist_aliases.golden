@@ -1,4 +1,4 @@
-# yore — bash shell integration (coexist mode).
+# yore; bash shell integration (coexist mode).
 # Emitted by `yore init bash`; load with:  eval "$(yore init bash)"
 # Sourcing repeatedly is safe and produces no output during normal operation.
 
@@ -398,7 +398,7 @@ __yore_preexec() {
 
 # precmd runs after the command finishes, before the next prompt is drawn.
 __yore_precmd() {
-	local exit=$?   # the user's exit status — must be captured first
+	local exit=$?   # the user's exit status; must be captured first
 	[[ -n ${__yore_cmd-} ]] || return "$exit"
 	local -a dur=()
 	if [[ -n ${__yore_start-} && -n ${EPOCHREALTIME-} ]]; then
@@ -436,7 +436,7 @@ _yore_enter_executes() {
 
 # Interactive search widget. The TUI draws on /dev/tty, so this command
 # substitution captures only the final selection printed to stdout. A missing
-# binary or a cancelled search (non-zero exit) leaves the line untouched —
+# binary or a cancelled search (non-zero exit) leaves the line untouched;
 # except under enter_executes, where a cancelled/empty search blanks the line so
 # the auto-appended Return (see the binding below) runs nothing, never a stale
 # partial query.
@@ -478,7 +478,7 @@ fi
 # command you pick to stdout and y copies it to the clipboard (bash can't refill
 # the prompt the way zsh's print -z does). `hs` searches (the `history | grep`
 # pattern), with scoped siblings hsa (all hosts), hss (this session), hsc (this
-# cwd), and hsw (this git repo). yore does NOT touch `h` — keep your own (e.g.
+# cwd), and hsw (this git repo). yore does NOT touch `h`; keep your own (e.g.
 # h=history). Drop any pre-existing collisions so our versions win and a leftover
 # alias can't break the function definitions below.
 unalias hb hs hsa hss hsc hsw 2>/dev/null

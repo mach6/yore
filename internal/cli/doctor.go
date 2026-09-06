@@ -27,7 +27,7 @@ func runDoctor() int {
 	warn := func(msg string) { u.warn(msg) }
 	fail := func(msg string) { u.fail(msg); failed = true }
 
-	u.title("yore " + Version + " — diagnostics")
+	u.title("yore " + Version + ": diagnostics")
 	u.section("state")
 	if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
 		if fi.Mode().Perm()&0o077 != 0 {
@@ -51,7 +51,7 @@ func runDoctor() int {
 		} else {
 			ok(fmt.Sprintf("running (pid %d), %d local entries", st.PID, st.LocalRows))
 			if st.LocalRows == 0 {
-				warn("no history yet — add `eval \"$(yore init zsh)\"` to your rc, or `yore import auto`")
+				warn("no history yet: add `eval \"$(yore init zsh)\"` to your rc, or `yore import auto`")
 			}
 		}
 	}
@@ -61,12 +61,12 @@ func runDoctor() int {
 	if claudeCaptureInstalled(shell.DefaultBin) {
 		ok("Claude Code capture hooks installed (~/.claude/settings.json)")
 	} else {
-		warn("Claude Code hooks not installed — run `yore init claude-code`")
+		warn("Claude Code hooks not installed: run `yore init claude-code`")
 	}
 	if p, perr := mcpConfigPath(false); perr == nil && mcpRegistered(p) {
 		ok("MCP server registered for Claude Code (" + p + ")")
 	} else {
-		warn("MCP not registered for Claude Code — run `yore init claude-code`")
+		warn("MCP not registered for Claude Code: run `yore init claude-code`")
 	}
 	if cursorCaptureInstalled(shell.DefaultBin) {
 		ok("Cursor capture hooks installed (~/.cursor/hooks.json)")
@@ -108,7 +108,7 @@ func runDoctor() int {
 	ok(fmt.Sprintf("active (%d rules loaded, %d user patterns, %d ignored dirs)",
 		filter.NumRules(), len(cfg.IgnorePatterns), len(cfg.IgnoreDirs)))
 	// redact.yml is authoritative once it exists and is never overwritten, so a
-	// file seeded before a detector shipped keeps missing it — and a missing
+	// file seeded before a detector shipped keeps missing it, and a missing
 	// detector is indistinguishable from clean history. Say so; do not act on it,
 	// since a rule may be absent because it was deliberately removed.
 	if missing := redact.MissingBuiltins(dir); len(missing) > 0 {
@@ -118,7 +118,7 @@ func runDoctor() int {
 	}
 
 	// Risk rules. The browser and the MCP server both load risk.toml but have
-	// nowhere to show a typo (alt-screen; stdout-owned transport) — this is the
+	// nowhere to show a typo (alt-screen; stdout-owned transport): this is the
 	// venue where a skipped rule gets named.
 	u.section("risk rules")
 	if _, rerrs := risk.Load(dir); len(rerrs) > 0 {
@@ -134,7 +134,7 @@ func runDoctor() int {
 	// Enrollment + server.
 	u.section("sync")
 	if cfg.ServerURL == "" {
-		warn("not configured — run `yore setup` to sync across machines (local-only otherwise)")
+		warn("not configured: run `yore setup` to sync across machines (local-only otherwise)")
 	} else {
 		if _, err := secret.Open(dir).LoadDeviceKey(); err != nil {
 			fail("device key problem: " + err.Error())
@@ -149,16 +149,16 @@ func runDoctor() int {
 			// A stale pin is indistinguishable from a dead server in the error text,
 			// and it fails quietly: this host's own history keeps working, so the only
 			// symptom is other machines' history going stale. Name it, and give the
-			// two remedies without choosing between them — from an intercepted
-			// network, re-pinning would pin the interceptor.
+			// two remedies without choosing between them, from an intercepted network,
+			// re-pinning would pin the interceptor.
 			if pe, ok := syncer.PinMismatch(err); ok {
-				fail("server certificate pin mismatch — refusing to connect, so nothing syncs")
+				fail("server certificate pin mismatch: refusing to connect, so nothing syncs")
 				u.note("pinned      " + pe.Want)
 				u.note("server sent " + pe.Got)
 				u.note("if the server's certificate changed (a renewal with a new key does this):")
-				u.note("  re-pin from a network you trust — `yore setup --pin`")
+				u.note("  re-pin from a network you trust: `yore setup --pin`")
 				u.note("if it did not, a TLS-inspecting proxy is in the path:")
-				u.note("  do NOT re-pin from this network — the pin is doing its job")
+				u.note("  do NOT re-pin from this network: the pin is doing its job")
 			} else {
 				fail(fmt.Sprintf("server %s unreachable: %v", cfg.ServerURL, err))
 			}
@@ -169,7 +169,7 @@ func runDoctor() int {
 			// or read-only volume shows up as a healthy server that rejects every
 			// push. Ask it directly rather than reporting a green check for it.
 			if err := http.Ready(ctx); err != nil && !syncer.ErrNotFound(err) {
-				fail("server is up but cannot write — every push will fail: " + err.Error())
+				fail("server is up but cannot write. Every push will fail: " + err.Error())
 				u.note("its storage is full, read-only, or failing; the server log names the cause")
 			}
 			if cfg.ServerPin != "" {

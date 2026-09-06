@@ -1,5 +1,5 @@
 // Package config resolves yore's single-footprint directory and settings.
-// ALL client-side state lives under Dir() — nothing is ever written
+// ALL client-side state lives under Dir(): nothing is ever written
 // anywhere else in the user's home.
 package config
 
@@ -42,63 +42,62 @@ func RedactPath(dir string) string { return filepath.Join(dir, "redact.yml") }
 func RiskPath(dir string) string  { return filepath.Join(dir, "risk.toml") }
 func BackupDir(dir string) string { return filepath.Join(dir, "backups") }
 
-// Config is ~/.config/yore/config.toml (TOML — no JSON quoting or trailing-comma
-// quirks to trip over in a hand-edited file).
-//
-// Defaults come from Defaults(), which Load() seeds *before* decoding the file
-// over it — so an absent key keeps its default and an explicit value (including
-// false / 0) overrides it, using go-toml's decode-into semantics rather than any
-// *bool "was it set?" bookkeeping. Booleans therefore carry their effective
-// value directly (no accessor indirection). Duration and size settings are
-// stored as human strings ("24h", "5MB") and resolved by the typed accessors
-// below (KeyEpochD, LogMaxBytes, …), which also fall back to the default if the
-// stored value is malformed. No consumer parses this file by hand — the shell
-// integration and other callers read values through Get / `yore get-config`.
+// Config is ~/.config/yore/config.toml (TOML: no JSON quoting or trailing-comma
+// quirks to trip over in a hand-edited file). Defaults come from Defaults(),
+// which Load() seeds *before* decoding the file over it, so an absent key keeps
+// its default and an explicit value (including false / 0) overrides it, using
+// go-toml's decode-into semantics rather than any *bool "was it set?"
+// bookkeeping. Booleans therefore carry their effective value directly (no
+// accessor indirection). Duration and size settings are stored as human strings
+// ("24h", "5MB") and resolved by the typed accessors below (KeyEpochD,
+// LogMaxBytes, …), which also fall back to the default if the stored value is
+// malformed. No consumer parses this file by hand: the shell integration and
+// other callers read values through Get / `yore get-config`.
 type Config struct {
 	ServerURL string `toml:"server_url,omitempty"`
 	// TokenFile optionally points at a file holding the auth token, for setups
-	// that manage it externally. The token itself is NEVER stored here — it
+	// that manage it externally. The token itself is NEVER stored here (it
 	// lives in the OS keyring, or a 0600 file when no keyring is available (see
-	// internal/secret) — so config.toml holds no secrets and stays safe to
-	// read, diff, and share.
+	// internal/secret)) so config.toml holds no secrets and stays safe to read,
+	// diff, and share.
 	TokenFile string `toml:"token_file,omitempty"`
 	// ServerPin, when set, pins the server's TLS certificate: the base64 SHA-256
-	// of its SubjectPublicKeyInfo. The syncer refuses to connect unless the
-	// leaf cert matches — defeating TLS-inspecting proxies (fail-closed) but
-	// also preventing sync through one. Captured at `yore setup --pin`.
+	// of its SubjectPublicKeyInfo. The syncer refuses to connect unless the leaf
+	// cert matches; defeating TLS-inspecting proxies (fail-closed) but also
+	// preventing sync through one. Captured at `yore setup --pin`.
 	ServerPin    string `toml:"server_pin,omitempty"`
 	KeyEpoch     string `toml:"key_epoch,omitempty"`     // default 24h
 	DaemonIdle   string `toml:"daemon_idle,omitempty"`   // default 30m
 	SyncInterval string `toml:"sync_interval,omitempty"` // default 5m
 	// PushDebounce is EXPERIMENTAL and OFF by default. Set it (e.g. "2s") to have
-	// the daemon push shortly after a command is recorded — coalescing a burst
-	// into one delta push — so cross-host propagation is seconds instead of up to
+	// the daemon push shortly after a command is recorded (coalescing a burst into
+	// one delta push) so cross-host propagation is seconds instead of up to
 	// SyncInterval. Empty/"0"/invalid leaves it disabled; only the periodic tick
 	// pushes. (Note: an agent that fires commands in bursts will push at up to one
-	// cycle per PushDebounce for the whole run — that's why it's opt-in.)
+	// cycle per PushDebounce for the whole run; that's why it's opt-in.)
 	PushDebounce string `toml:"push_debounce,omitempty"` // EXPERIMENTAL; default off
 
 	// SyncPrompts controls whether agent prompt records leave this machine. The
 	// server only ever holds ciphertext either way, so this is not about trusting
-	// the server — it is about blast radius: a prompt is far more likely than a
+	// the server: it is about blast radius: a prompt is far more likely than a
 	// command to carry pasted secrets, customer data, or context you would rather
 	// not have decryptable by every device in the group. Off keeps prompts
 	// readable on the machine that recorded them and nowhere else; the commands
 	// they caused still sync, and still show as agent commands, they just have no
-	// prompt text on other hosts. Defaults true — so no omitempty: an explicit
+	// prompt text on other hosts. Defaults true, so no omitempty: an explicit
 	// false must survive a Save/Load round-trip. Not retroactive: prompts already
 	// pushed stay on the server.
 	SyncPrompts bool `toml:"sync_prompts"` // default true
 
 	// RemoteKeep caps how many of each OTHER host's records this machine caches
-	// and holds in RAM — the newest RemoteKeep per host. Remote history is
+	// and holds in RAM: the newest RemoteKeep per host. Remote history is
 	// unbounded over years, and all of it decrypted in a background daemon is
-	// not; this is the bound. Searching a remote host reaches back this far.
-	// 0 means unlimited (the old behaviour; a deliberate choice, not a default).
+	// not; this is the bound. Searching a remote host reaches back this far. 0
+	// means unlimited (the old behaviour; a deliberate choice, not a default).
 	RemoteKeep int `toml:"remote_keep,omitempty"` // default 50000
 
 	// AutoDeepen lets a shallow (local) search that finds little transparently
-	// extend to all hosts when the server is reachable. Defaults true — so it has
+	// extend to all hosts when the server is reachable. Defaults true, so it has
 	// no omitempty: an explicit false must survive a Save/Load round-trip.
 	AutoDeepen bool `toml:"auto_deepen"` // default true
 
@@ -120,10 +119,9 @@ type Config struct {
 	// HideAgentCommands keeps agent-run commands out of the interactive search
 	// UIs, where one prompt's forty tool invocations otherwise bury a morning of
 	// the user's own work. The agent explorer (`a`) is where that history
-	// belongs — grouped under the prompt that caused it rather than interleaved.
+	// belongs; grouped under the prompt that caused it rather than interleaved.
 	// Default true; `A` in the browser and `⌥a` in the Ctrl-R panel toggle it for
 	// the session, and both always say how many rows the filter is holding back.
-	//
 	// It governs only the interactive UIs. `--headless` never hides anything: it
 	// feeds scripts, which want the whole archive and have no status line to be
 	// told what was withheld. An explicit false must round-trip, hence no
@@ -137,14 +135,14 @@ type Config struct {
 	Keymap string `toml:"keymap,omitempty"` // default "emacs"
 
 	// Integration picks how deeply the emitted shell hooks take over history:
-	//   "takeover" (default) — yore is the single source of truth: the shell's
+	//   "takeover" (default): yore is the single source of truth. The shell's
 	//     persistent history is disabled, its in-memory list is seeded from yore
 	//     and gated by yore's redaction (so !N / up-arrow work against yore-
 	//     consistent, secret-free history), and Ctrl-R / up-arrow / h / hs are
 	//     yore.
-	//   "coexist"  — record alongside the shell's own history (untouched); rebind
+	//   "coexist":  record alongside the shell's own history (untouched); rebind
 	//     Ctrl-R and add h/hs. Native !N works against native history.
-	//   "capture"  — only record; no keybinding or alias changes.
+	//   "capture":  only record; no keybinding or alias changes.
 	Integration string `toml:"integration,omitempty"` // default "takeover"
 
 	// Recording filters (see internal/redact). Commands matching a built-in
@@ -163,12 +161,12 @@ type Config struct {
 
 	// CaptureSpoolOnly makes the capture path (the shell hook and the agent
 	// hooks) write the record to the spool and stop there: it does NOT poke or
-	// spawn the daemon. Off by default — normally a capture nudges the daemon so
+	// spawn the daemon. Off by default; normally a capture nudges the daemon so
 	// the record is ingested and searchable within milliseconds. With this on,
 	// nothing touches the daemon on the capture path; the spool is drained the
 	// next time a daemon runs (your next `hs`/`hb` spawns one, which ingests the
 	// whole spool at startup). The trade is slightly staler search for a machine
-	// where capture never starts a background process — useful with no sync
+	// where capture never starts a background process; useful with no sync
 	// server configured. Records are never lost either way; only ingest timing
 	// changes.
 	CaptureSpoolOnly bool `toml:"capture_spool_only,omitempty"` // default false
@@ -181,7 +179,7 @@ type Config struct {
 	// daemon.log size cap. When LogMaxSize > 0 the log rotates once it would
 	// exceed that many bytes, keeping LogKeep old segments; "0" disables
 	// rotation (plain unbounded append). LogSilent suppresses the log entirely
-	// (no file is created and logging is a no-op) — the default; set it false to
+	// (no file is created and logging is a no-op): the default; set it false to
 	// write a rotating daemon.log for debugging. Defaults true, so no omitempty:
 	// an explicit false must round-trip.
 	LogMaxSize string `toml:"log_max_size,omitempty"` // default "5MB"; "0" disables rotation
@@ -192,7 +190,7 @@ type Config struct {
 // Defaults returns the configuration used when config.toml is absent. Load()
 // seeds this before decoding the file over it, so every setting the user does
 // not mention keeps the value here. Booleans whose default is true are the
-// reason this exists — a decoder cannot distinguish "absent" from "false" once
+// reason this exists: a decoder cannot distinguish "absent" from "false" once
 // seeded, which is exactly the behavior we want: absent → default, present →
 // override. String/int settings left at their zero value here are defaulted by
 // their typed accessors instead (single source of truth for those).
@@ -237,7 +235,7 @@ func (c Config) DaemonIdleD() time.Duration   { return durOr(c.DaemonIdle, 30*ti
 func (c Config) SyncIntervalD() time.Duration { return durOr(c.SyncInterval, 5*time.Minute) }
 
 // PushDebounceD is EXPERIMENTAL and OFF by default (0). A valid duration enables
-// push-on-record — the daemon pushes that long after new records are ingested,
+// push-on-record: the daemon pushes that long after new records are ingested,
 // coalescing bursts. Empty/"0"/invalid all resolve to 0 (disabled), so only the
 // periodic SyncInterval tick pushes.
 func (c Config) PushDebounceD() time.Duration { return durOr(c.PushDebounce, 0) }
@@ -351,7 +349,7 @@ func EnsureDir(dir string) error {
 // Get returns the effective value of a config key (its TOML field name) as a
 // string: "true"/"false" for booleans, the raw text for strings, a decimal for
 // integers, comma-separated items for string lists. An empty string means the
-// key is at its default. This is the one authoritative reader — the shell
+// key is at its default. This is the one authoritative reader: the shell
 // integration and `yore get-config` use it, so nothing parses config.toml by
 // hand. An unknown key is an error.
 func Get(dir, key string) (string, error) {
@@ -367,7 +365,7 @@ func Get(dir, key string) (string, error) {
 }
 
 // Set assigns a config key from a string value and persists config.toml
-// (creating it if absent). The value is parsed into the field's type — bool,
+// (creating it if absent). The value is parsed into the field's type; bool,
 // string, integer, or comma-separated list; a value that does not fit the type
 // is an error and nothing is written. An unknown key is an error.
 func Set(dir, key, value string) error {
@@ -502,7 +500,7 @@ type UIState struct {
 // ColumnPrefs is one table's remembered column choices. Columns are named, not
 // numbered: an index would silently come to mean a different column the moment
 // one is added or the order changes, and this file outlives any given release.
-// An unknown name is ignored on load rather than failing — the same fail-safe
+// An unknown name is ignored on load rather than failing: the same fail-safe
 // redact.yml and risk.toml get.
 type ColumnPrefs struct {
 	Hidden   []string `toml:"hidden,omitempty"`

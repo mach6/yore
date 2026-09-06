@@ -6,10 +6,16 @@ import (
 )
 
 // Unknown is the placeholder for a value the record never carried. A record
-// whose timestamp is zero has no known time — bare bash history files hold no
-// "#<epoch>" lines, so everything imported from one arrives untimed. Rendering
+// whose timestamp is zero has no known time; bare bash history files hold no
+// "#<epoch>" lines, so everything read out of one arrives untimed. Rendering
 // that as 1970-01-01 reads like a bug rather than like missing data.
-const Unknown = "—"
+//
+// It is the same "·" the exit column uses for an outcome nobody reported and
+// the heatmap uses for a day with no activity, so one glyph means "no value"
+// everywhere in the UI. It is also a fixed single cell: the em-dash this used
+// to be is East-Asian-Ambiguous, which renders two cells wide in some
+// terminals and pushes every column after it out of line.
+const Unknown = "·"
 
 // RelTime renders a compact, width-stable (<= 8 columns) relative time for a
 // row, given the current and event times in Unix milliseconds. It returns
@@ -25,12 +31,10 @@ func RelTime(nowMs, thenMs int64) string {
 
 // TimeLeft is RelTime's forward-looking twin: how much of a deadline is still
 // to run, in the same compact units, so "expires 25m" reads the way "minted 5m"
-// does. A deadline already passed renders as "now".
-//
-// RelTime cannot answer this. It clamps a future time to zero and calls it
-// "now", which turned a token with 30 minutes left into one that "expires now"
-// — the single most alarming thing it could have said about a token that was
-// perfectly good.
+// does. A deadline already passed renders as "now". RelTime cannot answer this.
+// It clamps a future time to zero and calls it "now", which turned a token with
+// 30 minutes left into one that "expires now": the single most alarming thing
+// it could have said about a token that was perfectly good.
 func TimeLeft(nowMs, thenMs int64) string {
 	if thenMs <= 0 {
 		return Unknown

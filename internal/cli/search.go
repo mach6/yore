@@ -39,11 +39,11 @@ func interactiveSearch(initialQuery, scope, executor, tag string) int {
 		HideAgents: cfg.HideAgentCommands,
 	})
 	if err != nil {
-		// No /dev/tty (or the TUI failed): behave like headless so pipes
-		// and odd environments still get results, preserving the scope and
-		// tag filters the caller asked for. showHost=false: this feeds the
-		// Ctrl-R `$(yore search …)` capture, whose contract is that ONLY the
-		// bare command is printed — a host prefix would corrupt the buffer.
+		// No /dev/tty (or the TUI failed): behave like headless so pipes and
+		// odd environments still get results, preserving the scope and tag
+		// filters the caller asked for. showHost=false: this feeds the Ctrl-R
+		// `$(yore search …)` capture, whose contract is that ONLY the bare
+		// command is printed; a host prefix would corrupt the buffer.
 		fallbackScope := scope
 		if fallbackScope == "" {
 			fallbackScope = proto.ScopeLocal
@@ -93,8 +93,8 @@ func headlessShowHost(scope string, noHost bool) bool {
 	return !noHost && scope == proto.ScopeAll
 }
 
-// formatHeadless renders query rows as headless output lines. With showHost —
-// only `--scope all` (hsa), where results span hosts — the hostname leads each
+// formatHeadless renders query rows as headless output lines. With showHost
+// (only `--scope all` (hsa), where results span hosts) the hostname leads each
 // line, left-padded to the widest hostname in rows and followed by two spaces,
 // so the command column aligns; without it each line is the bare command (every
 // single-host scope, and the Ctrl-R capture contract). It's a pure helper so the

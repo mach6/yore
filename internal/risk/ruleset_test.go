@@ -11,7 +11,7 @@ import (
 )
 
 // TestDefaultRulesetMatchesAssess: the package-level Assess and the default
-// ruleset are one implementation — same verdict for every shape of command.
+// ruleset are one implementation; same verdict for every shape of command.
 func TestDefaultRulesetMatchesAssess(t *testing.T) {
 	for _, cmd := range []string{
 		"", "# a comment", "echo hello", "alias gs='git status'",

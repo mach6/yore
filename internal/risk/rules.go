@@ -11,16 +11,16 @@ import (
 // Levels mean something specific, and the meaning is what keeps the ramp
 // useful rather than uniformly alarming:
 //
-//   - critical — irreversible. Data, history, or infrastructure that no undo
+//   - critical: irreversible. Data, history, or infrastructure that no undo
 //     brings back, plus remote code arriving with root.
-//   - high     — reversible only with effort, or it changes what code runs:
+//   - high:     reversible only with effort, or it changes what code runs:
 //     installs, permissions, executing fetched or local scripts.
-//   - medium   — real side effects, ordinarily recoverable: privilege,
+//   - medium:   real side effects, ordinarily recoverable: privilege,
 //     containers, processes, service and account state.
-//   - low      — reaches off the machine, or writes somewhere shared.
+//   - low:      reaches off the machine, or writes somewhere shared.
 //
 // Rules are scanned in full and the highest severity wins, so `sudo npm
-// install` is high (package-install), not medium (privilege) — order within a
+// install` is high (package-install), not medium (privilege); order within a
 // level only settles ties.
 
 func set(names ...string) map[string]bool {
@@ -48,7 +48,7 @@ var (
 )
 
 var rules = []rule{
-	// --- Critical: irreversible — no undo brings this back ---
+	// --- Critical: irreversible; no undo brings this back ---
 	{Critical, "destructive", "recursive force delete", matchRmRF},
 	{Critical, "destructive", "force-push rewrites remote history", matchGitPushForce},
 	{Critical, "destructive", "deletes a remote branch", matchGitPushDelete},
@@ -182,7 +182,7 @@ func matchRmRF(c *cmdline) bool {
 }
 
 // matchGitPushForce flags a force push but spares --force-with-lease, which
-// refuses to clobber work it has not seen — the safe form must not be rated the
+// refuses to clobber work it has not seen: the safe form must not be rated the
 // most dangerous thing on the list.
 func matchGitPushForce(c *cmdline) bool {
 	return c.each(func(s *segment) bool {
@@ -268,7 +268,7 @@ var devicePath = regexp.MustCompile(`^/dev/(sd|nvme|disk|hd|vd|mmcblk|xvd)`)
 
 func isDevice(p string) bool { return devicePath.MatchString(p) }
 
-// matchMkfs catches both spellings — `mkfs.ext4` and `mkfs -t ext4`.
+// matchMkfs catches both spellings; `mkfs.ext4` and `mkfs -t ext4`.
 func matchMkfs(c *cmdline) bool {
 	return c.each(func(s *segment) bool {
 		return s.head == "mkfs" || strings.HasPrefix(s.head, "mkfs.") || s.head == "mke2fs" || s.head == "newfs"
@@ -280,7 +280,7 @@ var (
 	sqlWhere  = regexp.MustCompile(`(?i)\bwhere\b`)
 )
 
-// matchSQLNoWhere flags a DELETE or UPDATE carrying no WHERE — the shape that
+// matchSQLNoWhere flags a DELETE or UPDATE carrying no WHERE: the shape that
 // takes every row instead of the intended few. RE2 has no negative lookahead,
 // so the absence is checked in code rather than in the pattern.
 func matchSQLNoWhere(c *cmdline) bool {
@@ -330,8 +330,8 @@ func matchIaCApply(c *cmdline) bool {
 		c.sub("ansible-playbook")
 }
 
-// matchKubectlNamespace separates deleting a namespace — which takes everything
-// inside it — from deleting one resource.
+// matchKubectlNamespace separates deleting a namespace (which takes everything
+// inside it) from deleting one resource.
 func matchKubectlNamespace(c *cmdline) bool {
 	return c.each(func(s *segment) bool {
 		if !s.is("kubectl", "delete") && !s.is("oc", "delete") {
@@ -533,7 +533,7 @@ func matchPackageRemove(c *cmdline) bool {
 	})
 }
 
-// matchPublish flags pushing an artifact somewhere the world can pull it —
+// matchPublish flags pushing an artifact somewhere the world can pull it;
 // outward-facing and, for most registries, unpublishable afterwards.
 func matchPublish(c *cmdline) bool {
 	return c.sub("npm", "publish") || c.sub("yarn", "publish") || c.sub("pnpm", "publish") ||
@@ -557,7 +557,7 @@ func matchRunFetched(c *cmdline) bool {
 	return c.cmd(keys(fetchers)...) && c.cmd(keys(interpreters)...)
 }
 
-// matchPipeIntoShell flags anything piped into a shell, fetched or not — a
+// matchPipeIntoShell flags anything piped into a shell, fetched or not: a
 // decoded payload executes exactly as readily as a downloaded one.
 func matchPipeIntoShell(c *cmdline) bool {
 	return c.each(func(s *segment) bool { return s.piped && shells[s.head] })
@@ -585,7 +585,7 @@ func matchLocalScript(c *cmdline) bool {
 }
 
 // matchLocalBinary flags executing something out of the working directory that
-// is not a recognised script — `./configure`, `./installer`.
+// is not a recognised script; `./configure`, `./installer`.
 func matchLocalBinary(c *cmdline) bool {
 	return c.each(func(s *segment) bool {
 		return strings.HasPrefix(s.headRaw, "./") || strings.HasPrefix(s.headRaw, "../")
@@ -698,7 +698,7 @@ func matchPartitionEdit(c *cmdline) bool {
 }
 
 // matchRsyncDelete flags the flag that makes rsync remove files at the far end
-// to match the source — a mirror, not a copy.
+// to match the source: a mirror, not a copy.
 func matchRsyncDelete(c *cmdline) bool {
 	return c.each(func(s *segment) bool {
 		if s.head != "rsync" {
@@ -742,7 +742,7 @@ func matchScheduleEdit(c *cmdline) bool {
 	})
 }
 
-// matchUpload flags piping local output into a request body — the shape data
+// matchUpload flags piping local output into a request body: the shape data
 // leaves a machine in.
 func matchUpload(c *cmdline) bool {
 	return c.each(func(s *segment) bool {
@@ -767,7 +767,7 @@ var secretPath = regexp.MustCompile(`(?i)(/etc/(shadow|sudoers)|\.ssh/id_[a-z0-9
 var readers = set("cat", "less", "more", "head", "tail", "bat", "strings", "xxd", "od")
 
 // copiers move a file somewhere else, which for key material is the more
-// interesting verb — it is how a secret ends up on a second machine.
+// interesting verb: it is how a secret ends up on a second machine.
 var copiers = set("cp", "scp", "rsync", "tar", "zip", "install", "sftp")
 
 func matchReadsSecret(c *cmdline) bool { return touchesSecret(c, readers) }

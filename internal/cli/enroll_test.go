@@ -126,14 +126,11 @@ func TestRunSetup(t *testing.T) {
 // TestRunSetupOnEnrolledMachineSavesPinChange is the regression test for a setup
 // run that had nothing to enroll silently discarding its flags: `--clear-pin` (or
 // `--pin`) reported success and left config.toml alone, because the
-// already-enrolled path returned before config.Save.
-//
-// The already-enrolled machine is the ONLY one you can run these flags on — a
-// pin is changed long after enrollment — so this was the whole feature.
-//
-// It also pins the token handling: clearing a pin needs no enrollment token, so
-// the run must succeed with an empty one rather than prompting for a credential
-// it will not spend.
+// already-enrolled path returned before config.Save. The already-enrolled machine
+// is the ONLY one you can run these flags on (a pin is changed long after
+// enrollment) so this was the whole feature. It also pins the token handling:
+// clearing a pin needs no enrollment token, so the run must succeed with an empty
+// one rather than prompting for a credential it will not spend.
 func TestRunSetupOnEnrolledMachineSavesPinChange(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("YORE_DIR", dir)
@@ -159,14 +156,13 @@ func TestRunSetupOnEnrolledMachineSavesPinChange(t *testing.T) {
 }
 
 // TestRunSetupDoesNotSpendItsBudgetWaitingForTheToken is the regression test for
-// a freshly minted token being refused the moment it was pasted in.
-//
-// Nothing was wrong with the token: the run opened ONE deadline before prompting
-// for it, and fetching a token means walking to another machine and running
-// `yore devices token` there. By the time it was typed the deadline had expired,
-// so the enrollment POST failed instantly — reported, wrongly, as the server
-// refusing the token. Each stretch of talking to the server gets its own budget,
-// starting when that stretch does.
+// a freshly minted token being refused the moment it was pasted in. Nothing was
+// wrong with the token: the run opened ONE deadline before prompting for it, and
+// fetching a token means walking to another machine and running `yore devices
+// token` there. By the time it was typed the deadline had expired, so the
+// enrollment POST failed instantly; reported, wrongly, as the server refusing
+// the token. Each stretch of talking to the server gets its own budget, starting
+// when that stretch does.
 func TestRunSetupDoesNotSpendItsBudgetWaitingForTheToken(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("YORE_DIR", dir)

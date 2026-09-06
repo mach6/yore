@@ -132,5 +132,5 @@ func hkWrapKey(shared, ephPub, recipientPub []byte) ([32]byte, error) {
 
 // b64 is the internal, unpadded encoding used only inside HKDF info strings.
 // It is never parsed back, so the exact alphabet is immaterial as long as
-// wrap and unwrap agree — which they do, both routing through this function.
+// wrap and unwrap agree: which they do, both routing through this function.
 func b64(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }

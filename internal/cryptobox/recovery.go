@@ -18,9 +18,9 @@ import (
 // into two keypairs whose private halves exist only while the user is typing
 // the phrase:
 //
-//   - X25519 — a recipient for one extra History Key wrap, so HK can be
+//   - X25519: a recipient for one extra History Key wrap, so HK can be
 //     recovered.
-//   - Ed25519 — proof of possession, so the holder can authorize enrolling a
+//   - Ed25519: proof of possession, so the holder can authorize enrolling a
 //     replacement device when no existing device survives to approve it.
 //
 // The server stores only the two public keys, the salt, and the wrapped HK, so
@@ -30,10 +30,10 @@ import (
 
 // Argon2id parameters. Stretching is a second line of defence only: the phrase
 // this package generates carries 160 bits of entropy, which is already far
-// beyond brute force at any cost factor. So these are tuned to be
-// comfortably strong while staying safe on a small VM or container — a memory
-// cost high enough to OOM the machine doing the recovery would be a worse
-// failure than the attack it prevents.
+// beyond brute force at any cost factor. So these are tuned to be comfortably
+// strong while staying safe on a small VM or container: a memory cost high
+// enough to OOM the machine doing the recovery would be a worse failure than
+// the attack it prevents.
 const (
 	argonTime    = 3
 	argonMemory  = 128 * 1024 // KiB (128 MiB)
@@ -42,7 +42,7 @@ const (
 )
 
 // Recovery phrase shape: groups of Crockford base32 characters over a 32-symbol
-// alphabet, so 8*4*5 = 160 bits of entropy — well beyond offline attack.
+// alphabet, so 8*4*5 = 160 bits of entropy; well beyond offline attack.
 const (
 	recoveryGroups   = 8
 	recoveryPerGroup = 4
@@ -90,10 +90,8 @@ func NewRecoverySalt() ([]byte, error) {
 
 // DeriveRecoveryKey stretches a recovery phrase into its keypairs. Derivation is
 // deliberately slow (see the Argon2id parameters); callers should tell the user
-// it is working.
-//
-// The phrase is normalised first — upper-cased and stripped of spaces and
-// dashes — so it round-trips however the user retypes it.
+// it is working. The phrase is normalised first (upper-cased and stripped of
+// spaces and dashes) so it round-trips however the user retypes it.
 func DeriveRecoveryKey(phrase string, salt []byte) (RecoveryKey, error) {
 	norm := NormalizeRecoveryPhrase(phrase)
 	if norm == "" {

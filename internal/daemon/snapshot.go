@@ -13,8 +13,8 @@ import (
 const snapshotFile = "corpus.snap"
 
 // snapshot is the on-disk warm-start payload: the live search corpus plus the
-// raw stream position it was built at. It is DERIVED data — always rebuildable
-// from data.db — so any read/decode error just falls back to a full load.
+// raw stream position it was built at. It is DERIVED data (always rebuildable
+// from data.db) so any read/decode error just falls back to a full load.
 type snapshot struct {
 	LastSeq uint64
 	Records []rec.Record
@@ -23,7 +23,7 @@ type snapshot struct {
 func snapshotPath(dir string) string { return filepath.Join(dir, snapshotFile) }
 
 // writeSnapshot atomically persists the corpus so the next start is instant.
-// It writes a temp file, fsyncs, and renames — a crash never leaves a torn
+// It writes a temp file, fsyncs, and renames: a crash never leaves a torn
 // snapshot in place (the rename is atomic; a stray .tmp is ignored on read).
 func writeSnapshot(dir string, records []rec.Record, lastSeq uint64) error {
 	path := snapshotPath(dir)
@@ -52,7 +52,7 @@ func writeSnapshot(dir string, records []rec.Record, lastSeq uint64) error {
 }
 
 // readSnapshot loads the warm-start corpus. ok is false (with no error) when
-// there is simply no usable snapshot — a missing or unreadable/corrupt file is
+// there is simply no usable snapshot: a missing or unreadable/corrupt file is
 // not an error, just a cold start.
 func readSnapshot(dir string) (snap snapshot, ok bool) {
 	f, err := os.Open(snapshotPath(dir))
@@ -70,7 +70,7 @@ func readSnapshot(dir string) (snap snapshot, ok bool) {
 // snapshot: decoding a gob slice in one sequential read is far cheaper than
 // re-scanning and JSON-decoding every row from bbolt. Whatever the snapshot's
 // position, the store's rows above it are folded in (via Since) so the corpus
-// is always current — records only append while the daemon is down, and local
+// is always current; records only append while the daemon is down, and local
 // deletions only happen through a running daemon, so a shutdown snapshot
 // already reflects every deletion. A snapshot that is somehow ahead of the
 // store (should never happen) is discarded for a full load.

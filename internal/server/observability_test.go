@@ -38,7 +38,7 @@ func captureLog(t *testing.T) *bytes.Buffer {
 
 // TestWriteAPIErr covers the split that made a storage failure undiagnosable: an
 // *apiError is the client's answer and says all it needs to, while any other
-// error is answered generically — and so must be logged, or it exists nowhere.
+// error is answered generically, and so must be logged, or it exists nowhere.
 func TestWriteAPIErr(t *testing.T) {
 	tests := []struct {
 		name       string

@@ -15,17 +15,17 @@ import (
 	"yore/internal/tui/theme"
 )
 
-// The two long-arc graphs — the contribution heatmap and the daily trend — are
+// The two long-arc graphs (the contribution heatmap and the daily trend) are
 // aggregated over the widest window they could ever draw and then sliced to fit
 // the terminal, so a wide window shows more history rather than more whitespace.
 // Both deliberately ignore the selected period: they exist to show the shape of
 // activity AROUND the window the other panels summarize, not inside it.
 const (
-	maxHeatWeeks = 105 // two years of columns — enough to fill a wide terminal
+	maxHeatWeeks = 105 // two years of columns; enough to fill a wide terminal
 	maxSparkDays = 732 // and of daily bars
 
 	heatLabelW = 4 // the "Sun " gutter; the daily trend indents to match
-	heatCellW  = 2 // columns per day cell — one is too thin to read as a square
+	heatCellW  = 2 // columns per day cell: one is too thin to read as a square
 	minHeatWks = 8 // below this the heatmap is not worth the rows it costs
 )
 
@@ -35,17 +35,16 @@ var sparkBlocks = []rune("▁▂▃▄▅▆▇█")
 
 // The contribution heatmap draws one glyph, not a density ramp: intensity is
 // carried by color (theme.Data), and a day with nothing at all by a dim dot.
-//
 // ░▒▓ used to carry the levels, and they are the least portable glyphs in the
-// box-drawing set — plenty of terminal fonts render ▒ and ▓ close enough to be
+// box-drawing set; plenty of terminal fonts render ▒ and ▓ close enough to be
 // indistinguishable, which silently collapsed two of the four levels.
 const (
 	heatEmpty = '·'
 	heatFill  = '█'
 )
 
-// statPeriods are the selectable time windows (keys 1..5), shared by every view
-// — the browse table, the agent explorer, and the stats screen all filter on the
+// statPeriods are the selectable time windows (keys 1..5), shared by every view:
+// the browse table, the agent explorer, and the stats screen all filter on the
 // same one. days == 0 means all history.
 var statPeriods = []struct {
 	label string
@@ -58,15 +57,14 @@ var statPeriods = []struct {
 	{"All", 0},
 }
 
-// allPeriod is the index of the "All" tab — the default, so nothing is hidden
+// allPeriod is the index of the "All" tab: the default, so nothing is hidden
 // until the user asks for a window.
 var allPeriod = len(statPeriods) - 1
 
 // periodCutoff is the instant a period starts, in unix ms (0 = all history).
-//
 // "Today" is the CALENDAR day in local time, not a rolling 24 hours: the tab
 // says today, and a rolling window would fold yesterday evening into this
-// morning's hour-of-day buckets — the same clock hour appearing twice, from two
+// morning's hour-of-day buckets; the same clock hour appearing twice, from two
 // different days.
 func periodCutoff(nowMs int64, days int) int64 {
 	switch {
@@ -119,7 +117,7 @@ func periodTabsWidth() int {
 // titleWithTabs lays out a view's header: its own text on the left, the shared
 // period tabs pinned to the right. Every period-aware view uses this, so the
 // filter is always in the same place on screen. On a terminal too narrow for
-// both, the title wins — the keys still work and the status bar names the
+// both, the title wins: the keys still work and the status bar names the
 // active window.
 func (m Model) titleWithTabs(left string, w int) string {
 	if !m.showPeriodTabs() {
@@ -155,6 +153,11 @@ type statsData struct {
 	topDirs     []cmdCount // by cwd
 	byExecutor  []cmdCount // by tag ("" -> "(you)")
 	byHost      []cmdCount // by hostname (cross-machine corpus)
+	// byTag counts a row once per freeform tag it carries, so the counts here
+	// sum to more than total wherever commands are tagged twice. Every other
+	// ranked list puts a row in exactly one bucket; this one cannot, because a
+	// tag is a label the user may stack rather than an attribute of the record.
+	byTag []cmdCount
 
 	// Daily trend: per-day counts, oldest (left) .. newest (right), spanning
 	// maxSparkDays. Period-independent (see the constants above); the renderer
@@ -168,10 +171,10 @@ type statsData struct {
 	heat [7][maxHeatWeeks]int
 
 	// The aggregation asks for the whole archive, so normally the sample IS the
-	// archive. capped says the daemon returned fewer rows than it matched anyway
-	// (a caller passed a row budget), sampleN is how many arrived, and sampleFrom
-	// is the oldest of them — without those, a window wider than the sample's
-	// reach looks identical to every other wide window and the tabs read as broken.
+	// archive. capped says the daemon returned fewer rows than it matched anyway (a
+	// caller passed a row budget), sampleN is how many arrived, and sampleFrom is
+	// the oldest of them, without those, a window wider than the sample's reach
+	// looks identical to every other wide window and the tabs read as broken.
 	capped     bool
 	sampleN    int
 	sampleFrom int64
@@ -200,7 +203,7 @@ func foldHeat(heat *[7][maxHeatWeeks]int, nowMs, startMs int64) {
 
 // computeStats aggregates a row sample into the stats screen's data, restricted
 // to the last periodDays days (0 = all history). It reads only fields every
-// record already carries — no schema dependency. total is what the daemon said
+// record already carries: no schema dependency. total is what the daemon said
 // it matched, which is how the sample knows whether it is the whole story.
 func computeStats(rows []rec.Record, total int, now int64, periodDays int) *statsData {
 	s := &statsData{
@@ -216,6 +219,7 @@ func computeStats(rows []rec.Record, total int, now int64, periodDays int) *stat
 	dirs := map[string]int{}
 	execs := map[string]int{}
 	hosts := map[string]int{}
+	tags := map[string]int{}
 	var durSum float64
 	var durN int
 	var success int
@@ -250,6 +254,12 @@ func computeStats(rows []rec.Record, total int, now int64, periodDays int) *stat
 		execs[executorLabel(r.Executor)]++
 		if r.Hostname != "" {
 			hosts[r.Hostname]++
+		}
+		// A row lands in one bucket per tag it carries: the daemon has already
+		// resolved Tags into the union of command, session and auto_tags labels,
+		// so this counts what the user sees on the row.
+		for _, tg := range r.Tags {
+			tags[tg]++
 		}
 		if r.Executor != "" {
 			s.agentPS++
@@ -287,6 +297,7 @@ func computeStats(rows []rec.Record, total int, now int64, periodDays int) *stat
 	s.topDirs = topN(dirs)
 	s.byExecutor = topN(execs)
 	s.byHost = topN(hosts)
+	s.byTag = topN(tags)
 
 	for _, c := range s.hourly {
 		if c > s.hourMax {
@@ -312,8 +323,8 @@ func maxOf(vals []int) int {
 // maxRankedEntries bounds how many entries topN retains. The commands tally
 // holds one entry per distinct command line ever run, so without a cap the
 // retained slice would grow for as long as the archive does. It is not a
-// display limit — statColumn already draws however many of these entries fit
-// the terminal's height — so the number only needs to comfortably outrun any
+// display limit (statColumn already draws however many of these entries fit
+// the terminal's height) so the number only needs to comfortably outrun any
 // ranked column a real terminal could show. 64 clears that bar with room to
 // spare while still discarding the long tail before it is kept around.
 const maxRankedEntries = 64
@@ -379,14 +390,14 @@ func (m Model) statsTitle(w int) string {
 // sampleNote says what the aggregation actually covers. The explorer asks for
 // every row, so this normally reads "all history". If a sample ever does arrive
 // short and does not reach back as far as the selected window, every wider tab
-// shows the same numbers — so say so rather than let the tabs look inert.
+// shows the same numbers, so say so rather than let the tabs look inert.
 func (m Model) sampleNote(s *statsData) string {
 	if !s.capped || s.sampleFrom == 0 {
 		return "all history"
 	}
 	reach := theme.RelTime(m.now(), s.sampleFrom)
 	if d := m.periodDays(); d == 0 || int64(d)*86_400_000 > m.now()-s.sampleFrom {
-		return fmt.Sprintf("newest %d commands only — reaches back %s", s.sampleN, reach)
+		return fmt.Sprintf("newest %d commands only; reaches back %s", s.sampleN, reach)
 	}
 	return fmt.Sprintf("newest %d commands · reaches back %s", s.sampleN, reach)
 }
@@ -396,12 +407,11 @@ func (m Model) sampleNote(s *statsData) string {
 const minColumnsH = 4
 
 // renderStats draws the full stats screen in exactly h lines, no wider than w: a
-// KPI header, the ranked columns, then the charts.
-//
-// Charts are fitted whole or not at all. Each is offered the rows it needs and
-// declines if taking them would starve the ranked columns — so a short terminal
-// loses a chart cleanly instead of getting one with its axis sliced off, which
-// is what happened when the block was assembled first and trimmed to fit after.
+// KPI header, the ranked columns, then the charts. Charts are fitted whole or
+// not at all. Each is offered the rows it needs and declines if taking them
+// would starve the ranked columns, so a short terminal loses a chart cleanly
+// instead of getting one with its axis sliced off, which is what happened when
+// the block was assembled first and trimmed to fit after.
 func (m Model) renderStats(w, h int) string {
 	th := m.th
 	if m.stats == nil {
@@ -413,7 +423,7 @@ func (m Model) renderStats(w, h int) string {
 	out = append(out, m.kpiHeader(s, w), "")
 
 	// Spendable on charts, in the order they are willing to be dropped: the hourly
-	// distribution is the most useful per row it costs, the heatmap the least — but
+	// distribution is the most useful per row it costs, the heatmap the least, but
 	// the heatmap has a compact form, so it is offered that before being dropped.
 	budget := h - len(out) - minColumnsH
 	take := func(block []string) []string {
@@ -489,6 +499,15 @@ func (m Model) statColumns(s *statsData, w, bodyH int) []string {
 		{"By executor", s.byExecutor, statNameExecutor},
 		{"By host", s.byHost, statNameHost},
 	}
+	// Tags are the one ranked list the archive may have nothing to say about, so
+	// it appears exactly when it holds something: the same gate the table's own
+	// tags column carries. A permanent sixth column of "; " would cost every
+	// other column its width on an archive that has never been tagged, and it
+	// drops first on a narrow terminal because the five above it are the ones a
+	// user who does not tag still reads.
+	if len(s.byTag) > 0 {
+		all = append(all, col{"By tag", s.byTag, statNameTag})
+	}
 
 	const gap, minCol = 2, 16
 	n := len(all)
@@ -531,6 +550,7 @@ const (
 	statNamePath                  // a directory: dim prefix, normal leaf
 	statNameExecutor              // an agent identity hue; "(you)" stays plain
 	statNameHost                  // a hostname identity hue
+	statNameTag                   // a user's own label: the accent, as everywhere else
 )
 
 // statNameSegs renders one ranked-list name in its kind's ink, truncated to w.
@@ -544,6 +564,9 @@ func statNameSegs(th *theme.Theme, name string, w int, kind statNameKind) (segs 
 			used += runewidth.StringWidth(s.text)
 		}
 		return segs, used
+	case statNameTag:
+		t := truncCols(name, w)
+		return []styledSeg{{text: t, style: th.Accent}}, runewidth.StringWidth(t)
 	case statNameProgram, statNameExecutor, statNameHost:
 		style := th.Host(name)
 		if kind == statNameProgram {
@@ -564,7 +587,7 @@ func statNameSegs(th *theme.Theme, name string, w int, kind statNameKind) (segs 
 func statColumn(th *theme.Theme, title string, items []cmdCount, colW, rows int, kind statNameKind) []string {
 	lines := []string{th.Section.Render(fitPlain(title, colW))}
 	if len(items) == 0 {
-		lines = append(lines, th.Dim.Render(fitPlain("  —", colW)))
+		lines = append(lines, th.Dim.Render(fitPlain("  "+theme.Unknown, colW)))
 		return lines
 	}
 	maxN := 0
@@ -624,7 +647,7 @@ func statLine(th *theme.Theme, it cmdCount, maxN, colW int, kind statNameKind) s
 }
 
 // chartGutter is the left gutter every chart indents by, so the daily trend, the
-// hourly histogram and the heatmap all start in the same column — the heatmap's
+// hourly histogram and the heatmap all start in the same column: the heatmap's
 // weekday labels are what set it.
 func chartGutter(w int) (pad string, inner int) {
 	inner = w - heatLabelW
@@ -678,7 +701,7 @@ func (m Model) hourlyChart(s *statsData, w int) []string {
 }
 
 // hoursElapsed is how many of the day's 24 hours the selected period can have
-// commands in. Only "Today" is partial — the day is still running, so the hours
+// commands in. Only "Today" is partial: the day is still running, so the hours
 // that have not happened yet are drawn blank rather than as zero. Every wider
 // window covers whole days, so all 24 are live.
 func (m Model) hoursElapsed() int {
@@ -776,14 +799,13 @@ func heatCell(th *theme.Theme, cnt, peak int) string {
 }
 
 // heatmapChart is the contribution calendar. Full, it is 7 weekday rows × as many
-// week columns as the terminal affords, with a month ruler underneath — without
-// the ruler a year of unlabelled columns says nothing about when.
-//
-// Compact, it folds the week into a single row of per-week totals. That form
-// exists because the full graph needs 10 rows and used to be gated on the pane
-// being 26 tall, which a standard 80×24 terminal never is: the one view that
-// shows years of history at a glance was invisible at the default terminal size.
-// Compressing beats disappearing.
+// week columns as the terminal affords, with a month ruler underneath, without
+// the ruler a year of unlabelled columns says nothing about when. Compact, it
+// folds the week into a single row of per-week totals. That form exists because
+// the full graph needs 10 rows and used to be gated on the pane being 26 tall,
+// which a standard 80×24 terminal never is: the one view that shows years of
+// history at a glance was invisible at the default terminal size. Compressing
+// beats disappearing.
 func (m Model) heatmapChart(s *statsData, w int, compact bool) []string {
 	th := m.th
 	weeks := heatWeeks(w)
@@ -841,7 +863,7 @@ func (m Model) heatmapChart(s *statsData, w int, compact bool) []string {
 }
 
 // monthRuler labels the heatmap's columns with a month abbreviation wherever the
-// month changes, leaving the rest blank — the same trick a calendar heatmap uses
+// month changes, leaving the rest blank: the same trick a calendar heatmap uses
 // to stay legible without a label per column.
 func monthRuler(nowMs int64, weeks, w int) string {
 	// The Sunday that starts the current week; column c sits (weeks-1-c) weeks
@@ -869,7 +891,7 @@ func monthRuler(nowMs int64, weeks, w int) string {
 }
 
 // bucketStart is the first column of bucket i when w columns are spread across
-// n buckets — the leftmost w%n buckets take one extra column each, so the row
+// n buckets: the leftmost w%n buckets take one extra column each, so the row
 // ends flush with the right edge instead of leaving a ragged remainder. The
 // histogram and its axis both position from here, so labels cannot drift off
 // their bars.

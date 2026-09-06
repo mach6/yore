@@ -286,7 +286,7 @@ func TestRunHookClaudeCodeRedacts(t *testing.T) {
 	feedStdin(t, payload, func() { runHookClaudeCode() })
 
 	rows := spooledRecords(t, dir)
-	require.Len(t, rows, 1, "the command is kept — only the credential goes")
+	require.Len(t, rows, 1, "the command is kept: only the credential goes")
 	assert.NotContains(t, rows[0].Cmd, "hunter2", "the secret must never be spooled")
 	assert.Contains(t, rows[0].Cmd, "export DB_PASSWORD=", "the rest of the command survives")
 	assert.Contains(t, rows[0].Cmd, redact.Mark("generic-token-assign"), "the marker names the rule that fired")
@@ -344,7 +344,7 @@ func TestPromptHookRedactsSecrets(t *testing.T) {
 	feedStdin(t, `{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"use export DB_PASSWORD=hunter2 please"}`,
 		runHookClaudePrompt)
 
-	// The prompt is recorded — with the credential masked, not the whole prompt
+	// The prompt is recorded, with the credential masked, not the whole prompt
 	// thrown away, so the tracing still works and the question is still readable.
 	rows := spooledRecords(t, dir)
 	require.Len(t, rows, 1)
@@ -353,7 +353,7 @@ func TestPromptHookRedactsSecrets(t *testing.T) {
 	assert.Contains(t, rows[0].Prompt, redact.Mark("generic-token-assign"))
 
 	// The session state exists so the commands that follow can be traced to it,
-	// and it holds the id alone — never a second copy of the text.
+	// and it holds the id alone; never a second copy of the text.
 	ps, ok := loadPromptState(dir, "s1")
 	require.True(t, ok, "a redacted prompt is still a prompt")
 	assert.Equal(t, rows[0].ID, ps.ID)

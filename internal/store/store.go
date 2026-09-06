@@ -27,7 +27,7 @@ var ErrLocked = errors.New("store: locked by another process")
 // ErrSchemaNewer is returned by Open when data.db carries a schema version this
 // build does not know. Refusing is the point: an older binary that guessed at a
 // newer layout would misread records or write ones the newer build cannot, and
-// this is the local history — the one copy of it on this machine.
+// this is the local history; the one copy of it on this machine.
 var ErrSchemaNewer = errors.New("store: data.db was written by a newer version of yore")
 
 // ErrSchemaBad is returned when the recorded schema version is not a number.
@@ -45,17 +45,15 @@ const (
 	metaSchema   = "schema"
 )
 
-// SchemaVersion is the on-disk layout this build reads and writes.
-//
-// It exists to be READ, not yet to be migrated: there is no upgrade path, so the
-// only thing a version does today is let a build refuse a database it cannot
-// safely touch instead of misreading it. Stamping it now is what makes an
-// upgrade path possible later — a store with no version at all leaves a future
-// migration guessing from structure.
-//
-// A store predating this constant carries no version key. That is not an unknown
-// format, it IS version 1: the layout has not changed, so Open stamps it rather
-// than refusing every database that already exists.
+// SchemaVersion is the on-disk layout this build reads and writes. It exists to
+// be READ, not yet to be migrated: there is no upgrade path, so the only thing a
+// version does today is let a build refuse a database it cannot safely touch
+// instead of misreading it. Stamping it now is what makes an upgrade path
+// possible later: a store with no version at all leaves a future migration
+// guessing from structure. A store predating this constant carries no version
+// key. That is not an unknown format, it IS version 1: the layout has not
+// changed, so Open stamps it rather than refusing every database that already
+// exists.
 const SchemaVersion = 1
 
 // Store is an open handle to the local history database.
@@ -68,7 +66,7 @@ type Store struct {
 }
 
 // checkSchema reads the recorded layout version, stamping SchemaVersion when
-// there is none (a new store, or one predating versioning — both are the current
+// there is none (a new store, or one predating versioning: both are the current
 // layout). A version this build does not know is refused, never guessed at.
 // Caller holds a write transaction.
 func checkSchema(mb *bbolt.Bucket) (int, error) {
@@ -81,7 +79,7 @@ func checkSchema(mb *bbolt.Bucket) (int, error) {
 		return 0, fmt.Errorf("%w: %q", ErrSchemaBad, raw)
 	}
 	if v > SchemaVersion {
-		return 0, fmt.Errorf("%w (schema %d; this build understands %d) — upgrade yore",
+		return 0, fmt.Errorf("%w (schema %d; this build understands %d). Upgrade yore",
 			ErrSchemaNewer, v, SchemaVersion)
 	}
 	// v < SchemaVersion is where a migration would run. There is none yet, and

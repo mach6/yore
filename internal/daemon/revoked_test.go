@@ -37,7 +37,7 @@ func seedCache(t *testing.T, dir string) {
 
 // TestRevokedPurgesCiphertextNow is the security guarantee: the moment the
 // server says this device is revoked, the group's ciphertext leaves the disk.
-// The already-decrypted history in RAM is deliberately left alone — the user is
+// The already-decrypted history in RAM is deliberately left alone: the user is
 // looking at it, and it is gone at the next start either way.
 func TestRevokedPurgesCiphertextNow(t *testing.T) {
 	dir := t.TempDir()
@@ -72,7 +72,7 @@ func TestRevokedPurgesCiphertextNow(t *testing.T) {
 // TestRevokedRecordPurgesOnStart is the backstop for a revocation that could not
 // finish: the process died between recording and deleting, or the cache came back
 // from a backup. A start reads the record and deletes the cache without needing
-// the server — which matters most on a machine that comes back up offline.
+// the server: which matters most on a machine that comes back up offline.
 func TestRevokedRecordPurgesOnStart(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, config.EnsureDir(dir))
@@ -93,7 +93,7 @@ func TestRevokedRecordPurgesOnStart(t *testing.T) {
 		"a revoked start must still be allowed one attempt, or a re-enrolled device could never come back")
 
 	// The cache file is reopened (empty) so a device that turns out to be
-	// re-enrolled has somewhere to cache its re-pull — but the ciphertext the
+	// re-enrolled has somewhere to cache its re-pull, but the ciphertext the
 	// previous run left behind is gone.
 	require.NotNil(t, rc.rs)
 	hosts, err := rc.rs.Hosts()
@@ -266,7 +266,7 @@ func TestRevokedClearsWhenServerServesAgain(t *testing.T) {
 }
 
 // TestRevokedMetaRoundTrip pins where the revocation lives: data.db's meta
-// bucket, which the daemon holds under its write lock — not a loose file in the
+// bucket, which the daemon holds under its write lock; not a loose file in the
 // state directory that could simply be deleted.
 func TestRevokedMetaRoundTrip(t *testing.T) {
 	dir := t.TempDir()

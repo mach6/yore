@@ -1,4 +1,4 @@
-# yore — fish shell integration (takeover mode).
+# yore; fish shell integration (takeover mode).
 # Emitted by `yore init fish`; load with:  yore init fish | source
 # Sourcing repeatedly is safe and produces no output during normal operation.
 
@@ -26,7 +26,7 @@ end
 
 # postexec runs after the command finishes. $status is captured first, before
 # anything else in this function can disturb it. Duration comes straight from
-# fish's own $CMD_DURATION (already integer milliseconds) — unlike zsh/bash,
+# fish's own $CMD_DURATION (already integer milliseconds); unlike zsh/bash,
 # there is no start timestamp to capture in preexec and no math to do here.
 function _yore_postexec --on-event fish_postexec
 	set -l exit $status
@@ -47,11 +47,11 @@ end
 
 # --- History takeover: yore is the single source of truth ---------------------
 # fish_private_mode is fish's own switch for "don't touch the history file"
-# (see fish's interactive-docs "Private mode") — setting it here, after the
+# (see fish's interactive-docs "Private mode"); setting it here, after the
 # shell has already started, still works because fish checks it on every
 # history write, not just at launch, so takeover needs no fish_history=''
 # trick and no re-exec. Fish also has no `!N`/`!!` expansion to keep working,
-# so — unlike zsh/bash — there is no in-memory list to seed from yore and no
+# so; unlike zsh/bash: there is no in-memory list to seed from yore and no
 # addhistory gate to install: native Up-arrow and history search are simply
 # replaced by yore's widget below.
 set -g fish_private_mode 1
@@ -59,7 +59,7 @@ set -g fish_private_mode 1
 # Whether accepting a Ctrl-R result should run it immediately (Atuin parity).
 # Default: put the picked command on the prompt for review; opt in with
 # `yore set-config enter_executes true` to have Enter run it. Asked of yore at
-# call time — NOT cached at source time — so the setting takes effect without
+# call time: NOT cached at source time, so the setting takes effect without
 # re-sourcing. Falls back to the default (review) if yore is unavailable, which
 # is the safe direction: nothing runs that the user did not look at.
 function _yore_enter_executes
@@ -89,7 +89,7 @@ function _yore_search_widget
 end
 
 # Raw escape sequences (not fish 4's named keys, not fish 3's `bind -k up`) so
-# one binding works unchanged across fish versions — the same reasoning that
+# one binding works unchanged across fish versions: the same reasoning that
 # has zsh/bash bind literal sequences instead of symbolic key names.
 bind \cr _yore_search_widget
 # Takeover: Up arrow opens yore search (normal + application cursor keys).
@@ -98,12 +98,12 @@ bind \eOA _yore_search_widget
 
 # Convenience aliases (Options.Aliases). `hb` prints the picked command to
 # stdout (fish, like bash, can't refill the prompt the way zsh's print -z
-# does — `commandline` only works from an active key binding, not from a
+# does; `commandline` only works from an active key binding, not from a
 # command that has already run). `hs` searches (the `history | grep` pattern),
 # with scoped siblings hsa (all hosts), hss (this session), hsc (this cwd),
-# and hsw (this git repo). yore does NOT touch `h` — keep your own. fish has
+# and hsw (this git repo). yore does NOT touch `h`; keep your own. fish has
 # no separate alias namespace to collide with (its own `alias` is sugar for a
-# function), so — unlike zsh — no escaping dance is needed; erasing any
+# function), so; unlike zsh: no escaping dance is needed; erasing any
 # pre-existing function of the same name is enough.
 functions -e hb hs hsa hss hsc hsw 2>/dev/null
 function hb  # Enter prints the pick to stdout; y copies to the clipboard

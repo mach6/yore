@@ -25,8 +25,8 @@
 // blob produced under one construction can never be opened under another.
 //
 // Key material is zeroed after use on a best-effort basis. Go's garbage
-// collector may copy or retain values, so these wipes reduce — but cannot
-// eliminate — the window in which a key sits in memory.
+// collector may copy or retain values, so these wipes reduce, but cannot
+// eliminate, the window in which a key sits in memory.
 package cryptobox
 
 import (

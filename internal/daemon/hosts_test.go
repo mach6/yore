@@ -72,7 +72,7 @@ func TestMergeHostCounts(t *testing.T) {
 }
 
 func TestRemoteCacheHostCounts(t *testing.T) {
-	// Buildable and callable without a syncer — enabled() is false here.
+	// Buildable and callable without a syncer; enabled() is false here.
 	rc := &remoteCache{records: []rec.Record{
 		{ID: "1", Hostname: "beta", HostID: "B", Cmd: "ls"},
 		{ID: "2", Hostname: "beta", HostID: "B", Cmd: "pwd"},

@@ -1,13 +1,12 @@
 // Package reqsign signs and verifies yore's mutating sync requests with a
 // device's Ed25519 key, so that authorization no longer rests on the bearer
 // token alone. A TLS-inspecting proxy (or anyone who captures the token) can
-// see the header but cannot forge a signature — the device private key is never
-// on the wire — so it can neither push garbage records nor revoke a device. It
+// see the header but cannot forge a signature (the device private key is never
+// on the wire) so it can neither push garbage records nor revoke a device. It
 // can at most replay a verbatim captured request; the server's nonce cache plus
-// the timestamp window (Skew) block that too.
-//
-// This package is the SINGLE source of truth for the canonical byte string, so
-// the client (internal/syncer) and server (internal/server) can never disagree.
+// the timestamp window (Skew) block that too. This package is the SINGLE source
+// of truth for the canonical byte string, so the client (internal/syncer) and
+// server (internal/server) can never disagree.
 package reqsign
 
 import (
@@ -34,7 +33,7 @@ const (
 const Skew = 5 * time.Minute
 
 // Canonical is the exact byte string that gets signed. `target` is the request
-// path plus raw query (i.e. net/http's Request.URL.RequestURI() — scheme and
+// path plus raw query (i.e. net/http's Request.URL.RequestURI(); scheme and
 // host excluded), which is identical on both ends of a normal reverse proxy.
 func Canonical(method, target, timestamp, nonce string, body []byte) []byte {
 	sum := sha256.Sum256(body)
@@ -74,7 +73,7 @@ var (
 
 // Verify checks a request's signature headers against pub (the signing device's
 // Ed25519 public key) and the timestamp window. It does NOT check nonce replay:
-// the caller owns the nonce cache and must reject a repeated (device, nonce) —
+// the caller owns the nonce cache and must reject a repeated (device, nonce);
 // use Device and Nonce to key it. On success the request is authentic and
 // within the window; the caller should then record the nonce.
 func Verify(h Headers, method, target string, body, pub []byte, now time.Time) error {

@@ -17,14 +17,14 @@ import (
 const agentDevin = "devin"
 
 // devinExecTool is Devin's shell tool name (its `exec` tool), the matcher yore's
-// capture hook binds to — Devin's analogue of Claude Code's "Bash".
+// capture hook binds to; Devin's analogue of Claude Code's "Bash".
 const devinExecTool = "exec"
 
 // Devin CLI hook payloads share Claude Code's shape (session_id, tool_name,
 // tool_input.command, tool_response, and UserPromptSubmit's prompt), so the same
 // claudeHookInput struct decodes them. Two differences are honored below: the
 // shell tool is `exec` (not Bash), and tool_response reports `success` (a bool)
-// rather than a numeric exit_code — there is no separate failure event, so
+// rather than a numeric exit_code; there is no separate failure event, so
 // PostToolUse fires on success AND failure and the outcome comes from `success`.
 
 // devinSession namespaces a Devin session id so it can't collide with a shell or
@@ -160,7 +160,7 @@ func cmdDevinPre(bin string) string    { return bin + " hook devin-pre" }
 func cmdDevinPost(bin string) string   { return bin + " hook devin" }
 func cmdDevinPrompt(bin string) string { return bin + " hook devin-prompt" }
 
-// devinConfigPath resolves Devin's unified config file — the one that holds both
+// devinConfigPath resolves Devin's unified config file: the one that holds both
 // hooks and mcpServers. The project file (.devin/config.json) with --project,
 // else the user/global file at $XDG_CONFIG_HOME/devin/config.json (defaulting to
 // ~/.config/devin/config.json). This is the same file that carries Devin's own
@@ -186,7 +186,7 @@ func devinConfigPath(project bool) (string, error) {
 // PostToolUse(exec) records the command + outcome, UserPromptSubmit records the
 // prompt each served, and mcpServers.yore registers the query-back server. The
 // hook events nest under the config's "hooks" key (mergeHookInto's contract) and
-// the server under "mcpServers" — exactly Devin's documented schema. Idempotent;
+// the server under "mcpServers"; exactly Devin's documented schema. Idempotent;
 // returns whether anything changed.
 func mergeDevinConfig(cfg map[string]any, bin string) bool {
 	pre := mergeHookInto(cfg, "PreToolUse", devinExecTool, cmdDevinPre(bin))
@@ -197,7 +197,7 @@ func mergeDevinConfig(cfg map[string]any, bin string) bool {
 }
 
 // runInitDevin installs (or, with printOnly, just prints) yore's Devin CLI
-// capture hooks and MCP server in Devin's config.json — the global user file by
+// capture hooks and MCP server in Devin's config.json: the global user file by
 // default, or ./.devin/config.json with project. Any existing config (including
 // Devin's auth) is preserved.
 func runInitDevin(bin string, project, printOnly bool) int {
@@ -222,7 +222,7 @@ func runInitDevin(bin string, project, printOnly bool) int {
 	cfg := map[string]any{}
 	if data, rerr := os.ReadFile(path); rerr == nil {
 		if json.Unmarshal(data, &cfg) != nil {
-			u.fail("existing " + path + " is not valid JSON — fix or move it first")
+			u.fail("existing " + path + " is not valid JSON: fix or move it first")
 			return 1
 		}
 	} else if !os.IsNotExist(rerr) {
@@ -245,7 +245,7 @@ func runInitDevin(bin string, project, printOnly bool) int {
 		u.fail(err.Error())
 		return 1
 	}
-	// 0o600 on create; an existing file keeps its own mode — this file can hold
+	// 0o600 on create; an existing file keeps its own mode: this file can hold
 	// Devin's auth, so never loosen it.
 	if err := os.WriteFile(path, append(out, '\n'), 0o600); err != nil {
 		u.fail(err.Error())

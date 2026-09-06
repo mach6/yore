@@ -48,7 +48,7 @@ const (
 	RemoteSyncing     = "syncing"     // fetch in progress
 	RemoteOK          = "ok"          // cache warm
 	// RemoteRevoked: the server refused this device because its membership was
-	// revoked. Terminal until the device is enrolled again — unlike
+	// revoked. Terminal until the device is enrolled again; unlike
 	// RemoteUnavailable, retrying cannot fix it, so nothing should keep polling.
 	RemoteRevoked = "revoked"
 )
@@ -65,7 +65,7 @@ type Request struct {
 
 // TagsReq parameterizes OpTags. Scope decides which commands the counts are
 // taken over: ScopeLocal (the default) this host, ScopeAll every host in the
-// RAM remote cache. Tags themselves are group-wide either way — the scope is
+// RAM remote cache. Tags themselves are group-wide either way: the scope is
 // about how much history is being counted, not which labels exist.
 type TagsReq struct {
 	Scope string `json:"scope,omitempty"`
@@ -109,8 +109,8 @@ const (
 )
 
 // LimitAll asks for every matching row rather than a window of them. It is for
-// callers that browse the archive itself — a history explorer that stops short
-// of your history is broken — as opposed to callers that want the top N.
+// callers that browse the archive itself (a history explorer that stops short
+// of your history is broken) as opposed to callers that want the top N.
 const LimitAll = -1
 
 type QueryResp struct {
@@ -124,7 +124,7 @@ type QueryResp struct {
 	Prompts []rec.Record `json:"prompts,omitempty"`
 	// HiddenAgents is how many rows matched everything else and were dropped by
 	// HumanOnly. A UI that hides a whole category of history has to be able to
-	// say so — above all when the answer is otherwise "no matches" and the
+	// say so; above all when the answer is otherwise "no matches" and the
 	// command the user is looking for is sitting behind the filter.
 	HiddenAgents int        `json:"hidden_agents,omitempty"`
 	Remote       RemoteInfo `json:"remote"`
@@ -189,7 +189,7 @@ const (
 )
 
 // EnrollToken is one enrollment token as listed in the devices view. ID is the
-// hex of its hash, not the token — the server keeps no plaintext, so a token
+// hex of its hash, not the token: the server keeps no plaintext, so a token
 // can never be shown again after the moment it was minted.
 type EnrollToken struct {
 	ID        string `json:"id"`

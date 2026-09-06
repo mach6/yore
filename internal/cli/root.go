@@ -108,16 +108,14 @@ func newRootCmd() *cobra.Command {
 }
 
 // strictSubcommands makes every command group reject an unknown subcommand the
-// way the root does.
-//
-// Cobra's default argument check (legacyArgs) only looks for unknown
-// subcommands on the root, so every group below it silently swallowed the
-// argument instead: `yore tag refactor` fell through to the help text and
-// exited 0, and `yore daemon bogus` ignored the word and started the daemon.
-// One rule for the whole tree is the only version of this a user can predict.
-//
-// Groups that declare their own Args are left alone — they have already said
-// what they accept — as are commands that take positional arguments.
+// way the root does. Cobra's default argument check (legacyArgs) only looks
+// for unknown subcommands on the root, so every group below it silently
+// swallowed the argument instead: `yore tag refactor` fell through to the help
+// text and exited 0, and `yore daemon bogus` ignored the word and started the
+// daemon. One rule for the whole tree is the only version of this a user can
+// predict. Groups that declare their own Args are left alone (they have
+// already said what they accept) as are commands that take positional
+// arguments.
 func strictSubcommands(c *cobra.Command) {
 	for _, sub := range c.Commands() {
 		strictSubcommands(sub)
@@ -134,7 +132,7 @@ func strictSubcommands(c *cobra.Command) {
 	}
 	if !c.Runnable() {
 		// Cobra bails out to the help text as soon as it sees a group with
-		// nothing to run — before it ever validates the arguments. A bare group
+		// nothing to run, before it ever validates the arguments. A bare group
 		// like `yore tag` still has to print its help, so it gets a Run that does
 		// exactly that, and the check above finally gets to see the argument.
 		c.RunE = func(cmd *cobra.Command, _ []string) error { return cmd.Help() }
@@ -375,7 +373,7 @@ func newInitCmd() *cobra.Command {
 			"takeover). Modes: takeover (single source of truth), coexist, capture.\n\n" +
 			"claude-code installs Claude Code hooks that record every Bash command\n" +
 			"the agent runs (tagged claude-code, with exit status, traced to its\n" +
-			"prompt) — an agent's non-interactive shell never loads the rc hooks —\n" +
+			"prompt), because an agent's non-interactive shell never loads the rc hooks.\n" +
 			"and registers yore's MCP server so the agent can query history back:\n" +
 			"  yore init claude-code             # ~/.claude/settings.json + ~/.claude.json\n" +
 			"  yore init claude-code --project   # ./.claude/settings.json + ./.mcp.json\n" +
@@ -431,7 +429,7 @@ func newTagCmd() *cobra.Command {
 		Short: "Manage freeform tags on commands and sessions",
 		Long: "tag applies freeform labels to commands and sessions; a record can carry\n" +
 			"several. With no --command or --session, `tag add` labels the shell you\n" +
-			"are in — which covers everything it has run and everything it runs next.\n\n" +
+			"are in, which covers everything it has run and everything it runs next.\n\n" +
 			"Filter with `yore search --tag <name>`, or t in the browser. Tags sync\n" +
 			"end-to-end like everything else.\n\n" +
 			"Tags are not executors: which agent ran a command is recorded separately\n" +
@@ -592,7 +590,7 @@ func newSetupCmd() *cobra.Command {
 			"machine uses the server's own token. Nothing is saved if enrollment fails.\n\n" +
 			"--pin captures and pins the server's TLS certificate (do it on a trusted\n" +
 			"network): thereafter the client refuses any other cert, defeating a\n" +
-			"TLS-inspecting proxy — but it also won't sync through one. --clear-pin removes\n" +
+			"TLS-inspecting proxy, but it also won't sync through one. --clear-pin removes\n" +
 			"a previously pinned certificate.",
 		RunE: func(*cobra.Command, []string) error {
 			return code(runSetup(server, token, name, integration, pin, clearPin))
@@ -608,7 +606,7 @@ func newSetupCmd() *cobra.Command {
 	return cmd
 }
 
-// newDevicesCmd opens the browser on its devices pane — the one place devices
+// newDevicesCmd opens the browser on its devices pane: the one place devices
 // are managed. It used to also print the list and carry `approve`/`revoke`
 // subcommands, which was a second implementation of the same three actions,
 // with its own confirmation rules and its own idea of what a device looks like.
@@ -669,7 +667,7 @@ func newServerCmd() *cobra.Command {
 			"whose token comes from --token, $YORE_TOKEN, or $YORE_TOKEN_FILE and whose db\n" +
 			"is --db, or a set of NAMED tenants from $YORE_TOKENS_FILE (a JSON object\n" +
 			"{\"name\":\"token\", …}), each with its own db under <dir(--db)>/tenants/.\n" +
-			"The two are mutually exclusive — set one or the other, never both.\n\n" +
+			"The two are mutually exclusive: set one or the other, never both.\n\n" +
 			"It shuts down gracefully on SIGINT/SIGTERM; `yore server stop` is a\n" +
 			"convenience for a local instance.",
 		RunE: func(*cobra.Command, []string) error {

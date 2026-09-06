@@ -67,7 +67,7 @@ type agentsData struct {
 }
 
 // computeAgents groups tagged (agent) commands by executor over the last
-// periodDays days (0 = all). Untagged commands the user typed are excluded —
+// periodDays days (0 = all). Untagged commands the user typed are excluded:
 // this view is specifically "what agents ran".
 func computeAgents(rows []rec.Record, now int64, periodDays int) *agentsData {
 	cutoff := periodCutoff(now, periodDays)
@@ -115,7 +115,7 @@ func computeAgents(rows []rec.Record, now int64, periodDays int) *agentsData {
 }
 
 // agentHostsIn is the explorer's host cycle: every hostname with agent activity
-// in the period — a tagged command or a prompt record — with its agent-command
+// in the period (a tagged command or a prompt record) with its agent-command
 // count, in name order, because the ring must not reshuffle under repeated
 // presses of the key that walks it. The counts ignore the explorer's filters:
 // the block is the map of where H can go, not a view of where it is.
@@ -207,7 +207,7 @@ func (m Model) agentsTitle(w int) string {
 	th := m.th
 	if m.afiltering {
 		// While the box has focus it takes the header line, exactly as the browse
-		// view's search does — the header is where this UI puts a query.
+		// view's search does: the header is where this UI puts a query.
 		return m.titleWithTabs(
 			th.Dim.Render("filter "+filterNoun(m.afilterPane)+" ")+
 				th.Prompt.Render("❯ ")+m.afilter.View(), w)
@@ -239,9 +239,9 @@ func (m Model) agentsTitle(w int) string {
 // --- the five-pane grid --------------------------------------------------
 
 // renderAgentsView draws the explorer. Zoomed, the focused pane alone fills the
-// frame — unless zoomDetail is keeping DETAILS beside it, in which case the
-// two render side by side; otherwise the five panes tile the geometry
-// applyLayout resolved, with the focused one carrying the accent border.
+// frame, unless zoomDetail is keeping DETAILS beside it, in which case the two
+// render side by side; otherwise the five panes tile the geometry applyLayout
+// resolved, with the focused one carrying the accent border.
 func (m Model) renderAgentsView(w, h int) string {
 	if m.zoom {
 		if m.zoomDetailActive() {
@@ -310,7 +310,7 @@ func (m Model) agentPaneHeading(p agentPane) (name, suffix string) {
 	default:
 		// The title says what the pane is describing, since the pane can outlive
 		// the focus that chose it, and "↓ more" when its body runs past the
-		// bottom — the pane has no scrollbar, and a record silently cut off at
+		// bottom: the pane has no scrollbar, and a record silently cut off at
 		// the last visible row reads as a record that ends there.
 		suffix := "prompt"
 		if m.infoCmd {
@@ -388,7 +388,7 @@ func (m Model) agentListInner(w, h int) string {
 
 // agentHostsInner draws the host pane: an "all hosts" row followed by one row
 // per host with its agent-command count. It is the ring the H key walks, made
-// visible and walkable by cursor — picking a host filters the other panes the
+// visible and walkable by cursor; picking a host filters the other panes the
 // way picking an executor does. The counts ignore the explorer's filters: the
 // pane is the map of where the filter can go, not a view of where it is.
 func (m Model) agentHostsInner(w, h int) string {
@@ -405,8 +405,8 @@ func (m Model) agentHostsInner(w, h int) string {
 	return padLines(lines, w, h)
 }
 
-// agentHostLine formats one host row in agentLine's "● name    count" shape, so
-// the two left-column lists read the same way — except the hostname keeps its
+// agentHostLine formats one host row in agentLine's "● name count" shape, so
+// the two left-column lists read the same way; except the hostname keeps its
 // identity color, the one it carries everywhere else in the UI.
 func (m Model) agentHostLine(i int, sel bool, w int) string {
 	th := m.th
@@ -471,7 +471,7 @@ func (m Model) agentLine(i int, sel bool, w int) string {
 }
 
 // agentSummary is the compact stat block under the sidebar list for the executor
-// on row i — success rate, failures, average duration, last seen. The "All
+// on row i; success rate, failures, average duration, last seen. The "All
 // agents" row summarizes every executor together.
 func (m Model) agentSummary(i, w int) []string {
 	th := m.th
@@ -529,7 +529,7 @@ const infoLabelW = 9
 // cap lifts and scrolling reaches the rest.
 const infoBodyCap = 8
 
-// infoCap is the wrapped-body cap for the pane's current state — 0 (uncapped)
+// infoCap is the wrapped-body cap for the pane's current state; 0 (uncapped)
 // once it has focus, where an ellipsis would hide the very text the user tabbed
 // over to read.
 func (m Model) infoCap() int {
@@ -540,13 +540,12 @@ func (m Model) infoCap() int {
 }
 
 // agentInfoLines is the details pane's body: the selected command's record when
-// that is what the pane is describing, otherwise the selected prompt's.
-//
-// The subject is m.infoCmd, set when focus lands on a list pane and left alone
-// when focus lands on DETAILS itself — so tabbing onto the pane to read or zoom
-// it does not change what it is showing. Reading the focused pane instead (as
-// this did) made the one route to a command's full record — focus it, then z —
-// swap in the prompt's on the way.
+// that is what the pane is describing, otherwise the selected prompt's. The
+// subject is m.infoCmd, set when focus lands on a list pane and left alone when
+// focus lands on DETAILS itself, so tabbing onto the pane to read or zoom it
+// does not change what it is showing. Reading the focused pane instead (as this
+// did) made the one route to a command's full record (focus it, then z) swap in
+// the prompt's on the way.
 func (m Model) agentInfoLines(w int) []string {
 	p, ok := m.drilledPrompt()
 	if !ok {
@@ -634,7 +633,7 @@ func (m Model) cmdInfoLines(r rec.Record, w, bodyCap int) []string {
 	}
 	lines = append(lines, strings.Repeat(" ", w))
 
-	dur := "—"
+	dur := theme.Unknown
 	if r.DurMs != nil {
 		dur = theme.Duration(*r.DurMs)
 	}
@@ -674,7 +673,7 @@ func plural(n int, unit string) string {
 
 func dashIfEmpty(s string) string {
 	if s == "" {
-		return "—"
+		return theme.Unknown
 	}
 	return s
 }
@@ -689,7 +688,7 @@ func wrapPlain(s string, w, maxLines int) []string {
 	}
 	s = oneLine(s)
 	if s == "" {
-		return []string{"—"}
+		return []string{theme.Unknown}
 	}
 	var out []string
 	for s != "" && (maxLines <= 0 || len(out) < maxLines) {

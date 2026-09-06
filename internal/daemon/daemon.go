@@ -1,14 +1,13 @@
 // Package daemon is yore's long-lived background process. It is the ONLY
 // process that owns the bbolt store; it keeps the live history in RAM and
-// serves search queries over a unix socket speaking the internal/proto
-// NDJSON protocol.
-//
-// Concurrency model: one goroutine per connection serves that connection's
-// requests in order (so a connection's match.Filter is used single-threaded);
-// a single ingest goroutine debounces spool drains; the main goroutine owns
-// the idle timer and drives graceful shutdown. The RAM corpus is append-only
-// and guarded by an RWMutex — see runQuery for why readers may snapshot the
-// slice header under RLock and then scan without the lock.
+// serves search queries over a unix socket speaking the internal/proto NDJSON
+// protocol. Concurrency model: one goroutine per connection serves that
+// connection's requests in order (so a connection's match.Filter is used
+// single-threaded); a single ingest goroutine debounces spool drains; the
+// main goroutine owns the idle timer and drives graceful shutdown. The RAM
+// corpus is append-only and guarded by an RWMutex; see runQuery for why
+// readers may snapshot the slice header under RLock and then scan without the
+// lock.
 package daemon
 
 import (
@@ -106,7 +105,7 @@ type server struct {
 }
 
 // Run opens the store and serves until idle, a signal, or OpShutdown. If
-// another daemon already holds the store it returns nil silently — this is the
+// another daemon already holds the store it returns nil silently: this is the
 // spawn-race loser path (see cli/record.go spawnDaemon).
 func Run(dir string, opts Options) error {
 	st, err := store.Open(dir)
@@ -157,7 +156,7 @@ func Run(dir string, opts Options) error {
 	}
 
 	// The store lock proves no live daemon owns the socket, so any file at the
-	// socket path is stale — remove it before listening.
+	// socket path is stale; remove it before listening.
 	_ = os.Remove(config.SocketPath(dir))
 	ln, err := net.Listen("unix", config.SocketPath(dir))
 	if err != nil {
@@ -168,7 +167,7 @@ func Run(dir string, opts Options) error {
 		// Linux caps unix socket paths at ~108 bytes; a deeply nested
 		// YORE_DIR is the usual culprit and deserves a plain diagnosis.
 		if len(config.SocketPath(dir)) > 100 {
-			return fmt.Errorf("%w (socket path is %d bytes; unix sockets max out near 108 — use a shorter YORE_DIR)",
+			return fmt.Errorf("%w (socket path is %d bytes; unix sockets max out near 108, so use a shorter YORE_DIR)",
 				err, len(config.SocketPath(dir)))
 		}
 		return err
@@ -452,7 +451,7 @@ func (s *server) dispatch(req *proto.Request, f *match.Filter) (proto.Response, 
 
 	case proto.OpSync:
 		// Explicit sync is synchronous: run a full cycle and respond after it
-		// finishes, so `yore sync` reflects the real outcome — including the
+		// finishes, so `yore sync` reflects the real outcome; including the
 		// failures. Reporting OK for a cycle that could not reach the server (or
 		// was refused outright) is how a revoked device looked like it was
 		// syncing.
@@ -522,7 +521,7 @@ func (s *server) doIngest() {
 	s.refreshCorpus()
 	s.logf("ingested %d records", n)
 	// Experimental push-on-record: nudge the sync loop that new local records
-	// landed. Harmless when disabled — the loop only arms its debounce timer when
+	// landed. Harmless when disabled: the loop only arms its debounce timer when
 	// push_debounce is set (otherwise it just drains this). Only nudge while the
 	// server is reachable: when it is offline the records stay spooled in the
 	// local store and go out in a batch once the periodic sync reconnects, rather
@@ -626,9 +625,9 @@ func (s *server) snapshotLoop() {
 // socketWatchLoop stops the daemon if the socket file it bound is unlinked or
 // replaced. A unix listener survives its path being removed: the daemon would
 // keep accepting on an unreachable socket AND keep the store lock, so every
-// client gets ENOENT while every respawn loses the lock race and exits quietly
-// — a wedge only a manual kill clears. Exiting instead releases the lock, and
-// the next poke spawns a healthy daemon.
+// client gets ENOENT while every respawn loses the lock race and exits
+// quietly; a wedge only a manual kill clears. Exiting instead releases the
+// lock, and the next poke spawns a healthy daemon.
 func (s *server) socketWatchLoop() {
 	defer s.wg.Done()
 	period := s.sockCheck
@@ -667,7 +666,7 @@ func (s *server) socketLive() bool {
 
 // hosts aggregates live-record counts per host from BOTH the local RAM corpus
 // and the RAM remote cache. Local host first (consumers assume index 0 is the
-// local host); every other host — remote included — follows by descending
+// local host); every other host (remote included) follows by descending
 // count. Like runQuery's deep path, it warms a cold remote cache in the
 // background so opening browse pulls other hosts' history.
 func (s *server) hosts() proto.HostsInfo {
@@ -707,8 +706,8 @@ func (s *server) hosts() proto.HostsInfo {
 }
 
 // mergeHostCounts orders the browse HOSTS list: the local host leads (proto and
-// the TUI assume index 0 is local), then every other host — local leftovers and
-// remote alike — by descending count. A remote entry that duplicates the local
+// the TUI assume index 0 is local), then every other host (local leftovers and
+// remote alike) by descending count. A remote entry that duplicates the local
 // hostname is dropped (we never pull our own stream, but don't double-count if
 // it ever happens). Pure: no locks, no server state, so it is unit-testable.
 func mergeHostCounts(local string, localCounts, remoteCounts []proto.HostCount) []proto.HostCount {

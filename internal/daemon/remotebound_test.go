@@ -40,7 +40,7 @@ func newBoundedCache(keep int) *remoteCache {
 
 // cached returns the cached commands whose text contains sub. It reads the
 // corpus directly rather than going through search(), which requires an
-// attached syncer — what is under test here is what folding puts in the corpus.
+// attached syncer; what is under test here is what folding puts in the corpus.
 func cached(rc *remoteCache, sub string) []rec.Record {
 	rc.mu.RLock()
 	defer rc.mu.RUnlock()

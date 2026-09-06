@@ -1,4 +1,4 @@
-# yore — build/test entry points. Requires Go 1.26+.
+# yore; build/test entry points. Requires Go 1.26+.
 
 GO         ?= go
 BIN        := bin/yore
@@ -44,7 +44,7 @@ coverage:
 	$(GO) tool cover -html=$(COVERFILE) -o coverage.html
 	@echo "Coverage report: coverage.html"
 
-# Enforces the coverage floor against the profile `test` already produced — it does
+# Enforces the coverage floor against the profile `test` already produced: it does
 # NOT re-run the suite. In CI, run after the `test` step (same workspace); locally,
 # run `make test` first.
 coverage-check:
@@ -59,7 +59,7 @@ clean:
 docker:
 	docker build -f docker/Dockerfile -t yore:latest .
 
-# MANUAL stress/soak harness — NOT part of CI (never runs in Drone). Rebuilds the
+# MANUAL stress/soak harness: NOT part of CI (never runs in Drone). Rebuilds the
 # current binary into a fresh 3-container sandbox, hammers it with N records per
 # host (normal + secrets + tags + drop-cases), syncs, then verifies correctness
 # and prints timings. Needs docker + docker compose. Tears the sandbox down at
@@ -71,12 +71,12 @@ docker:
 stress:
 	N=$(N) KEEP=$(KEEP) docker/sandbox/stress.sh
 
-# MANUAL fleet harness — the same idea at scale: TWENTY machines over eight Linux
+# MANUAL fleet harness: the same idea at scale: TWENTY machines over eight Linux
 # distributions, half zsh and half bash, split between TWO users (server tenants
 # with their own isolated groups). Enrolls all twenty, drives half a million
 # randomized commands through them, syncs, then measures throughput/latency/size
 # and verifies convergence, redaction, and cross-user isolation. Leaves the fleet
-# UP by default — the end state is the thing worth looking at.
+# UP by default: the end state is the thing worth looking at.
 #   make fleet                 # 500,000 records across 20 nodes
 #   make fleet TOTAL=20000     # quick run
 #   make fleet DOWN=1          # tear the fleet down when it finishes

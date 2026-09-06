@@ -1,7 +1,7 @@
 # Coverage floor, enforced repo-wide via mach6/go-covercheck (run by `make
 # coverage-check` after `make test`). Per-package/per-file thresholds are 0 so no
 # single package gates the build; the repo-wide `total` is the floor. yore is
-# CGO-free with no GPU/hardware-gated tests, so CI coverage tracks a local run —
+# CGO-free with no GPU/hardware-gated tests, so CI coverage tracks a local run;
 # the floor is set below the current total (~64% statements) with margin. Ratchet
 # `total` up over time.
 statementThreshold: 0

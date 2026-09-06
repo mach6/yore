@@ -11,11 +11,11 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /yore ./cmd/yore
 FROM alpine:3.20
 # socat + jq are the harness's tools: approving a device is a keypress in the
 # devices view, and the view is a client of the daemon's newline-delimited-JSON
-# unix socket — which a script can speak too (see stress.sh).
+# unix socket: which a script can speak too (see stress.sh).
 RUN apk add --no-cache zsh bash bash-completion fish ca-certificates socat jq
 COPY --from=build /yore /usr/local/bin/yore
 # Install yore's cobra completions for all three shells. fish discovers
-# completions by filename under its own completions dir — no framework to enable.
+# completions by filename under its own completions dir: no framework to enable.
 RUN mkdir -p /usr/share/bash-completion/completions /usr/local/share/zsh/site-functions \
              /root/.config/fish/completions \
  && yore completion bash > /usr/share/bash-completion/completions/yore \

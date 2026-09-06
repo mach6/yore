@@ -1,4 +1,4 @@
-# yore — zsh shell integration (capture mode).
+# yore; zsh shell integration (capture mode).
 # Emitted by `yore init zsh`; load with:  eval "$(yore init zsh)"
 # Sourcing repeatedly is safe and produces no output during normal operation.
 
@@ -28,7 +28,7 @@ _yore_preexec() {
 
 # precmd runs after the command finishes, before the next prompt is drawn.
 _yore_precmd() {
-	local exit=$?   # the user's exit status — must be captured first
+	local exit=$?   # the user's exit status; must be captured first
 	if [[ -n ${__yore_cmd-} ]]; then
 		integer dur
 		(( dur = (EPOCHREALTIME - __yore_start) * 1000 ))   # float secs -> int ms

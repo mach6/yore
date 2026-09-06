@@ -4,11 +4,11 @@
 
 `yore` records every command you run in zsh, bash, and fish, and makes that
 history searchable from any machine you use. Point it at a sync server you run
-yourself and your machines share one history — encrypted on your machine before
+yourself and your machines share one history, encrypted on your machine before
 it is uploaded, so the server only ever stores ciphertext.
 
-It also captures what your AI coding agents run — Claude Code, Cursor, OpenCode,
-Codex, the Devin CLI — alongside the prompt that caused it, and lets those
+It also captures what your AI coding agents run (Claude Code, Cursor, OpenCode,
+Codex, the Devin CLI) alongside the prompt that caused it, and lets those
 agents search your history back.
 
 It is one static binary with no runtime dependencies. The same binary is the
@@ -60,13 +60,13 @@ or `--mode capture` (record only).
 yore import auto
 ```
 
-This is safe to run more than once — re-importing the same file adds nothing.
+This is safe to run more than once; re-importing the same file adds nothing.
 
 One caveat on timestamps: zsh's extended history stores a time per command, but
 bash only does if `HISTTIMEFORMAT` was set in the shell that wrote the file. A
 default `~/.bash_history` has no times in it at all, so those commands import
-with an unknown time (shown as `—`). `yore import` tells you when this happens.
-The times are not recoverable afterwards — set `HISTTIMEFORMAT` to get them on
+with an unknown time (shown as `·`). `yore import` tells you when this happens.
+The times are not recoverable afterwards, so set `HISTTIMEFORMAT` to get them on
 future commands.
 
 ## Sync across machines
@@ -95,8 +95,8 @@ Every machine after the first needs a single-use invitation from one that is
 already in:
 
 ```bash
-yore devices token          # on a machine already enrolled — prints a token
-yore setup --token <token>  # on the new machine — registers it as pending
+yore devices token          # on a machine already enrolled: prints a token
+yore setup --token <token>  # on the new machine: registers it as pending
 yore devices                # back on the first machine: select it, press a,
                             # and check the verification code matches
 ```
@@ -117,7 +117,7 @@ Multi-tenant hosting, backups, and the full server configuration are in
 
 ## What you get
 
-**`Ctrl-R` search.** Type to filter. Press `Ctrl-R` again to cycle scope — this
+**`Ctrl-R` search.** Type to filter. Press `Ctrl-R` again to cycle scope: this
 machine, every machine, one machine, this session, this directory, this git
 repo. Frecency ranking and fuzzy matching are toggles. Enter puts the command on
 your prompt to review; set `enter_executes` if you would rather it just run.
@@ -125,11 +125,11 @@ your prompt to review; set `enter_executes` if you would rather it just run.
 **`hb`, the browser.** A full-screen view of your history with four screens:
 
 - the **command table**, with a host sidebar and a details pane;
-- **stats** (`s`) — totals, top commands and directories, an activity heatmap, a
+- **stats** (`s`): totals, top commands and directories, an activity heatmap, a
   daily trend, and an hour-of-day histogram;
-- the **agent explorer** (`a`) — every agent prompt and the exact commands it
+- the **agent explorer** (`a`): every agent prompt and the exact commands it
   triggered, filterable by agent and by machine;
-- **devices** (`D`) — enrolled machines and outstanding invitations.
+- **devices** (`D`): enrolled machines and outstanding invitations.
 
 Any pane zooms to full screen with `z` or resizes by dragging its border, and
 the sizes you choose are remembered. `c` shows, hides, and sorts columns in
@@ -138,16 +138,18 @@ today, 7, 30, or 90 days, or everything. `?` lists every key that works on the
 screen you are on.
 
 `Enter` recalls a command, `y` copies it, `space` checks rows and `ctrl+a`
-checks everything shown, so `d` deletes or `Ctrl+T` tags the whole selection at
-once. `yore stats` and `yore agents` open straight onto those screens.
+checks everything shown, so `d` deletes, `Ctrl+T` tags, or `Ctrl+X` untags the
+whole selection at once. A bulk untag only asks about the checked rows that
+actually carry the tag, so the count it reports is the number that changed.
+`yore stats` and `yore agents` open straight onto those screens.
 
 **Search from scripts.** `hs <query>` searches this machine; `hsa`, `hss`,
 `hsc`, `hsw` search all machines, this session, this directory, this repo.
 `yore search --headless` prints plain lines for pipes.
 
-**Secrets stay out of your history.** A default-on filter catches credentials —
-API keys, tokens, passwords on command lines, and the same things stated in an
-agent prompt — and masks just the credential, keeping the rest of the command:
+**Secrets stay out of your history.** A default-on filter catches credentials
+(API keys, tokens, passwords on command lines, and the same things stated in an
+agent prompt) and masks just the credential, keeping the rest of the command:
 
 ```
 export DB_PASSWORD=⟪redacted:generic-token-assign⟫
@@ -156,18 +158,20 @@ export DB_PASSWORD=⟪redacted:generic-token-assign⟫
 You keep the history; the secret is never written down or uploaded. The rules
 live in `~/.config/yore/redact.yml` and you can edit them.
 
-**Tags.** Label commands or whole sessions (`yore tag add refactor`) and filter
-by them (`yore search --tag refactor`, or `T` in the browser). Tagging a session
-covers everything that shell has already done and everything it does next.
-`auto_tags` labels by directory.
+**Tags.** Label commands or whole sessions (`yore tag add refactor`), take a
+label back off (`yore tag rm refactor`), and filter by them
+(`yore search --tag refactor`, or `T` in the browser). Tagging a session covers
+everything that shell has already done and everything it does next. `auto_tags`
+labels by directory, and `yore stats` grows a **By tag** column once anything is
+tagged.
 
 **AI agent capture.** `yore init claude-code` (or `cursor`, `opencode`, `codex`,
 `devin`) installs that agent's own hooks, so commands it runs in non-interactive
-shells are captured too — with the prompt that caused them, the exit status, and
+shells are captured too, with the prompt that caused them, the exit status, and
 how long they took. The same command registers a local, read-only MCP server so
 the agent can search your history across every machine you own: what you have
 run before, what failed, what a command does. It can also ask how risky a
-command is — yore rates commands `safe` through `critical` from a fixed set of
+command is: yore rates commands `safe` through `critical` from a fixed set of
 rules you can extend in `~/.config/yore/risk.toml`. That rating is advisory. It
 labels history; it never blocks anything.
 
@@ -186,7 +190,7 @@ under `~/.config/yore/`.
 ## Security, honestly
 
 yore encrypts your history on your machine before it leaves, using standard,
-well-regarded primitives, and the full design — every byte on the wire — is
+well-regarded primitives, and the full design, every byte on the wire, is
 written down in [`docs/protocol.md`](docs/protocol.md) so you can judge it for
 yourself.
 
@@ -218,7 +222,7 @@ on a single machine. The differences worth choosing on:
 
 | | **yore** | **Atuin** | **suvadu** |
 |---|---|---|---|
-| Sync across machines | Yes | Yes | No — local only |
+| Sync across machines | Yes | Yes | No, local only |
 | Key model | A key per device; no master key to copy | One key you copy to each machine | n/a |
 | Revoke one machine | Yes, without re-encrypting history | No | n/a |
 | Other machines' history on this disk | Ciphertext only | Full plaintext copy | n/a |
@@ -238,23 +242,24 @@ that.
 | Search and recall a command | `Ctrl-R` (or Up-arrow), type, `Enter` |
 | Re-run a command by number | `!N`, `!!`, `!$` |
 | Change search scope | `Ctrl-R` again inside the search |
-| Browse, get stats, watch agents, manage devices | `hb` — then `s`, `a`, `D` |
+| Browse, get stats, watch agents, manage devices | `hb`, then `s`, `a`, `D` |
 | See every key on the screen you're on | `?` in `hb`, `⌥/` in `Ctrl-R` |
-| Read your history without agent noise | nothing — agent commands are hidden by default (`A` shows them) |
+| Read your history without agent noise | nothing; agent commands are hidden by default (`A` shows them) |
 | Jump to stats or the agent explorer | `yore stats`, `yore agents` |
-| See an agent's prompt and what it ran | `yore agents` — `Tab` cycles panes |
+| See an agent's prompt and what it ran | `yore agents`; `Tab` cycles panes |
 | Filter one machine's agent work | `H` in `yore agents` |
-| Narrow to a time window | `1`–`5` — today, 7d, 30d, 90d, all |
+| Narrow to a time window | `1`–`5` for today, 7d, 30d, 90d, all |
 | Give one pane the whole screen | `z` |
 | Resize panes | drag the border with the mouse |
-| Delete or tag several commands | `space` to check rows (`ctrl+a` for all), then `d` or `Ctrl+T` |
+| Delete, tag, or untag several commands | `space` to check rows (`ctrl+a` for all), then `d`, `Ctrl+T`, or `Ctrl+X` |
 | Search from a script | `hs <query>`, or `yore search --headless <query>` |
 | See only what an agent ran | `yore search --executor claude-code` |
 | Tag and filter by tag | `yore tag add refactor`, `yore search --tag refactor` |
-| See what your tags cover | `yore tag list` (`--scope all` for every machine) |
+| Take a tag back off | `yore tag rm refactor --command <id>` (or `--session <id>`), or `Ctrl+X` in the browser |
+| See what your tags cover | `yore tag list` (`--scope all` for every machine), or the **By tag** column in `yore stats` |
 | Force a sync now | `yore sync`, or `S` in `hb` |
 | Add a machine | `n` in `yore devices`, then `yore setup --token …` there, then `a` to approve |
-| Approve or revoke a machine | `yore devices` — `a` or `x`, both ask first |
+| Approve or revoke a machine | `yore devices`; `a` or `x`, both ask first |
 | Get back in after losing every machine | `yore recover` |
 | Check your setup | `yore doctor`, `yore status` |
 | Stop the daemon or server | `yore stop`, `yore server stop` |
@@ -271,14 +276,14 @@ rm -rf ~/.config/yore
 ```
 
 `uninit` removes only yore's hooks and MCP entry from each agent's config and
-leaves everything else — including the agent's own credentials — untouched.
+leaves everything else, including the agent's own credentials, untouched.
 
 ## Docs
 
-- [`docs/architecture.md`](docs/architecture.md) — how it is built and why.
-- [`docs/protocol.md`](docs/protocol.md) — the sync API, the crypto scheme, and
+- [`docs/architecture.md`](docs/architecture.md): how it is built and why.
+- [`docs/protocol.md`](docs/protocol.md): the sync API, the crypto scheme, and
   the local daemon protocol, in exact detail.
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) — build, test, and the CI gates.
-- [`LICENSE`](LICENSE) — MIT.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md): build, test, and the CI gates.
+- [`LICENSE`](LICENSE): MIT.
 </content>
 </invoke>

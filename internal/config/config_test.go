@@ -37,7 +37,7 @@ func TestParseSize(t *testing.T) {
 }
 
 // TestDefaults pins the default-true booleans that Defaults() must seed (they
-// cannot come from the zero value) and confirms a zero Config leaves them false —
+// cannot come from the zero value) and confirms a zero Config leaves them false;
 // i.e. the defaults live in Defaults(), not in any accessor.
 func TestDefaults(t *testing.T) {
 	d := Defaults()
@@ -53,7 +53,7 @@ func TestDefaults(t *testing.T) {
 
 // TestLoadSeedsDefaultsAndOverrides is the crux of the design: Load seeds
 // Defaults() then unmarshals the file over it, so an absent key keeps its default
-// while an explicit value — including false — overrides. This is the round-trip
+// while an explicit value (including false) overrides. This is the round-trip
 // that a *bool "was it set?" scheme was standing in for.
 func TestLoadSeedsDefaultsAndOverrides(t *testing.T) {
 	// Missing file -> Defaults().
@@ -62,7 +62,7 @@ func TestLoadSeedsDefaultsAndOverrides(t *testing.T) {
 	assert.Equal(t, Defaults(), missing, "missing config yields Defaults()")
 
 	// A file that mentions only auto_deepen:false must keep the other defaults
-	// on and flip just that one — the classic case an omitempty *bool got wrong.
+	// on and flip just that one; the classic case an omitempty *bool got wrong.
 	dir := t.TempDir()
 	require.NoError(t, Save(dir, Config{AutoDeepen: false, LogSilent: true, ServerURL: "https://s"}))
 	got, err := Load(dir)

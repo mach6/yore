@@ -104,7 +104,7 @@ func TestHostCycleWalksHostsAndReturnsToAll(t *testing.T) {
 
 // TestHostFilterNarrowsTheWorkPanes: one host's work vanishes from the
 // executor sidebar, the prompt list, the command list, and the details pane
-// together — the panes must not disagree about what the view is showing.
+// together; the panes must not disagree about what the view is showing.
 func TestHostFilterNarrowsTheWorkPanes(t *testing.T) {
 	rows, prompts := hostFixture(30)
 	m := explorerHosts(t, rows, prompts)
@@ -132,7 +132,7 @@ func TestHostFilterComposesWithExecutorAndTextFilters(t *testing.T) {
 
 	m, _ = step(t, m, press("H"))
 	require.Equal(t, "boxA", m.agentHostFilter)
-	require.Equal(t, "claude-code", m.agentFilter, "the executor exists on boxA — kept")
+	require.Equal(t, "claude-code", m.agentFilter, "the executor exists on boxA; kept")
 
 	m, _ = step(t, m, press("/"))
 	m = typeIn(t, m, "auth")
@@ -151,13 +151,13 @@ func TestHostFilterSurvivesAPeriodChange(t *testing.T) {
 	rows, prompts := hostFixture(30)
 	m := explorerHosts(t, rows, prompts)
 	m, _ = step(t, m, press("H"))
-	m, _ = step(t, m, press("2")) // 7d — both hosts still inside it
+	m, _ = step(t, m, press("2")) // 7d: both hosts still inside it
 	require.Equal(t, "boxA", m.agentHostFilter)
 	require.Equal(t, 2, m.agents.total)
 }
 
 // TestHostFilterReleasesWhenPeriodDropsTheHost: a host with no agent activity
-// in the window releases the filter rather than pinning the view to nothing —
+// in the window releases the filter rather than pinning the view to nothing;
 // the same rule the executor filter follows.
 func TestHostFilterReleasesWhenPeriodDropsTheHost(t *testing.T) {
 	rows, prompts := hostFixture(40 * 24 * 60) // boxB worked 40 days ago
@@ -166,7 +166,7 @@ func TestHostFilterReleasesWhenPeriodDropsTheHost(t *testing.T) {
 	m, _ = step(t, m, press("H")) // boxB
 	require.Equal(t, "boxB", m.agentHostFilter)
 
-	m, _ = step(t, m, press("2")) // 7d — boxB has nothing inside it
+	m, _ = step(t, m, press("2")) // 7d; boxB has nothing inside it
 	require.Empty(t, m.agentHostFilter, "the filtered host left the window")
 	require.Equal(t, []cmdCount{{name: "boxA", n: 2}}, m.agentHosts)
 	require.Equal(t, 2, m.agents.total, "the view falls back to everything in the window")
@@ -191,7 +191,7 @@ func TestHostCycleReleasesExecutorAbsentOnHost(t *testing.T) {
 }
 
 // TestHostColumnOnlyWhenHostsCanDiffer: the prompt pane spends a column on the
-// host only when its rows can disagree about it — several machines in the sample
+// host only when its rows can disagree about it; several machines in the sample
 // and no host filter up. One machine, or one filtered to, and the column would
 // print the same name on every row.
 func TestHostColumnOnlyWhenHostsCanDiffer(t *testing.T) {
@@ -215,7 +215,7 @@ func TestHostColumnOnlyWhenHostsCanDiffer(t *testing.T) {
 	require.NotContains(t, promptHeaderLine(t, multi), "host",
 		"filtered to one host, the column has nothing left to distinguish")
 	require.Contains(t, strip(multi.View()), "boxA",
-		"which host it is stays on screen — the pane title and the HOSTS bullet carry it")
+		"which host it is stays on screen: the pane title and the HOSTS bullet carry it")
 
 	// All the way around the ring and the column comes back with the choice.
 	for range multi.hostRows() - 1 {
@@ -226,7 +226,7 @@ func TestHostColumnOnlyWhenHostsCanDiffer(t *testing.T) {
 }
 
 // TestAgentCycleWalksExecutorsAndReturnsToAll: A is H's mirror on the other
-// axis — one stop around the executor sidebar from anywhere in the explorer,
+// axis; one stop around the executor sidebar from anywhere in the explorer,
 // driving the same selection its cursor does.
 func TestAgentCycleWalksExecutorsAndReturnsToAll(t *testing.T) {
 	rows, prompts := hostFixture(30)
@@ -250,7 +250,7 @@ func TestAgentCycleWalksExecutorsAndReturnsToAll(t *testing.T) {
 
 // TestAgentCycleOnASingleAgentSample: with one executor the "all agents" row and
 // its one child describe the same work, so A says so rather than appearing to do
-// nothing — the same courtesy H pays on a one-host sample.
+// nothing; the same courtesy H pays on a one-host sample.
 func TestAgentCycleOnASingleAgentSample(t *testing.T) {
 	m := explorer(t)
 	m, _ = step(t, m, press("A"))
@@ -259,8 +259,8 @@ func TestAgentCycleOnASingleAgentSample(t *testing.T) {
 }
 
 // TestHostPaneShowsTheRing: the HOSTS pane is the visible state of the ring H
-// walks — every host with its command count, the bullet on the active stop —
-// and its rows never narrow, because it is the map of where the filter can go.
+// walks (every host with its command count, the bullet on the active stop) and
+// its rows never narrow, because it is the map of where the filter can go.
 func TestHostPaneShowsTheRing(t *testing.T) {
 	rows, prompts := hostFixture(30)
 	m := explorerHosts(t, rows, prompts)
@@ -279,9 +279,9 @@ func TestHostPaneShowsTheRing(t *testing.T) {
 	require.Regexp(t, `boxB\s+1`, out, "the pane keeps every host while one is filtered")
 }
 
-// TestHostPaneCursorSelects: the host pane is a list like the executor sidebar
-// — moving its cursor filters the other panes, and the H key and the cursor
-// drive the same selection.
+// TestHostPaneCursorSelects: the host pane is a list like the executor
+// sidebar; moving its cursor filters the other panes, and the H key and the
+// cursor drive the same selection.
 func TestHostPaneCursorSelects(t *testing.T) {
 	rows, prompts := hostFixture(30)
 	m := explorerHosts(t, rows, prompts)
@@ -306,7 +306,7 @@ func TestHostPaneCursorSelects(t *testing.T) {
 }
 
 // TestHostPaneSeamDrags: the seam above the HOSTS pane resizes it like every
-// other seam — the pane follows the pointer, the proportion survives a resize,
+// other seam; the pane follows the pointer, the proportion survives a resize,
 // and the grab only works in the left column, where the seam actually is.
 func TestHostPaneSeamDrags(t *testing.T) {
 	rows, prompts := hostFixture(30)
@@ -315,7 +315,7 @@ func TestHostPaneSeamDrags(t *testing.T) {
 	require.Positive(t, seam, "the explorer should have a hosts seam")
 	require.Equal(t, m.geo.p[apHosts].y, seam, "the seam sits on the host pane's top border")
 
-	// Grabbing the seam's row in the right column is not a grab — over there
+	// Grabbing the seam's row in the right column is not a grab, over there
 	// that row is the middle of the prompt pane.
 	m, _ = step(t, m, click(m.geo.vDiv+10, seam))
 	require.Equal(t, dragNone, m.drag, "the hosts seam must not extend into the right column")
@@ -344,7 +344,7 @@ func TestHostPaneSeamDrags(t *testing.T) {
 }
 
 // TestHostPanePresentOnSingleHostSamples: the pane count never depends on the
-// data — a one-host sample keeps the pane (like the browse sidebar), and H says
+// data; a one-host sample keeps the pane (like the browse sidebar), and H says
 // why it has nothing to do.
 func TestHostPanePresentOnSingleHostSamples(t *testing.T) {
 	single := explorer(t)
@@ -387,7 +387,7 @@ func TestPromptDetailsShowHost(t *testing.T) {
 }
 
 // TestPromptLayoutSheds: on a narrowing pane the optional columns go one at a
-// time — session, then host, then duration, then executor — so the prompt text
+// time (session, then host, then duration, then executor) so the prompt text
 // itself is the last thing squeezed.
 func TestPromptLayoutSheds(t *testing.T) {
 	rows, prompts := hostFixture(30)

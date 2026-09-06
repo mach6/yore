@@ -88,7 +88,7 @@ func TestResolveServerToken(t *testing.T) {
 }
 
 // TestRunServerTokenModes pins the either/or at the CLI boundary: neither a
-// token nor a tokens file fails, and both together fails — without ever
+// token nor a tokens file fails, and both together fails, without ever
 // reaching the point of opening a database.
 func TestRunServerTokenModes(t *testing.T) {
 	dir := t.TempDir()

@@ -1,4 +1,4 @@
-# yore fleet — a 22-container sandbox: one multi-tenant sync server and TWENTY
+# yore fleet: a 22-container sandbox: one multi-tenant sync server and TWENTY
 # client machines, spread over eight Linux distributions and split evenly
 # between zsh and bash.
 #
@@ -12,7 +12,7 @@
 # must converge on alice's history and must NEVER see bob's, even though every
 # node talks to the same server process over the same network.
 #
-# Everything is internal to the Docker network — nothing is published to the
+# Everything is internal to the Docker network: nothing is published to the
 # host, and the server never holds anything but ciphertext.
 #
 #   docker compose -f docker/sandbox/fleet.yml down -v      # ALWAYS reset first

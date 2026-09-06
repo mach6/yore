@@ -70,7 +70,7 @@ func handledKeys(t *testing.T) map[string]bool {
 			})
 		}
 	}
-	require.NotEmpty(t, keys, "found no key cases — the handler names must have drifted")
+	require.NotEmpty(t, keys, "found no key cases: the handler names must have drifted")
 	return keys
 }
 
@@ -108,7 +108,8 @@ func describedKeys(t *testing.T) map[string]bool {
 	rows = append(rows, confirmDeviceRows(false)...)
 	rows = append(rows, confirmDeviceRows(true)...)
 	rows = append(rows, searchingRows()...)
-	rows = append(rows, taggingRows()...)
+	rows = append(rows, taggingRows(false)...)
+	rows = append(rows, taggingRows(true)...)
 	rows = append(rows, filterEntryRows(axisTag)...)
 	rows = append(rows, filterEntryRows(axisExec)...)
 	rows = append(rows, base.helpOpenRows()...)
@@ -123,18 +124,18 @@ func describedKeys(t *testing.T) map[string]bool {
 }
 
 // TestEveryHandledKeyIsDescribed is the contract behind "?": a key that does
-// something is a key the user can find. It runs both ways — a binding that is
+// something is a key the user can find. It runs both ways: a binding that is
 // documented but no longer handled is just as much a lie as one that is missing.
 func TestEveryHandledKeyIsDescribed(t *testing.T) {
 	handled, described := handledKeys(t), describedKeys(t)
 
 	for k := range handled {
 		require.Truef(t, described[k],
-			"key %q is handled but appears in no help text — add it to keys.go", k)
+			"key %q is handled but appears in no help text; add it to keys.go", k)
 	}
 	for k := range described {
 		require.Truef(t, handled[k],
-			"key %q is advertised but no handler dispatches on it — drop it from keys.go", k)
+			"key %q is advertised but no handler dispatches on it; drop it from keys.go", k)
 	}
 }
 
@@ -184,7 +185,7 @@ func TestHelpPanelSwallowsKeys(t *testing.T) {
 }
 
 // TestHelpPanelScrollsWhenItDoesNotFit: on a short terminal the list is taller
-// than the pane, so it scrolls and says so — the alternative is a silently
+// than the pane, so it scrolls and says so; the alternative is a silently
 // truncated list, which is the same as a wrong one.
 func TestHelpPanelScrollsWhenItDoesNotFit(t *testing.T) {
 	f := &fakeBackend{resp: mkResp(mkRows("ls"))}
@@ -261,7 +262,7 @@ func TestFooterFollowsFocus(t *testing.T) {
 }
 
 // TestModalFootersReplaceTheView: while a modal is up, the footer describes the
-// modal — the keys underneath it are not reachable and must not be offered.
+// modal; the keys underneath it are not reachable and must not be offered.
 func TestModalFootersReplaceTheView(t *testing.T) {
 	f := &fakeBackend{resp: mkResp(mkRows("ls"))}
 	m := ready(t, f, 100, 30)

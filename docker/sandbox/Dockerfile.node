@@ -1,7 +1,7 @@
 # A yore fleet node: one machine in the 20-node sandbox (docker/sandbox/fleet.yml).
 #
 # The base image is a build arg, so the SAME Dockerfile produces a node on every
-# distribution the fleet runs — alpine, debian, ubuntu, fedora, almalinux, arch,
+# distribution the fleet runs; alpine, debian, ubuntu, fedora, almalinux, arch,
 # opensuse. The package step picks the distro's package manager at build time;
 # the yore binary itself is CGO-free and static, so one build stage serves them
 # all (and the build stage is shared cache across every node image).

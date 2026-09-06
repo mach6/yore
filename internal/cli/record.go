@@ -64,20 +64,20 @@ func runRecord(exit int, durMs, startMs int64, session, cwd, executor string) {
 
 // spoolRecord applies the recording gate and, if the command passes, assigns an
 // id, spools the record (fsync'd), and pokes the daemon. It is the shared tail
-// of every capture path — the shell fast path (runRecord) and the agent hooks
+// of every capture path: the shell fast path (runRecord) and the agent hooks
 // (internal/cli/claudecode.go). It NEVER blocks or prints and treats any
 // rejection or error as a silent no-op, so a capture can never disrupt the
 // shell or an agent.
 func spoolRecord(dir string, r rec.Record) {
 	cfg, _ := config.Load(dir)
 	// histignorespace: a leading space opts a command out of history unless the
-	// user has turned that off. Any rejection returns silently — never explain
+	// user has turned that off. Any rejection returns silently; never explain
 	// why (that would itself leak that a secret was typed).
 	if !cfg.RecordSpacePrefixed && r.Cmd != "" && (r.Cmd[0] == ' ' || r.Cmd[0] == '\t') {
 		return
 	}
 	filter, _ := redact.Load(dir, cfg.IgnorePatterns, cfg.IgnoreDirs)
-	// An ignored directory or a user ignore_pattern means "never record this" —
+	// An ignored directory or a user ignore_pattern means "never record this":
 	// the user asked for the command to be absent, so it is.
 	if filter.SkipDir(r.Cwd) || filter.Ignored(r.Cmd) {
 		return
@@ -128,8 +128,8 @@ func pokeDaemon(dir string) {
 func spawnDaemon() {
 	// Never re-exec under `go test`: os.Executable() is the test binary, so
 	// `<testbin> daemon` re-runs the whole suite (the arg is not a -run filter),
-	// which pokes the daemon again and re-spawns — a detached fork bomb that
-	// pegs every core and exhausts RAM. Production binaries return false here.
+	// which pokes the daemon again and re-spawns; a detached fork bomb that pegs
+	// every core and exhausts RAM. Production binaries return false here.
 	if testing.Testing() {
 		return
 	}

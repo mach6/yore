@@ -168,7 +168,7 @@ func TestExecutorFilterWinsOverTheAgentFilter(t *testing.T) {
 }
 
 // TestNarrowedPeriodDropsTheCount: the daemon counts across everything the query
-// matched, and the period tabs narrow further over rows it already dropped — so
+// matched, and the period tabs narrow further over rows it already dropped, so
 // with a period selected the number cannot be attributed to the window on
 // screen, and quoting it would describe rows that are not there.
 func TestNarrowedPeriodDropsTheCount(t *testing.T) {

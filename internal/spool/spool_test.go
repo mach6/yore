@@ -61,8 +61,8 @@ func TestDrainTornFinalLine(t *testing.T) {
 
 	// A file left by an older yore (or a truncated disk): one valid line
 	// already fsynced, then a partial JSON fragment with no trailing newline.
-	// Append itself can no longer produce this — it renames a complete file
-	// into place — but Drain still has to get past it rather than retry it
+	// Append itself can no longer produce this (it renames a complete file
+	// into place) but Drain still has to get past it rather than retry it
 	// forever.
 	require.NoError(t, os.MkdirAll(dir, 0o700))
 	path := filepath.Join(dir, strconv.Itoa(os.Getpid())+".jsonl")
@@ -119,7 +119,7 @@ func TestDrainFnErrorKeepsFile(t *testing.T) {
 
 // TestAppendPublishesAtomically pins the property the whole package rests on:
 // a record becomes visible to Drain only once it is complete on disk. A write
-// in flight is a ".tmp" file, which a drain must neither read nor remove — the
+// in flight is a ".tmp" file, which a drain must neither read nor remove: the
 // bug this replaced let a drain delete a file the writer had created but not
 // yet written to, and the record vanished with no error anywhere.
 func TestAppendPublishesAtomically(t *testing.T) {
@@ -169,7 +169,7 @@ func TestDrainSweepsAbandonedTemps(t *testing.T) {
 
 // TestConcurrentDrainLosesNothing is the regression test for the lost records:
 // writers and a drainer running flat out against the same directory, where
-// every record must end up either delivered or still on disk — never neither.
+// every record must end up either delivered or still on disk; never neither.
 func TestConcurrentDrainLosesNothing(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "spool")
 	const writers, perWriter = 8, 40
@@ -212,7 +212,7 @@ func TestConcurrentDrainLosesNothing(t *testing.T) {
 	left, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
 	require.NoError(t, err)
 	require.Equal(t, int64(writers*perWriter), delivered.Load()+int64(len(left)),
-		"every record must be delivered or still spooled — none lost")
+		"every record must be delivered or still spooled; none lost")
 }
 
 func TestDrainMissingDir(t *testing.T) {

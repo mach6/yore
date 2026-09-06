@@ -59,7 +59,7 @@ func cmds(m Model) []string {
 }
 
 // TestTableOpensNewestFirst: the sort is a thing you can change, so the order it
-// starts in has to be the order the table always had — and the status bar says
+// starts in has to be the order the table always had, and the status bar says
 // nothing about it, because there is nothing yet to explain.
 func TestTableOpensNewestFirst(t *testing.T) {
 	m := sortedTable(t)
@@ -149,7 +149,7 @@ func TestSortSurvivesARefresh(t *testing.T) {
 }
 
 // TestSortIsNamedOnScreen: the arrow rides the header where the cell is wide
-// enough, and the status bar names the sort in words either way — a four-column
+// enough, and the status bar names the sort in words either way; a four-column
 // header has no room for a glyph, and color alone is not a distinction.
 func TestSortIsNamedOnScreen(t *testing.T) {
 	m := sortedTable(t)
@@ -192,7 +192,7 @@ func TestColumnsPaneHidesAndShows(t *testing.T) {
 	require.Contains(t, strip(m.View()), "1 column hidden",
 		"a column off by choice looks like one off for width unless it says so")
 
-	// And back on again — the pane reopens where it was left, so the same key
+	// And back on again: the pane reopens where it was left, so the same key
 	// undoes it without navigating there a second time.
 	m, _ = step(t, m, press("c"))
 	require.Equal(t, colHost, m.colSel, "the cursor stayed where it was left")
@@ -282,7 +282,7 @@ func TestColumnsPaneSwallowsViewKeys(t *testing.T) {
 }
 
 // TestHiddenColumnDoesNotStopFiltering: hiding a column is a display choice, not
-// a filter — the tag filter still works with the tags column off.
+// a filter; the tag filter still works with the tags column off.
 func TestHiddenColumnDoesNotStopFiltering(t *testing.T) {
 	m := sortedTable(t)
 	require.Contains(t, tableHeaderLine(m), "tags")
@@ -319,7 +319,7 @@ func cmdHeaderOf(m Model) string {
 
 // TestColumnsPaneFollowsTheFocusedList: c reshapes the list you are looking at.
 // The sidebar and the details pane have no columns of their own, so they aim at
-// the prompt list the view hangs off — the same rule / already uses.
+// the prompt list the view hangs off: the same rule / already uses.
 func TestColumnsPaneFollowsTheFocusedList(t *testing.T) {
 	m := agentModel(t, 140, 40)
 	require.Equal(t, apPrompts, m.apane)
@@ -352,7 +352,7 @@ func TestColumnsPaneFollowsTheFocusedList(t *testing.T) {
 }
 
 // TestPromptListHidesAndSorts: the prompt list reshapes like the browse table,
-// and keeps its own choices — hiding a column here says nothing about there.
+// and keeps its own choices; hiding a column here says nothing about there.
 func TestPromptListHidesAndSorts(t *testing.T) {
 	m := agentModel(t, 140, 40)
 	require.Contains(t, promptHeaderOf(m), "session")
@@ -442,7 +442,7 @@ func TestCommandListDurGate(t *testing.T) {
 	require.Contains(t, strip(m.View()), "no agent reports timing")
 }
 
-// TestEachTableKeepsItsOwnSort: three tables, three independent orders — sorting
+// TestEachTableKeepsItsOwnSort: three tables, three independent orders; sorting
 // the prompt list must not reorder the browse table underneath it.
 func TestEachTableKeepsItsOwnSort(t *testing.T) {
 	m := sortedTable(t)
@@ -557,7 +557,7 @@ func TestStaleColumnPrefsAreIgnored(t *testing.T) {
 }
 
 // TestSavingAfterADragKeepsTheColumns: ui.toml is rewritten whole, so the drag
-// path and the column path must write the same struct — otherwise moving a seam
+// path and the column path must write the same struct; otherwise moving a seam
 // would silently erase every column choice.
 func TestSavingAfterADragKeepsTheColumns(t *testing.T) {
 	f := &fakeBackend{
@@ -610,8 +610,9 @@ func runBatch(cmd tea.Cmd) {
 }
 
 // TestColumnHeaderMatchesTheRow: the header and the cells are one loop over one
-// table now, so a column can no longer be in the header and missing from the row
-// — and both still fill the table exactly, at every width the columns shed at.
+// table now, so a column can no longer be in the header and missing from the
+// row, and both still fill the table exactly, at every width the columns shed
+// at.
 func TestColumnHeaderMatchesTheRow(t *testing.T) {
 	for _, w := range []int{140, 100, 76, 60, 44, 30} {
 		f := &fakeBackend{
@@ -625,7 +626,7 @@ func TestColumnHeaderMatchesTheRow(t *testing.T) {
 		header := tableHeaderLine(m)
 		for c := range colTables[ctBrowse].metas {
 			// A cell narrower than its own name is truncated, which only the command
-			// column ever is — it takes what is left, down to five columns.
+			// column ever is: it takes what is left, down to five columns.
 			if l.shows(c) && l.w[c] >= len(colTables[ctBrowse].metas[c].title) {
 				require.Containsf(t, header, colTables[ctBrowse].metas[c].title,
 					"w=%d: %s is laid out but not in the header", w, colTables[ctBrowse].metas[c].title)
@@ -677,7 +678,7 @@ func TestDevicesListsAreTables(t *testing.T) {
 }
 
 // TestTokenListSortsAndHides: the token list reshapes like every other table,
-// and says on its own pane title that it has been reshaped — the devices view
+// and says on its own pane title that it has been reshaped; the devices view
 // has no status bar to say it anywhere else.
 func TestTokenListSortsAndHides(t *testing.T) {
 	m, _ := devicesFixture(t)
@@ -749,7 +750,7 @@ func deviceNames(m Model) []string {
 
 // TestDeviceSortSurvivesARefresh: S refetches both lists, and a refresh that
 // silently restored the server's order would move rows out from under the
-// cursor — including under an armed approve/revoke question.
+// cursor; including under an armed approve/revoke question.
 func TestDeviceSortSurvivesARefresh(t *testing.T) {
 	m, _ := devicesFixture(t)
 	m, _ = step(t, m, press("tab"))

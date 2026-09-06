@@ -25,23 +25,21 @@ const (
 	maxLimit       = 1000
 )
 
-// GET /v1/health (no auth) — liveness: the process is up and serving.
-//
+// GET /v1/health (no auth); liveness: the process is up and serving.
 // Deliberately shallow, because it is what the container HEALTHCHECK polls and
 // a restart is its only remedy. A server that cannot write is not something a
-// restart fixes — it is something a restart turns into a crash loop, since
-// openTenantDB creates its buckets on the way up — so that condition is
+// restart fixes (it is something a restart turns into a crash loop, since
+// openTenantDB creates its buckets on the way up) so that condition is
 // reported by /v1/ready and never from here.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// GET /v1/ready (no auth) — readiness: storage still accepts a write.
-//
-// 503 here means the server is answering reads it cannot back with writes: a
-// client can pull, and everything it pushes will fail. The body says only that
-// much — the endpoint is open, and the cause is an operator's business, so it
-// goes to the log (see probeStorage).
+// GET /v1/ready (no auth); readiness: storage still accepts a write. 503 here
+// means the server is answering reads it cannot back with writes: a client can
+// pull, and everything it pushes will fail. The body says only that much: the
+// endpoint is open, and the cause is an operator's business, so it goes to the
+// log (see probeStorage).
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	if err := s.probeStorage(time.Now()); err != nil {
 		writeErr(w, http.StatusServiceUnavailable, "storage unavailable")
@@ -71,10 +69,9 @@ func (s *Server) signed(h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// POST /v1/tokens — mint a single-use enrollment token *(signed)*
-//
-// This is how a second machine gets in: an already-enrolled device mints a
-// token, the new machine presents it once, and it is redeemed. There is no
+// POST /v1/tokens: mint a single-use enrollment token *(signed)* This is
+// how a second machine gets in: an already-enrolled device mints a token,
+// the new machine presents it once, and it is redeemed. There is no
 // standing credential that enrolls devices.
 func (s *Server) handleMintToken(w http.ResponseWriter, r *http.Request) {
 	db, ok := mustDB(w, r)
@@ -124,12 +121,11 @@ func newToken() (string, error) {
 
 // pruneTokens drops tokens nobody will ask about again, so the bucket cannot
 // grow without bound: an unclaimed one (expired, or revoked before it was used)
-// goes tokenKeep after its expiry. A claimed token is kept — it is the record
-// of which token admitted which machine, and that answer should outlive the
-// half hour the token itself was good for. Unreadable rows go too.
-//
-// Errors are ignored: pruning is housekeeping, never a reason to fail the mint
-// that triggered it.
+// goes tokenKeep after its expiry. A claimed token is kept: it is the record of
+// which token admitted which machine, and that answer should outlive the half
+// hour the token itself was good for. Unreadable rows go too. Errors are
+// ignored: pruning is housekeeping, never a reason to fail the mint that
+// triggered it.
 func pruneTokens(tx *bbolt.Tx, now time.Time) {
 	b := tx.Bucket(bucketTokens)
 	cutoff := now.Add(-tokenKeep).UnixMilli()
@@ -146,10 +142,9 @@ func pruneTokens(tx *bbolt.Tx, now time.Time) {
 	}
 }
 
-// GET /v1/tokens — every enrollment token and what became of it (signed)
-//
-// The token plaintexts are not here and cannot be: the server kept only hashes.
-// What this answers is "what is outstanding, and who used what" — an open token
+// GET /v1/tokens: every enrollment token and what became of it (signed) The
+// token plaintexts are not here and cannot be: the server kept only hashes.
+// What this answers is "what is outstanding, and who used what": an open token
 // admits a machine to the group, so it is something an operator has to be able
 // to see.
 func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
@@ -186,12 +181,11 @@ func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, tokens)
 }
 
-// POST /v1/tokens/{id}/revoke — cancel an unused enrollment token (signed)
-//
-// This is not device revocation and rotates nothing: the token has admitted no
-// one, so there is no key any holder of it could already have read with. It
-// exists so a token that got away from you stops being live before its half
-// hour is up.
+// POST /v1/tokens/{id}/revoke: cancel an unused enrollment token (signed) This
+// is not device revocation and rotates nothing: the token has admitted no one,
+// so there is no key any holder of it could already have read with. It exists
+// so a token that got away from you stops being live before its half hour is
+// up.
 func (s *Server) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
 	db, ok := mustDB(w, r)
 	if !ok {
@@ -226,12 +220,11 @@ func (s *Server) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// GET /v1/recovery/salt — the Argon2id salt (open)
-//
-// Unauthenticated by necessity: the caller cannot derive the key that signs a
-// recovery request until it has this. A salt is not secret — it exists to make
-// precomputation useless, and the material it guards is the wrap, which stays
-// behind a signature.
+// GET /v1/recovery/salt: the Argon2id salt (open) Unauthenticated by
+// necessity: the caller cannot derive the key that signs a recovery request
+// until it has this. A salt is not secret: it exists to make precomputation
+// useless, and the material it guards is the wrap, which stays behind a
+// signature.
 func (s *Server) handleRecoverySalt(w http.ResponseWriter, r *http.Request) {
 	db, ok := mustDB(w, r)
 	if !ok {
@@ -249,11 +242,9 @@ func (s *Server) handleRecoverySalt(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, wire.RecoverySalt{Salt: init.Salt})
 }
 
-// GET /v1/recovery — the History Key wrapped to the recovery key
-// *(signed by the recovery key)*
-//
-// The signature proves the caller already holds the passphrase, so the wrap is
-// never handed to an anonymous requester.
+// GET /v1/recovery: the History Key wrapped to the recovery key *(signed by
+// the recovery key)* The signature proves the caller already holds the
+// passphrase, so the wrap is never handed to an anonymous requester.
 func (s *Server) handleGetRecovery(w http.ResponseWriter, r *http.Request) {
 	db, ok := mustDB(w, r)
 	if !ok {
@@ -278,8 +269,7 @@ func (s *Server) handleGetRecovery(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, init.Wrap)
 }
 
-// POST /v1/recovery — publish the recovery key and its HK wrap *(signed)*
-//
+// POST /v1/recovery: publish the recovery key and its HK wrap *(signed)*
 // Written once, by the device that bootstraps the group. It is not replaceable
 // through this endpoint: overwriting it would let anyone who compromises one
 // device swap in a recovery key of their own.
@@ -327,13 +317,11 @@ func (s *Server) handleInitRecovery(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// POST /v1/recovery/token — mint an enrollment token
-// *(signed by the recovery key)*
-//
-// Recovery would otherwise be unusable in the only situation it exists for:
-// the lost machines are still ACTIVE server-side, so the bootstrap allowance
-// does not apply and no surviving device can mint a token. Possession of the
-// recovery passphrase is the authorization instead.
+// POST /v1/recovery/token: mint an enrollment token *(signed by the recovery
+// key)* Recovery would otherwise be unusable in the only situation it exists
+// for: the lost machines are still ACTIVE server-side, so the bootstrap
+// allowance does not apply and no surviving device can mint a token.
+// Possession of the recovery passphrase is the authorization instead.
 func (s *Server) handleRecoveryToken(w http.ResponseWriter, r *http.Request) {
 	db, ok := mustDB(w, r)
 	if !ok {
@@ -378,13 +366,12 @@ func (s *Server) handleRecoveryToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, wire.TokenResp{Token: token, ExpiresMs: st.ExpiresMs})
 }
 
-// POST /v1/recovery/activate/{id} — admit a device during recovery
-// *(signed by the recovery key)*
-//
-// The ordinary activate path needs an approver, and recovery is precisely the
-// case where none exists: the machines that could approve are the ones that
-// were lost, and they are still ACTIVE server-side. Holding the recovery
-// passphrase — which already unwrapped the History Key — is the authorization.
+// POST /v1/recovery/activate/{id}: admit a device during recovery *(signed by
+// the recovery key)* The ordinary activate path needs an approver, and
+// recovery is precisely the case where none exists: the machines that could
+// approve are the ones that were lost, and they are still ACTIVE server-side.
+// Holding the recovery passphrase (which already unwrapped the History Key) is
+// the authorization.
 func (s *Server) handleRecoveryActivate(w http.ResponseWriter, r *http.Request) {
 	db, ok := mustDB(w, r)
 	if !ok {
@@ -726,7 +713,7 @@ func (s *Server) handleListDevices(w http.ResponseWriter, r *http.Request) {
 }
 
 // bootstrapSelfKey returns the pending signer's own SignKey when this activate
-// is the group-forming bootstrap — the device named in the path signs its own
+// is the group-forming bootstrap: the device named in the path signs its own
 // activation and no device is active yet (matching syncer.Bootstrap, where the
 // first device self-activates while still pending). It returns nil in every
 // other case, so ordinary activations fall through to requireSignature's
@@ -764,7 +751,7 @@ func (s *Server) bootstrapSelfKey(db *bbolt.DB, r *http.Request, pathID string) 
 }
 
 // bootstrapSelfKeyAny returns the signer's own sign_key when the signer is a
-// device of this tenant and no device is active yet — the window in which the
+// device of this tenant and no device is active yet: the window in which the
 // group is still forming and there is nobody else to vouch for it. Used by
 // recovery init, which the bootstrapping device performs before activating.
 func (s *Server) bootstrapSelfKeyAny(db *bbolt.DB, r *http.Request) []byte {

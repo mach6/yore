@@ -56,7 +56,7 @@ func responseExitCode(raw json.RawMessage) *int {
 }
 
 // deriveExit resolves a command's exit status: the payload's explicit exit_code
-// wins; otherwise the event decides — PostToolUse fires on success (0),
+// wins; otherwise the event decides; PostToolUse fires on success (0),
 // PostToolUseFailure on failure (nonzero, unknown code -> 1).
 func deriveExit(in claudeHookInput, failed bool) *int {
 	if c := responseExitCode(in.ToolResponse); c != nil {
@@ -92,12 +92,11 @@ func runHookClaudeCodeFailure() { ingestClaudeTool(true) }
 
 // ingestClaudeTool records the Bash command described by a Claude Code tool hook
 // payload on stdin, tagged claude-code, with its exit status (and duration when
-// the payload timestamps allow it).
-//
-// Contract mirrors the shell fast path: it NEVER blocks, NEVER prints, and
-// ALWAYS exits 0 — a hook that errored or stalled would disrupt the agent it is
-// observing. A non-Bash tool call, an empty command, or malformed JSON is a
-// silent no-op. failed selects the exit default (see deriveExit).
+// the payload timestamps allow it). Contract mirrors the shell fast path: it
+// NEVER blocks, NEVER prints, and ALWAYS exits 0; a hook that errored or stalled
+// would disrupt the agent it is observing. A non-Bash tool call, an empty
+// command, or malformed JSON is a silent no-op. failed selects the exit default
+// (see deriveExit).
 func ingestClaudeTool(failed bool) {
 	raw, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
 	if err != nil {
@@ -126,7 +125,7 @@ func ingestClaudeTool(failed bool) {
 	// Duration: Claude Code's PostToolUse payload carries no tool timing, so the
 	// PreToolUse hook stamps a start time and we take the delta here (anchoring the
 	// record to the real start). An explicit payload timing still wins when a
-	// future Claude — or another agent reusing this path — provides it.
+	// future Claude, or another agent reusing this path, provides it.
 	if d, ok := deriveDurMs(in); ok {
 		r.DurMs = &d
 	} else if start, ok := loadCmdStart(dir, in.SessionID, in.ToolInput.Command); ok {
@@ -292,10 +291,10 @@ func mergeHookInto(settings map[string]any, event, matcher, command string) bool
 }
 
 // mergeClaudeHook installs the capture hooks: PreToolUse(Bash) stamps a command's
-// start time (so its duration is real — Claude Code's payload has no tool
-// timing), PostToolUse(Bash) records a successful command, PostToolUseFailure
-// records a failed one (so exit status is captured), and UserPromptSubmit records
-// the prompt each served. Idempotent; returns whether anything changed.
+// start time (so its duration is real; Claude Code's payload has no tool timing),
+// PostToolUse(Bash) records a successful command, PostToolUseFailure records a
+// failed one (so exit status is captured), and UserPromptSubmit records the
+// prompt each served. Idempotent; returns whether anything changed.
 func mergeClaudeHook(settings map[string]any, bin string) (added bool) {
 	p := mergeHookInto(settings, "PreToolUse", "Bash", cmdPreToolUse(bin))
 	a := mergeHookInto(settings, "PostToolUse", "Bash", cmdPostToolUse(bin))
@@ -508,7 +507,7 @@ func runInitClaudeCode(bin string, project, printOnly bool) int {
 	settings := map[string]any{}
 	if data, rerr := os.ReadFile(path); rerr == nil {
 		if json.Unmarshal(data, &settings) != nil {
-			u.fail("existing " + path + " is not valid JSON — fix or move it first")
+			u.fail("existing " + path + " is not valid JSON: fix or move it first")
 			return 1
 		}
 	} else if !os.IsNotExist(rerr) {

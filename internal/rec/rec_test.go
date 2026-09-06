@@ -19,7 +19,7 @@ func TestNewIDUniqueAndWellFormed(t *testing.T) {
 		seen[id] = struct{}{}
 	}
 	// Note: NewID uses crypto/rand entropy (not monotonic), so IDs minted within
-	// the same millisecond are NOT mutually ordered — the store uses its assigned
+	// the same millisecond are NOT mutually ordered; the store uses its assigned
 	// seq for stream position, never the ULID. Ordering across distinct
 	// timestamps IS guaranteed, which is what NewIDAcrossTimeSorts covers.
 }
@@ -112,7 +112,7 @@ func FuzzImportID(f *testing.F) {
 }
 
 // FuzzRecordUnmarshal ensures decoding arbitrary bytes into a Record never
-// panics — the spool and the decrypted sync payload both feed it untrusted-ish
+// panics: the spool and the decrypted sync payload both feed it untrusted-ish
 // bytes.
 func FuzzRecordUnmarshal(f *testing.F) {
 	f.Add([]byte(`{"id":"a","cmd":"ls","exit":0}`))

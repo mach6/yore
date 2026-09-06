@@ -1,5 +1,5 @@
 // Package redact is yore's recording security gate. It finds the secrets in
-// captured text — shell commands, and the agent prompts yore records alongside
+// captured text: shell commands, and the agent prompts yore records alongside
 // them, which is why the rule table covers both assignment syntax and the prose
 // an English sentence would use.
 //
@@ -7,7 +7,7 @@
 // Mark naming the rule that caught it and keeps everything else. The command
 // stays in your history, searchable and readable, minus the one span that must
 // never be persisted or synced. Dropping the whole record was the older,
-// blunter behaviour, and it was wrong in practice — the commands most worth
+// blunter behaviour, and it was wrong in practice: the commands most worth
 // remembering are often exactly the ones with a token somewhere in them, and an
 // entry that silently vanished is indistinguishable from one you never ran.
 //
@@ -23,7 +23,7 @@
 //     was never a secret.
 //
 // So every built-in rule anchors on the *shape* of a secret value or on an
-// unambiguous assignment/flag context — never on a bare keyword. "password"
+// unambiguous assignment/flag context, never on a bare keyword. "password"
 // in a commit message, "token" in a path, or a git SHA must all pass through
 // untouched, while `export DB_PASSWORD=hunter2` or an AKIA key must not.
 //
@@ -142,11 +142,11 @@ var defaultSpecs = []Spec{
 	{"generic-token-assign", `(?i)(?:token|secret|passw(?:or)?d|api[_-]?key|auth)[=:](?P<secret>\S{6,})`,
 		[]string{"token", "secret", "passw", "apikey", "api_key", "api-key", "auth"}, true},
 	// The prose form of the same thing: "the api key is <value>", "password: <value>".
-	// It exists because this gate now guards agent PROMPTS as well as commands,
-	// and a prompt states a secret in a sentence where a command would assign it.
-	// The separator must be followed by whitespace (the no-space form is already
-	// covered above) and the value must look like a key — 16+ characters of key
-	// alphabet — so "password is required" and "see the token: ticket" pass.
+	// It exists because this gate now guards agent PROMPTS as well as commands, and a
+	// prompt states a secret in a sentence where a command would assign it. The
+	// separator must be followed by whitespace (the no-space form is already covered
+	// above) and the value must look like a key (16+ characters of key alphabet) so
+	// "password is required" and "see the token: ticket" pass.
 	{"secret-prose-assign",
 		`(?i)\b(?:api[ _-]?key|secret|token|password|passphrase|credential)s?\b\s*(?:is|are|=|:)\s+["']?(?P<secret>[A-Za-z0-9_\-+/=]{16,})`,
 		[]string{"key", "secret", "token", "password", "passphrase", "credential"}, true},
@@ -158,7 +158,7 @@ var defaultSpecs = []Spec{
 // shape of ~/.config/yore/redact.yml and the seed form of the built-in table.
 // Name identifies the rule (surfaced by Reason); Pattern is a Go regexp that is
 // the authority for a match. Hints is an optional set of cheap literal
-// substrings, at least one of which must be present for the regexp to run — a
+// substrings, at least one of which must be present for the regexp to run: a
 // hot-path pre-filter; omit it to always run the regexp. Fold makes the hint
 // scan ASCII-case-insensitive (hints must then be lowercase).
 type Spec struct {
@@ -237,7 +237,7 @@ func New(userPatterns, ignoreDirs []string) (f *Filter, errs []error) {
 //
 //   - Missing or unparseable redact.yml, or a file whose patterns: list is
 //     empty, falls back to the compiled-in built-ins (DefaultSpecs) and appends
-//     a non-fatal warning to errs — redaction stays fully on.
+//     a non-fatal warning to errs; redaction stays fully on.
 //   - A single invalid regexp inside an otherwise-valid file is skipped with a
 //     warning (like an invalid user pattern); the remaining rules still apply.
 //
@@ -283,13 +283,12 @@ func loadBaseRules(dir string) (rules []rule, errs []error) {
 
 // MissingBuiltins returns the names of built-in rules that <dir>/redact.yml
 // does not define. Seeding never overwrites an existing file, so a user who
-// seeded before a rule shipped keeps a table without it — silently, since a
+// seeded before a rule shipped keeps a table without it; silently, since a
 // missing detector looks exactly like a clean history. `yore doctor` reports
 // this; nothing acts on it automatically, because a rule may be absent because
-// the user deliberately deleted it.
-//
-// It returns nil when the file is absent or unusable: those already fall back
-// to the full built-in table, so nothing is missing.
+// the user deliberately deleted it. It returns nil when the file is absent or
+// unusable: those already fall back to the full built-in table, so nothing is
+// missing.
 func MissingBuiltins(dir string) []string {
 	b, err := os.ReadFile(config.RedactPath(dir))
 	if err != nil {
@@ -377,7 +376,7 @@ func assemble(base []rule, userPatterns, ignoreDirs []string, errs []error) (*Fi
 }
 
 // Seed writes the built-in rules to <dir>/redact.yml so the user can see and
-// edit them, but ONLY when the file does not already exist — it never clobbers
+// edit them, but ONLY when the file does not already exist: it never clobbers
 // edits, so it is safe to call on every setup. The file is written 0600 and
 // atomically (temp file + rename), and the state dir is created if needed.
 func Seed(dir string) error {
@@ -418,14 +417,14 @@ func Seed(dir string) error {
 }
 
 // redactHeader documents the file for whoever opens it in an editor.
-const redactHeader = `# yore secret-redaction rules — seeded from the built-ins; edit freely. A command
+const redactHeader = `# yore secret-redaction rules, seeded from the built-ins; edit freely. A command
 # matching any rule below is never recorded (and so never synced). Each rule has a
-# name, a Go regexp pattern, optional literal hints (a fast pre-filter — at least
+# name, a Go regexp pattern, optional literal hints (a fast pre-filter: at least
 # one must be present for the regexp to run; omit to always run it), and an
 # optional fold flag (case-insensitive hint match; hints must then be lowercase).
 #
 # Fail-safe: if this file is removed, unreadable, unparseable, or left with no
-# patterns, yore falls back to the built-in rules — redaction never silently
+# patterns, yore falls back to the built-in rules, so redaction never silently
 # turns off. You can still delete individual rules you don't want.
 `
 
@@ -447,7 +446,7 @@ func (f *Filter) Sensitive(cmd string) bool { return f.match(cmd) >= 0 }
 
 // Mark is the placeholder Redact leaves where a credential was. It names the
 // rule that fired, so the history says WHY a span is missing instead of just
-// showing a hole — and it is deliberately not valid shell, so a redacted
+// showing a hole, and it is deliberately not valid shell, so a redacted
 // command recalled into the prompt fails loudly rather than running wrong.
 func Mark(rule string) string { return markPrefix + rule + markSuffix }
 
@@ -460,29 +459,24 @@ const (
 
 // isMark reports whether s is already a redaction marker. Skipping those makes
 // Redact idempotent: `PASSWORD=⟪redacted:…⟫` still matches the assignment rules
-// that produced it, and without this a second pass — on import, or on a record
-// that crossed the gate twice — would redact the marker and report a fresh hit
+// that produced it, and without this a second pass (on import, or on a record
+// that crossed the gate twice) would redact the marker and report a fresh hit
 // for text that has no secret left in it.
 func isMark(s string) bool {
 	return strings.HasPrefix(s, markPrefix) && strings.HasSuffix(s, markSuffix)
 }
 
 // Redact returns text with every secret-rule match replaced by Mark, along with
-// the names of the rules that fired (nil, and text unchanged, when clean).
-//
-// This is what the recording gate does with a secret now: the command is KEPT,
-// minus the credential. Dropping the whole record was the safe default but a
-// bad one in practice — the commands most worth remembering are often the ones
-// with a token in them, and a silently missing entry is indistinguishable from
-// one that was never run.
-//
-// Only the credential goes. Rules mark it with a `secret` capture group, so
-// `mysql -u root -pHUNTER2 app` keeps everything but HUNTER2; a rule with no
-// such group (a whole-value shape like an AWS key, or a user pattern) has its
-// entire match replaced.
-//
-// User ignore_patterns are NOT applied here: those mean "don't record this",
-// which is Ignored's job.
+// the names of the rules that fired (nil, and text unchanged, when clean). This
+// is what the recording gate does with a secret now: the command is KEPT, minus
+// the credential. Dropping the whole record was the safe default but a bad one
+// in practice: the commands most worth remembering are often the ones with a
+// token in them, and a silently missing entry is indistinguishable from one
+// that was never run. Only the credential goes. Rules mark it with a `secret`
+// capture group, so `mysql -u root -pHUNTER2 app` keeps everything but HUNTER2;
+// a rule with no such group (a whole-value shape like an AWS key, or a user
+// pattern) has its entire match replaced. User ignore_patterns are NOT applied
+// here: those mean "don't record this", which is Ignored's job.
 func (f *Filter) Redact(text string) (redacted string, rules []string) {
 	if text == "" {
 		return text, nil
@@ -517,16 +511,14 @@ type span struct {
 }
 
 // spans finds every range to redact, as non-overlapping ranges in ascending
-// order.
-//
-// Every rule is matched against the ORIGINAL text, never against the partially
-// redacted result. Rules genuinely overlap — `export DB_PASSWORD=hunter2` is
-// caught by both generic-token-assign and env-secret-export — and redacting
-// them one after another would let the second rule match the marker the first
-// just inserted, nesting markers and misattributing the span. Overlapping
-// ranges are merged instead, keeping the name of the first rule in table order
-// that claimed the range (the table is ordered specific-before-general, so that
-// is the more informative name).
+// order. Every rule is matched against the ORIGINAL text, never against the
+// partially redacted result. Rules genuinely overlap (`export
+// DB_PASSWORD=hunter2` is caught by both generic-token-assign and
+// env-secret-export) and redacting them one after another would let the second
+// rule match the marker the first just inserted, nesting markers and
+// misattributing the span. Overlapping ranges are merged instead, keeping the
+// name of the first rule in table order that claimed the range (the table is
+// ordered specific-before-general, so that is the more informative name).
 func (f *Filter) spans(text string) []span {
 	var found []span
 	secrets := f.secretRules()
@@ -576,7 +568,7 @@ func (r *rule) span(loc []int) (start, end int) {
 	return loc[0], loc[1]
 }
 
-// secretRules is the built-in (and redact.yml) portion of the rule set — every
+// secretRules is the built-in (and redact.yml) portion of the rule set: every
 // rule except the user's ignore_patterns, which live at the tail.
 func (f *Filter) secretRules() []rule { return f.rules[:len(f.rules)-f.nuser] }
 

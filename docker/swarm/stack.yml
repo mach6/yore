@@ -3,7 +3,7 @@
 #   docker build -f docker/Dockerfile -t yore:latest .
 #   docker stack deploy -c docker/swarm/stack.yml yore
 #
-# This is a Swarm stack, not a compose file — deploy it with `docker stack
+# This is a Swarm stack, not a compose file: deploy it with `docker stack
 # deploy`, not `docker compose up` (compose ignores `deploy:` and can't read the
 # external Swarm secret/network below). For a local, non-Swarm playground use
 # docker/sandbox/ instead.
@@ -11,10 +11,10 @@
 # The server stores only ciphertext + device public keys; TLS terminates at
 # your existing reverse proxy (attach this service to its network and add
 # your proxy's labels/config under deploy.labels). The `proxy` network below is
-# your reverse proxy's existing overlay network — create it (or rename this to
+# your reverse proxy's existing overlay network: create it (or rename this to
 # match) before deploying:  docker network create --driver overlay proxy
 #
-# The server runs in ONE of two modes — pick one, they are mutually exclusive
+# The server runs in ONE of two modes: pick one, they are mutually exclusive
 # and setting both is a startup error:
 #
 # 1. Single tenant (the default below). Create its token secret once:
@@ -37,9 +37,9 @@ services:
   yore:
     image: yore:latest
     environment:
-      # Mode 1 — one tenant. For mode 2, delete this line and uncomment the next.
+      # Mode 1: one tenant. For mode 2, delete this line and uncomment the next.
       YORE_TOKEN_FILE: /run/secrets/yore_token
-      # Mode 2 — named tenants (see the note above). Never set both:
+      # Mode 2; named tenants (see the note above). Never set both:
       # YORE_TOKENS_FILE: /run/secrets/yore_tokens
       # Rolling per-tenant backups to /data/backups/<tenant>/ (defaults shown;
       # set the interval to 0 to disable):
@@ -54,7 +54,7 @@ services:
       - proxy
     # Liveness only. /v1/health touches no database on purpose: a restart is the
     # only thing this can do, and the failure it must NOT trigger on is a full or
-    # read-only /data — the server still serves reads there, and restarting it
+    # read-only /data: the server still serves reads there, and restarting it
     # into a volume it cannot write turns that into a crash loop. For "is it
     # still accepting history?" point monitoring at GET /v1/ready, which commits
     # a probe transaction and answers 503 when storage is gone (`yore doctor`

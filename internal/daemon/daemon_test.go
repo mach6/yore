@@ -112,7 +112,7 @@ func spoolFiles(t *testing.T, dir string) []string {
 	return m
 }
 
-// seed opens the store, appends rows, and closes it — so the daemon can then
+// seed opens the store, appends rows, and closes it, so the daemon can then
 // take ownership and load them into the corpus.
 func seed(t *testing.T, dir string, rows []rec.Record) {
 	t.Helper()
@@ -222,7 +222,7 @@ func TestQuerySemantics(t *testing.T) {
 	assert.Equal(t, 4, resp.Total, "windowed Total")
 	assert.Equal(t, []string{"r3", "r2"}, ids(resp.Rows), "window")
 
-	// LimitAll returns every match — the browse TUI's contract. Offset still
+	// LimitAll returns every match: the browse TUI's contract. Offset still
 	// applies, so "all from here on" works too.
 	resp, _ = c.Query(proto.QueryReq{Q: "git", Limit: proto.LimitAll})
 	assert.Equal(t, 4, resp.Total, "LimitAll Total")
@@ -340,7 +340,7 @@ func ids(rows []rec.Record) []string {
 }
 
 // TestHumanOnlyFilter: the browse table hides agent-run commands, and it needs
-// the daemon to do the hiding — filtering after Limit would spend the row budget
+// the daemon to do the hiding; filtering after Limit would spend the row budget
 // on rows the caller is about to drop. The count of what went comes back so a UI
 // can say what it is holding, rather than a search reporting "no matches" about
 // history that exists.

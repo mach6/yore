@@ -1,16 +1,14 @@
 package browse
 
-// The TUI's three row tables — the browse view's results, the explorer's prompt
-// list, and that prompt's command list — described once each. What a column is
+// The TUI's three row tables (the browse view's results, the explorer's prompt
+// list, and that prompt's command list) described once each. What a column is
 // called, how wide it is, how it draws a cell and how it orders two rows all live
 // in one spec, and the layout, the header, the row renderers and the columns pane
-// are loops over those specs.
-//
-// Every one of them is the same shape underneath: some fixed metadata columns,
-// then one flexible column at the end that takes what is left and carries the
-// text (a command, or a prompt). That shape is what colTableDef captures, so the
-// width arithmetic and the shedding rules are written once rather than three
-// times in three slightly different ways.
+// are loops over those specs. Every one of them is the same shape underneath:
+// some fixed metadata columns, then one flexible column at the end that takes
+// what is left and carries the text (a command, or a prompt). That shape is what
+// colTableDef captures, so the width arithmetic and the shedding rules are
+// written once rather than three times in three slightly different ways.
 
 import (
 	"sort"
@@ -103,7 +101,7 @@ type colSpec[T any] struct {
 
 	// descFirst opens this column descending when it is first sorted on. It is
 	// the recency columns: "newest first" is what a reader means by sorting on
-	// when something happened. A deadline is the exception — the soonest to run
+	// when something happened. A deadline is the exception: the soonest to run
 	// out is the interesting end of that one.
 	descFirst bool
 
@@ -122,7 +120,7 @@ type colSpec[T any] struct {
 	why  string
 }
 
-// colMeta is the part of a spec that does not depend on the row type — all the
+// colMeta is the part of a spec that does not depend on the row type: all the
 // layout, the header and the columns pane ever need.
 type colMeta struct {
 	title     string
@@ -150,8 +148,8 @@ func metasOf[T any](specs []colSpec[T]) []colMeta {
 
 // --- the browse table ----------------------------------------------------
 
-// Executor and tags are two columns, never one. They answer different questions —
-// which agent ran this, versus what did I label it — and merging them meant a user
+// Executor and tags are two columns, never one. They answer different questions
+// (which agent ran this, versus what did I label it) and merging them meant a user
 // tag competed for cells with "claude-code" on every agent row.
 var browseSpecs = []colSpec[rec.Record]{
 	{
@@ -188,7 +186,7 @@ var browseSpecs = []colSpec[rec.Record]{
 	},
 	{
 		title: "exec", width: 12,
-		// Metadata, so Dim — the same weight as the host and duration cells, and
+		// Metadata, so Dim: the same weight as the host and duration cells, and
 		// deliberately not the accent the user's own tags get. Blank for a command
 		// the user typed.
 		cell: func(th *theme.Theme, r rec.Record, _ int64) (string, lipgloss.Style) { return r.Executor, th.Dim },
@@ -299,7 +297,7 @@ var drillSpecs = []colSpec[rec.Record]{
 		title: "dur", width: 7, right: true,
 		cell: func(th *theme.Theme, r rec.Record, _ int64) (string, lipgloss.Style) {
 			if r.DurMs == nil {
-				return "—", th.Dim // this agent didn't report timing, though a sibling did
+				return theme.Unknown, th.Dim // this agent didn't report timing, though a sibling did
 			}
 			return theme.Duration(*r.DurMs), th.Dim
 		},
@@ -358,7 +356,7 @@ var deviceSpecs = []colSpec[proto.DeviceInfo]{
 	},
 	{
 		// 29 wide: the whole verification code, six groups of four (see
-		// syncer.VerificationCode). A truncated one is worse than none — it is here
+		// syncer.VerificationCode). A truncated one is worse than none: it is here
 		// to be compared character by character against the code the other machine
 		// is showing.
 		title: "code", width: 29,
@@ -419,7 +417,7 @@ func tokenStateStyle(th *theme.Theme, t proto.EnrollToken) lipgloss.Style {
 	}
 }
 
-// tokenEndedMs is when a token stopped being open — claimed or cancelled. Zero
+// tokenEndedMs is when a token stopped being open; claimed or cancelled. Zero
 // while it is still open, or if it simply ran out (that time is its expiry).
 func tokenEndedMs(t proto.EnrollToken) int64 {
 	if t.ClaimedMs > 0 {
@@ -444,7 +442,7 @@ var tokenSpecs = []colSpec[proto.EnrollToken]{
 		less: func(a, b proto.EnrollToken) bool { return a.CreatedMs < b.CreatedMs },
 	},
 	{
-		// How long this token has LEFT — the one thing anyone wants to know about an
+		// How long this token has LEFT: the one thing anyone wants to know about an
 		// open one. Forward-looking, so it counts down (see theme.TimeLeft); a token
 		// that is no longer open has nothing left to count, and says so.
 		title: "expires", width: 7, right: true,
@@ -510,7 +508,7 @@ var tokenSpecs = []colSpec[proto.EnrollToken]{
 // between cells, the room its flexible column must keep, the order columns give
 // up width in when the pane is too narrow, and the order it opens in.
 type colTableDef struct {
-	key       string // its name in ui.toml — stable, and not the display label
+	key       string // its name in ui.toml; stable, and not the display label
 	name      string // what the columns pane calls it
 	metas     []colMeta
 	sep       int // columns of gap between cells
@@ -600,7 +598,7 @@ func colIndex(t colTable, name string) (int, bool) {
 // anything the file does not mention keeps them. It is fail-safe by construction:
 // a column name this build does not have is ignored, a sort naming a column that
 // cannot sort is dropped, and a hidden entry for a column that must always show is
-// refused — so a stale or hand-mangled ui.toml can never leave a table unusable,
+// refused, so a stale or hand-mangled ui.toml can never leave a table unusable,
 // only unremembered.
 func colStatesFrom(prefs map[string]ColumnPrefs) [colTableCount]colState {
 	out := defaultColStates()
@@ -690,7 +688,7 @@ func durRank(r rec.Record) int64 {
 // --- layout --------------------------------------------------------------
 
 // colLayout is every column's resolved width for this frame. 0 means the column
-// is not on screen — switched off, empty for these rows, or shed to keep the
+// is not on screen; switched off, empty for these rows, or shed to keep the
 // flexible column readable.
 type colLayout struct {
 	t colTable
@@ -776,7 +774,7 @@ func (m Model) colLayout() colLayout {
 // --- header --------------------------------------------------------------
 
 // tableHeaderSegs names each visible column, with the sort arrow on the one the
-// table is ordered by — where the cell is wide enough to hold it. A narrow column
+// table is ordered by, where the cell is wide enough to hold it. A narrow column
 // leaves the arrow to the status line rather than truncating its own name to make
 // room for a glyph.
 func (m Model) tableHeaderSegs(l colLayout) []styledSeg {
@@ -810,7 +808,7 @@ func alignCell(text string, width int, right bool) string {
 }
 
 // rowSegs draws every visible fixed cell of one row, leaving the flexible column
-// to the caller — its text carries highlighting and horizontal scroll that a
+// to the caller: its text carries highlighting and horizontal scroll that a
 // single string cannot express.
 func rowSegs[T any](th *theme.Theme, t colTable, specs []colSpec[T], l colLayout, row T, now int64) []styledSeg {
 	def := colTables[t]
@@ -842,7 +840,7 @@ func sortArrow(desc bool) string {
 
 // sortRows orders a slice by one table's chosen column. It is stable, and every
 // caller hands it a slice already in the table's natural order, so that order
-// stays the tiebreak underneath whatever was asked for on top — equal durations
+// stays the tiebreak underneath whatever was asked for on top; equal durations
 // keep their time order.
 func sortRows[T any](specs []colSpec[T], st colState, rows []T) {
 	if st.sortCol < 0 || st.sortCol >= len(specs) {
@@ -861,7 +859,7 @@ func sortRows[T any](specs []colSpec[T], st colState, rows []T) {
 }
 
 // sortBy points a table at a column, or reverses it when it is already the sorted
-// one — so the key that chooses a column is also the key that flips it, and there
+// one, so the key that chooses a column is also the key that flips it, and there
 // is no second binding to remember.
 func (m Model) sortBy(t colTable, c int) (Model, bool) {
 	if !colTables[t].metas[c].sortable {
@@ -917,7 +915,7 @@ func (m *Model) reorder(t colTable) {
 		m.clampPrompts()
 	case ctCommands:
 		// The command list is derived on demand by visibleCmds, which sorts what it
-		// returns — so there is nothing held to re-sort, only a cursor to rescue.
+		// returns, so there is nothing held to re-sort, only a cursor to rescue.
 		var selID string
 		if r, ok := m.drilledCmd(); ok {
 			selID = r.ID
@@ -969,7 +967,7 @@ func (m *Model) sortTokens() { sortRows(tokenSpecs, m.cols[ctTokens], m.tokens) 
 // colTarget is the table the columns pane reshapes: in the explorer and the
 // devices view, whichever list pane has focus (the explorer's sidebar and details
 // pane have no columns of their own, so they aim at the prompt list the view
-// hangs off — the same rule / uses); everywhere else, the browse table.
+// hangs off; the same rule / uses); everywhere else, the browse table.
 func (m Model) colTarget() colTable {
 	switch m.view {
 	case viewAgents:
@@ -1009,7 +1007,7 @@ func (m Model) handleColumnsKey(s string) (tea.Model, tea.Cmd) {
 		m.showCols = false
 		return m, nil
 	case "?":
-		// This pane runs before the global keys, so ? has to be handled here too —
+		// This pane runs before the global keys, so ? has to be handled here too;
 		// otherwise the pane with the least guessable keys is the one pane that
 		// cannot show you what they are.
 		return m.openHelp()
@@ -1066,7 +1064,7 @@ func (m Model) toggleColumn(t colTable, c int) (tea.Model, tea.Cmd) {
 }
 
 // colStateNote says why a column is not on screen when the answer is not "you
-// switched it off" — a gate the rows themselves closed, or a width the pane does
+// switched it off": a gate the rows themselves closed, or a width the pane does
 // not have. Without it a column can read as switched off when it is not, and
 // pressing space on it would appear to do nothing.
 func (m Model) colStateNote(t colTable, c int, l colLayout) string {
@@ -1142,7 +1140,7 @@ func (m Model) paneLayout(t colTable, fallback int) colLayout {
 
 // listSuffix appends a table's reshaping state to its pane title. The explorer's
 // panes have no status bar of their own, and a list in an unexpected order or
-// missing a column has to say so on the pane that holds it — otherwise "oldest
+// missing a column has to say so on the pane that holds it; otherwise "oldest
 // first" silently becomes "sorted by duration" and the reader has no way to tell.
 func (m Model) listSuffix(t colTable, base string) string {
 	parts := make([]string, 0, 3)
@@ -1158,7 +1156,7 @@ func (m Model) listSuffix(t colTable, base string) string {
 	return strings.Join(parts, "  ")
 }
 
-// sortNote names a table's order for a pane title or the status bar, in words —
+// sortNote names a table's order for a pane title or the status bar, in words:
 // a four-column header has no room for an arrow, and a distinction carried by
 // color alone is no distinction. Empty while the table is in its opening order,
 // which needs no explaining.

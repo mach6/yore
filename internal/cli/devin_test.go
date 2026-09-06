@@ -60,8 +60,8 @@ func TestRunHookDevinPreDurationAndPrompt(t *testing.T) {
 	feedStdin(t, `{"session_id":"d2","tool_name":"exec","tool_input":{"command":"`+cmd+`"}}`, runHookDevinPre)
 	feedStdin(t, `{"session_id":"d2","tool_name":"exec","tool_input":{"command":"`+cmd+`"},"tool_response":{"success":true}}`, runHookDevin)
 
-	// The prompt hook records the prompt itself — that is the point of it being a
-	// record of its own — while the pre hook records nothing at all.
+	// The prompt hook records the prompt itself (that is the point of it being a
+	// record of its own) while the pre hook records nothing at all.
 	rows := spooledRecords(t, dir)
 	require.Len(t, rows, 2, "the prompt record plus one command; the pre hook adds neither")
 
@@ -105,7 +105,7 @@ func TestMergeDevinConfigSchema(t *testing.T) {
 }
 
 // TestMergeDevinConfigPreservesExisting proves the merge never clobbers config
-// already in the file — including Devin's auth and unrelated hooks/servers.
+// already in the file; including Devin's auth and unrelated hooks/servers.
 func TestMergeDevinConfigPreservesExisting(t *testing.T) {
 	cfg := map[string]any{
 		"auth":        map[string]any{"token": "KEEP-ME"},

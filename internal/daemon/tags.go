@@ -98,11 +98,10 @@ func (t *tagIndex) apply(r rec.Record) {
 }
 
 // effective returns a row's resolved freeform tags: command tags ∪ session tags
-// ∪ the matching auto_tags rules, sorted and de-duplicated. nil when none.
-//
-// The record's executor is deliberately not among them. It is an attribute of
-// the command — which agent ran it — not a label anyone put on it, and folding
-// the two together meant a user tag and "claude-code" arrived as one
+// ∪ the matching auto_tags rules, sorted and de-duplicated. nil when none. The
+// record's executor is deliberately not among them. It is an attribute of the
+// command (which agent ran it) not a label anyone put on it, and folding the
+// two together meant a user tag and "claude-code" arrived as one
 // indistinguishable list that no consumer could take apart again.
 func (t *tagIndex) effective(r rec.Record) []string {
 	t.mu.RLock()
@@ -160,19 +159,15 @@ func (t *tagIndex) has(r rec.Record, name string) bool {
 }
 
 // list returns every known tag with its description and how many of the given
-// rows carry it, name-sorted.
-//
-// The count is commands, not associations. Counting associations made a session
-// tag read "1" however many commands the session ran, which is the number nobody
-// wants: you tag a shell to find its work again, so the useful figure is how
-// much work is behind the label. That means resolving every row, which is why
-// the corpus is passed in rather than counted out of the index alone — and it is
-// also what puts auto_tags rules in the listing, since those exist only as a
-// match against a row's cwd.
-//
-// A name with no rows still lists at 0: a bare `tag create`, or an auto_tags
-// rule that currently matches nothing, is a tag you defined and should be able
-// to see.
+// rows carry it, name-sorted. The count is commands, not associations. Counting
+// associations made a session tag read "1" however many commands the session
+// ran, which is the number nobody wants: you tag a shell to find its work again,
+// so the useful figure is how much work is behind the label. That means
+// resolving every row, which is why the corpus is passed in rather than counted
+// out of the index alone, and it is also what puts auto_tags rules in the
+// listing, since those exist only as a match against a row's cwd. A name with no
+// rows still lists at 0: a bare `tag create`, or an auto_tags rule that
+// currently matches nothing, is a tag you defined and should be able to see.
 func (t *tagIndex) list(rows []rec.Record) []proto.TagCount {
 	t.mu.RLock()
 	defer t.mu.RUnlock()

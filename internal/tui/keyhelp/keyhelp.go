@@ -19,7 +19,7 @@ import (
 
 // Row is one binding: the keys as the user should press them, and what they do.
 // Keys is display text ("↑/k", "^t", "1-5"), not a key name the program matches
-// against — dispatch happens on the raw key strings in Keyed.
+// against; dispatch happens on the raw key strings in Keyed.
 type Row struct {
 	Keys string
 	Desc string
@@ -39,7 +39,7 @@ type Group struct {
 const gutter = 3
 
 // Line renders the terse footer: "key desc · key desc · …", clipped to w by
-// dropping whole pieces from the end. The first piece is always kept — a footer
+// dropping whole pieces from the end. The first piece is always kept: a footer
 // that shows one binding is still a footer; a truncated one is noise.
 func Line(th *theme.Theme, rows []Row, w int) string {
 	if w < 1 || len(rows) == 0 {
@@ -76,11 +76,10 @@ func Line(th *theme.Theme, rows []Row, w int) string {
 
 // Panel renders the full grouped key list into a w×h block, windowed at row
 // `top`. It reports the total number of rows the content wants, so the caller
-// can clamp its scroll offset and say whether there is more below.
-//
-// Groups are packed into as many columns as w affords and are filled in reading
-// order — down the first column, then the second — so the list reads the way it
-// is written however wide the terminal is.
+// can clamp its scroll offset and say whether there is more below. Groups are
+// packed into as many columns as w affords and are filled in reading order
+// (down the first column, then the second) so the list reads the way it is
+// written however wide the terminal is.
 func Panel(th *theme.Theme, groups []Group, w, h, top int) (body string, total int) {
 	if w < 1 || h < 1 {
 		return "", 0
@@ -171,7 +170,7 @@ func Panel(th *theme.Theme, groups []Group, w, h, top int) (body string, total i
 }
 
 // styledLine is a rendered line plus the display width it would have without
-// its escape sequences — measuring the styled string is unreliable, and every
+// its escape sequences; measuring the styled string is unreliable, and every
 // caller needs the width to pad columns.
 type styledLine struct {
 	text  string

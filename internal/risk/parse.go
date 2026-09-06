@@ -4,20 +4,18 @@ import "strings"
 
 // A command is judged by what it would *run*, not by what it contains. The
 // difference is the whole game: `grep -rn "rm -rf" docs/` and `sh -c 'rm -rf /'`
-// carry the same eight characters, and only one of them deletes anything.
-//
-// So before any rule runs, the line is lexed into words and cut into command
-// segments wherever a shell would start a new command — a pipe, a `;`, a `&&`,
-// a command substitution, a `find -exec`. Each segment names the command word
-// it would actually execute, with `sudo`-style wrappers stripped, quoted text
-// kept as inert data, and its own flags kept to itself. Rules then ask "is
-// `kill` the command here?" instead of "does this string contain kill".
-//
-// This is not a shell parser and does not try to be. It resolves exactly the
-// cases that separate a command from a mention of one; anything subtler — an
-// alias, a Makefile target, a variable holding a command name — stays invisible,
-// deliberately, because a classifier that is wrong in an inspectable direction
-// beats one that is wrong subtly.
+// carry the same eight characters, and only one of them deletes anything. So
+// before any rule runs, the line is lexed into words and cut into command
+// segments wherever a shell would start a new command: a pipe, a `;`, a `&&`, a
+// command substitution, a `find -exec`. Each segment names the command word it
+// would actually execute, with `sudo`-style wrappers stripped, quoted text kept
+// as inert data, and its own flags kept to itself. Rules then ask "is `kill` the
+// command here?" instead of "does this string contain kill". This is not a shell
+// parser and does not try to be. It resolves exactly the cases that separate a
+// command from a mention of one; anything subtler (an alias, a Makefile target,
+// a variable holding a command name) stays invisible, deliberately, because a
+// classifier that is wrong in an inspectable direction beats one that is wrong
+// subtly.
 
 // tok is one lexed word or operator. quoted marks text that came from inside
 // quotes: a shell hands it over as data, so no rule may read it as a command.
@@ -28,7 +26,7 @@ type tok struct {
 }
 
 // subst is the marker the lexer emits wherever a command substitution, process
-// substitution, or subshell opens or closes — every one of them a place a new
+// substitution, or subshell opens or closes: every one of them a place a new
 // command begins, including inside double quotes, where `"$(curl …)"` still runs.
 const subst = "\x00("
 
@@ -177,7 +175,7 @@ var execArgs = map[string]bool{
 
 // wrappers run another command and are transparent to what the risk actually
 // is: `sudo rm -rf /` is an rm, not a sudo. `su` and `pkexec` are deliberately
-// absent — they are interesting in their own right.
+// absent: they are interesting in their own right.
 var wrappers = map[string]bool{
 	"sudo": true, "doas": true, "env": true, "command": true, "builtin": true,
 	"exec": true, "nohup": true, "time": true, "nice": true, "ionice": true,
@@ -390,7 +388,7 @@ func (s *segment) is(head string, words ...string) bool {
 	return true
 }
 
-// shortFlag reports a letter in one of this segment's own short-flag clusters —
+// shortFlag reports a letter in one of this segment's own short-flag clusters:
 // this segment's, which is what keeps `grep -rn "rm -rf"` from reading as an rm.
 func (s *segment) shortFlag(letter byte) bool {
 	for _, a := range s.args {
@@ -424,7 +422,7 @@ func (s *segment) hasArg(v string) bool {
 	return false
 }
 
-// argPrefix reports an argument beginning with p — `of=/dev/sda`, `s3://…`.
+// argPrefix reports an argument beginning with p, `of=/dev/sda`, `s3://…`.
 func (s *segment) argPrefix(p string) bool {
 	for _, a := range s.args {
 		if strings.HasPrefix(a.val, p) {
@@ -437,7 +435,7 @@ func (s *segment) argPrefix(p string) bool {
 // payloads are the strings this line hands to something that will execute them:
 // the quoted arguments of an interpreter (`sh -c '…'`, `python -c '…'`). Once
 // inside such a payload every quoted string is suspect in turn, which is how
-// `python -c 'os.system("rm -rf /")'` is reached — while `grep "rm -rf"`, whose
+// `python -c 'os.system("rm -rf /")'` is reached, while `grep "rm -rf"`, whose
 // command word executes nothing, is not.
 func (c *cmdline) payloads() []string {
 	var out []string

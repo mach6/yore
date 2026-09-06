@@ -49,7 +49,7 @@ func formatCommandList(title string, rows []rec.Record, localHost string) string
 // formatChronological renders rows oldest-first with interleaved prompts.
 func formatChronological(title string, rows []rec.Record) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s — %d command(s)\n\n", title, len(rows))
+	fmt.Fprintf(&b, "%s: %d command(s)\n\n", title, len(rows))
 	for _, r := range rows {
 		fmt.Fprintf(&b, "%s  %s  %s", relTime(r.StartMs), exitGlyph(r), oneLine(r.Cmd, 120))
 		if r.Cwd != "" {
@@ -60,10 +60,14 @@ func formatChronological(title string, rows []rec.Record) string {
 	return b.String()
 }
 
+// unknown is the placeholder for a value a record never carried, matching
+// theme.Unknown in the TUI so both surfaces say "no value" the same way.
+const unknown = "·"
+
 // exitGlyph renders a record's outcome: ✓ ok, ✗N failed, · unknown.
 func exitGlyph(r rec.Record) string {
 	if r.Exit == nil {
-		return "·"
+		return unknown
 	}
 	if *r.Exit == 0 {
 		return "✓"
@@ -105,7 +109,7 @@ func shortID(id string) string {
 		return id[:8]
 	}
 	if id == "" {
-		return "—"
+		return unknown
 	}
 	return id
 }
@@ -120,7 +124,7 @@ func execLabel(tag string) string {
 // relTime renders a millisecond timestamp as a compact age ("5m", "3h", "2d").
 func relTime(ms int64) string {
 	if ms <= 0 {
-		return "—"
+		return unknown
 	}
 	d := time.Since(time.UnixMilli(ms))
 	switch {

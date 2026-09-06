@@ -38,8 +38,8 @@ func TestPushArm(t *testing.T) {
 
 // TestRemoteOnline covers the reachability gate for the eager push-on-record
 // nudge: an eager push fires only while the server is believed reachable (a
-// sync succeeded or is in flight). When it is unavailable — or unconfigured, or
-// the cache is nil — new records stay spooled locally instead of firing a push
+// sync succeeded or is in flight). When it is unavailable, or unconfigured, or
+// the cache is nil, new records stay spooled locally instead of firing a push
 // that would only fail.
 func TestRemoteOnline(t *testing.T) {
 	tests := []struct {

@@ -1,4 +1,4 @@
-# yore — fish shell integration (capture mode).
+# yore; fish shell integration (capture mode).
 # Emitted by `yore init fish`; load with:  yore init fish | source
 # Sourcing repeatedly is safe and produces no output during normal operation.
 
@@ -26,7 +26,7 @@ end
 
 # postexec runs after the command finishes. $status is captured first, before
 # anything else in this function can disturb it. Duration comes straight from
-# fish's own $CMD_DURATION (already integer milliseconds) — unlike zsh/bash,
+# fish's own $CMD_DURATION (already integer milliseconds); unlike zsh/bash,
 # there is no start timestamp to capture in preexec and no math to do here.
 function _yore_postexec --on-event fish_postexec
 	set -l exit $status

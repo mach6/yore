@@ -25,13 +25,13 @@ func (s *server) runQuery(f *match.Filter, q proto.QueryReq) proto.QueryResp {
 		scope = proto.ScopeLocal
 	}
 
-	// Snapshot the slice headers under RLock. The corpus is append-only and
-	// its [0,len) prefix is never mutated in place, so the snapshot is a stable
+	// Snapshot the slice headers under RLock. The corpus is append-only and its
+	// [0,len) prefix is never mutated in place, so the snapshot is a stable
 	// view and we can scan it after releasing the lock. corpus and cmds are
-	// appended together under the same lock, so their lengths agree.
-	// Deep scopes (all hosts, or a specific remote host) also draw on the RAM
-	// remote cache and, if it's cold or stale, kick a background sync so the
-	// next query is richer — the request itself never blocks on the network.
+	// appended together under the same lock, so their lengths agree. Deep
+	// scopes (all hosts, or a specific remote host) also draw on the RAM remote
+	// cache and, if it's cold or stale, kick a background sync so the next
+	// query is richer: the request itself never blocks on the network.
 	deep := scope == proto.ScopeAll || scope == proto.ScopeHost
 	if deep && s.remote.enabled() {
 		nudge(s.syncWake)
@@ -99,7 +99,7 @@ func (s *server) runQuery(f *match.Filter, q proto.QueryReq) proto.QueryResp {
 	}
 
 	// Human-only: drop everything an agent ran. The count of what went is kept
-	// and returned — a caller hiding a whole category of history needs to be able
+	// and returned: a caller hiding a whole category of history needs to be able
 	// to say how much, and "no matches" is a lie when the match is behind this
 	// filter. Counted after the query match, so it answers "how many *of these*
 	// are hidden", not "how many agent commands exist".
@@ -133,7 +133,7 @@ func (s *server) runQuery(f *match.Filter, q proto.QueryReq) proto.QueryResp {
 		rows = frecencyRank(rows, q.Cwd, s.nowMs())
 	} else {
 		// Newest-first: descending StartMs, ties broken by descending Seq. (Seq
-		// order alone is not StartMs order — imported rows arrive out of time.)
+		// order alone is not StartMs order; imported rows arrive out of time.)
 		sort.Slice(rows, func(a, b int) bool {
 			if rows[a].StartMs != rows[b].StartMs {
 				return rows[a].StartMs > rows[b].StartMs
@@ -186,7 +186,7 @@ func (s *server) runQuery(f *match.Filter, q proto.QueryReq) proto.QueryResp {
 		windowed[i].Tags = s.tags.effective(windowed[i])
 	}
 	// Rejoin each row with the text of the prompt that caused it. The text is
-	// stored once, on its own record, so this is where it comes back — every
+	// stored once, on its own record, so this is where it comes back: every
 	// consumer downstream still just reads r.Prompt.
 	s.prompts.hydrate(windowed)
 
@@ -205,7 +205,7 @@ func (s *server) runQuery(f *match.Filter, q proto.QueryReq) proto.QueryResp {
 
 // tagCorpus is the row set `yore tag list` counts over: this host's commands,
 // plus every other host's when the scope is ScopeAll. Deep scope reads the RAM
-// remote cache as it stands and does not nudge a sync — counting labels is not
+// remote cache as it stands and does not nudge a sync; counting labels is not
 // worth waking the network for, and a cold cache simply counts local.
 func (s *server) tagCorpus(scope string) []rec.Record {
 	s.mu.RLock()
@@ -266,7 +266,7 @@ func fuzzyMatch(query string, cmds []string) []int {
 
 // frecencyRank collapses rows to one per command and orders them by a
 // frequency×recency score with a boost for commands last run in the query's
-// cwd — so the commands you run often and recently (and here) float to the top.
+// cwd, so the commands you run often and recently (and here) float to the top.
 func frecencyRank(rows []rec.Record, cwd string, nowMs int64) []rec.Record {
 	type agg struct {
 		rep   rec.Record // most-recent occurrence, the representative row

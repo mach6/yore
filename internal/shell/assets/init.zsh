@@ -1,4 +1,4 @@
-# yore — zsh shell integration ({{.Mode}} mode).
+# yore; zsh shell integration ({{.Mode}} mode).
 # Emitted by `yore init zsh`; load with:  eval "$(yore init zsh)"
 # Sourcing repeatedly is safe and produces no output during normal operation.
 
@@ -28,7 +28,7 @@ _yore_preexec() {
 
 # precmd runs after the command finishes, before the next prompt is drawn.
 _yore_precmd() {
-	local exit=$?   # the user's exit status — must be captured first
+	local exit=$?   # the user's exit status; must be captured first
 	if [[ -n ${__yore_cmd-} ]]; then
 		integer dur
 		(( dur = (EPOCHREALTIME - __yore_start) * 1000 ))   # float secs -> int ms
@@ -63,14 +63,14 @@ if [[ -o interactive ]]; then
 	fc -R =(command {{.Bin}} export --shell 2>/dev/null) 2>/dev/null
 fi
 # Redaction gate: keep the shell's in-memory history consistent with yore's
-# store — anything yore would drop (secret / ignored dir / space-prefixed) is
+# store; anything yore would drop (secret / ignored dir / space-prefixed) is
 # not added to the shell history either. The filter exits 1 to drop, and a
 # zshaddhistory function returning non-zero skips the entry.
 # Output goes to /dev/null: filter answers with its exit status and prints
 # nothing, and a yore process whose stdout is the terminal asks that terminal
 # for its background colour and waits for the reply. On a hook that runs for
 # every command that costs a round trip per prompt, and the reply-read swallows
-# input already queued — a pasted block loses lines.
+# input already queued: a pasted block loses lines.
 _yore_addhistory() {
 	emulate -L zsh
 	command {{.Bin}} filter --cwd "$PWD" <<< "${1%$'\n'}" >/dev/null 2>&1
@@ -82,7 +82,7 @@ add-zsh-hook zshaddhistory _yore_addhistory
 # Whether accepting a Ctrl-R result should run it immediately (Atuin parity).
 # Default: put the picked command on the prompt for review; opt in with
 # `yore set-config enter_executes true` to have Enter run it. Asked of yore at
-# call time — NOT cached at source time — so the setting takes effect without
+# call time: NOT cached at source time, so the setting takes effect without
 # re-sourcing. Falls back to the default (review) if yore is unavailable, which
 # is the safe direction: nothing runs that the user did not look at.
 _yore_enter_executes() {
@@ -131,12 +131,12 @@ fi
 {{- if .Aliases}}
 
 # Convenience aliases (Options.Aliases). `hb` opens the browser and drops the
-# command you pick onto your NEXT prompt (print -z) — Enter inserts, y copies to
+# command you pick onto your NEXT prompt (print -z); Enter inserts, y copies to
 # the clipboard. `hs` searches (the `history | grep` pattern), with scoped
 # siblings hsa (all hosts), hss (this session), hsc (this cwd), and hsw (this git
-# repo). yore does NOT touch `h` — keep your own (e.g. h=history). You may already
+# repo). yore does NOT touch `h`; keep your own (e.g. h=history). You may already
 # use these names, so drop any first at runtime, and escape each function name
-# (\hb, \hs, \hsa, …) so zsh does not alias-expand it at PARSE time — an unescaped
+# (\hb, \hs, \hsa, …) so zsh does not alias-expand it at PARSE time: an unescaped
 # hs() would abort sourcing with "defining function based on alias".
 unalias hb hs hsa hss hsc hsw 2>/dev/null
 \hb() {  # browse; drop the picked command onto the next prompt (print -z)
@@ -150,7 +150,7 @@ unalias hb hs hsa hss hsc hsw 2>/dev/null
 	local scope=$1; shift
 	if [[ -t 1 ]]; then
 		# Interactive: capture the pick and push it onto the editor buffer stack
-		# (print -z) so it lands on the NEXT prompt, editable — same as the Ctrl-R
+		# (print -z) so it lands on the NEXT prompt, editable; same as the Ctrl-R
 		# and Up widgets. The TUI still draws in color: it renders on /dev/tty, so
 		# capturing its stdout here does not strip styling.
 		local __sel

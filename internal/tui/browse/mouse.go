@@ -89,7 +89,7 @@ func (m *Model) moveDivider(x, y int) {
 		}
 		if m.zoomDetailActive() {
 			// This seam's ratio is the detail companion's own width, unlike the
-			// sidebar seam it otherwise shares vDiv with — the companion sits on
+			// sidebar seam it otherwise shares vDiv with: the companion sits on
 			// the right, so its share is the far side of where the pointer is.
 			m.splits.ZoomDetail = clampRatio(ratioFull-ratioOf(x, m.width), minColRatio, maxColRatio)
 			break
@@ -122,7 +122,7 @@ func (m *Model) moveDivider(x, y int) {
 	case dragHosts:
 		// This seam lives inside the explorer's top-left region, so the ratio is
 		// of that region's height (the main horizontal seam's position), not the
-		// whole frame — dragging the main seam later keeps the proportion.
+		// whole frame; dragging the main seam later keeps the proportion.
 		topH := m.geo.hDiv - 1
 		if topH < 1 {
 			return
@@ -135,7 +135,7 @@ func (m *Model) moveDivider(x, y int) {
 	m.syncDetail()
 }
 
-// savePrefsCmd persists the whole remembered UI state off the render path — the
+// savePrefsCmd persists the whole remembered UI state off the render path: the
 // seams and every table's columns together, because they share one file and
 // writing half of it would erase the other half. A failure to write is
 // deliberately swallowed: remembered layout is a convenience, and losing it must
@@ -179,7 +179,7 @@ func (m Model) focusAt(x, y int) (tea.Model, tea.Cmd) {
 // paneAt returns the index (into the active view's focus order) of the pane
 // containing the pointer. It sweeps every slot: a view that lays out fewer panes
 // leaves the rest zero, and a zoomed layout parks its one full-frame rect at the
-// zoomed pane's own index — which is not necessarily the first.
+// zoomed pane's own index; which is not necessarily the first.
 func (m Model) paneAt(x, y int) (int, bool) {
 	for i := range m.geo.p {
 		if m.geo.p[i].contains(x, y) {
@@ -198,10 +198,10 @@ func (m Model) wheel(x, y, d int) (tea.Model, tea.Cmd) {
 	}
 	m.hscroll = 0
 	if m.view == viewDevices {
-		// Move the cursor in the list under the pointer, leaving m.dpane alone —
-		// the same "glancing at a neighbouring pane costs nothing" rule the other
-		// views follow. Falling through to the browse arm scrolled the HOST sidebar
-		// of a view that was not even on screen, and re-ran its query.
+		// Move the cursor in the list under the pointer, leaving m.dpane alone: the
+		// same "glancing at a neighbouring pane costs nothing" rule the other views
+		// follow. Falling through to the browse arm scrolled the HOST sidebar of a
+		// view that was not even on screen, and re-ran its query.
 		if devPane(i) == dpTokens {
 			m.tokSel = clampIndex(m.tokSel+d, len(m.tokens))
 		} else {

@@ -68,7 +68,7 @@ func (s *Server) buildTools() []toolDef {
 		},
 		{
 			name: "command_status",
-			desc: "Has this exact command been run before, and what happened? Returns prior runs with their exit codes and times — use before re-running something.",
+			desc: "Has this exact command been run before, and what happened? Returns prior runs with their exit codes and times; use before re-running something.",
 			schema: obj(map[string]any{
 				"command":   str("the command to look up"),
 				"directory": str("restrict to this directory"),
@@ -514,7 +514,7 @@ func (s *Server) toolWhatFailed(raw json.RawMessage) (any, *rpcError) {
 		if label == "" {
 			label = "session " + shortID(g.session)
 		}
-		fmt.Fprintf(&b, "[%s] %s — %d failed\n", relTime(g.lastMs), label, g.fail)
+		fmt.Fprintf(&b, "[%s] %s: %d failed\n", relTime(g.lastMs), label, g.fail)
 		for _, r := range g.cmds {
 			fmt.Fprintf(&b, "    ✗%d  %s  (%s)\n", *r.Exit, oneLine(r.Cmd, 80), r.Cwd)
 		}
@@ -585,7 +585,7 @@ func (s *Server) toolReplayAgentSession(raw json.RawMessage) (any, *rpcError) {
 	sortChronological(rows)
 	rows = capRows(rows, a.limitOr(100))
 	var b strings.Builder
-	fmt.Fprintf(&b, "Session %s — %d command(s)\n\n", a.SessionID, len(rows))
+	fmt.Fprintf(&b, "Session %s: %d command(s)\n\n", a.SessionID, len(rows))
 	var lastPrompt string
 	for _, r := range rows {
 		if r.Prompt != "" && r.Prompt != lastPrompt {
@@ -629,7 +629,7 @@ func (s *Server) toolAssessRisk(raw json.RawMessage) (any, *rpcError) {
 			}
 			if len(exact) > 0 {
 				ok, fail, unknown := tallyExits(exact)
-				fmt.Fprintf(&b, "    history: run %d time(s) across your machines — %d ok, %d failed, %d unknown\n", len(exact), ok, fail, unknown)
+				fmt.Fprintf(&b, "    history: run %d time(s) across your machines (%d ok, %d failed, %d unknown)\n", len(exact), ok, fail, unknown)
 			} else {
 				b.WriteString("    history: never run before on any of your machines\n")
 			}

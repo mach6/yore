@@ -95,7 +95,7 @@ func shellHistoryLine(startMs int64, cmd string) string {
 // bashHistoryLine formats one record for bash `history -r`, which is line-
 // oriented: each entry is one physical line. A multiline command is collapsed
 // to a single runnable line (newlines → "; ") so it seeds as one entry rather
-// than several bogus ones — a documented coarseness of bash takeover.
+// than several bogus ones: a documented coarseness of bash takeover.
 func bashHistoryLine(cmd string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(cmd, "\r\n", "\n"), "\n", "; ")
 }

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
-# stress.sh — MANUAL stress/soak harness for yore's 3-container sandbox.
+# stress.sh; MANUAL stress/soak harness for yore's 3-container sandbox.
 #
 # NOT wired into CI (never runs in Drone). It rebuilds the CURRENT binary into a
-# fresh sandbox, hammers two clients with lots of history — normal commands,
+# fresh sandbox, hammers two clients with lots of history: normal commands,
 # secrets that MUST be redacted, leading-space and ignore-dir commands that MUST
-# be dropped, and agent-tagged batches — syncs everything end-to-end encrypted,
+# be dropped, and agent-tagged batches; syncs everything end-to-end encrypted,
 # then verifies correctness and reports timings. Every check prints ✓/✗ and the
 # script exits non-zero if any check fails. It always tears the sandbox down
 # (even on failure) unless --keep / KEEP=1 is given.
@@ -36,7 +36,7 @@ for arg in "$@"; do
 done
 
 # Unique per-run markers so a leak / a match is unambiguous and greppable, and so
-# stale data (there shouldn't be any — we start fresh) can never satisfy a check.
+# stale data (there shouldn't be any: we start fresh) can never satisfy a check.
 RUN="$(date +%s)"
 ZMARK="ZHOST${RUN}"            # appears in EVERY command stored by zsh-box
 BMARK="BHOST${RUN}"            # appears in EVERY command stored by bash-box
@@ -117,11 +117,11 @@ trap teardown EXIT
 # ===========================================================================
 # 1. Fresh sandbox
 # ===========================================================================
-step "Fresh sandbox (down -v; up -d --build) — N=$N per host"
+step "Fresh sandbox (down -v; up -d --build); N=$N per host"
 docker compose -f "$COMPOSE" down -v >/dev/null 2>&1 || true
 docker compose -f "$COMPOSE" up -d --build
 
-# Wait for the server healthcheck (probed from inside a client — nothing is
+# Wait for the server healthcheck (probed from inside a client: nothing is
 # published to the host).
 printf '     waiting for server health'
 healthy=0
@@ -151,8 +151,8 @@ dc bash yore setup --server http://server:8080 --token "$TOKEN" \
 ok "bash-box registered (pending)"
 
 # Approving is a keypress in the devices view, which a script cannot press. The
-# view is one client of the daemon's protocol — newline-delimited JSON on a unix
-# socket — and so is this: `devices` to find the pending machine, `approve` to
+# view is one client of the daemon's protocol: newline-delimited JSON on a unix
+# socket, and so is this: `devices` to find the pending machine, `approve` to
 # admit it. socat and jq both run INSIDE the container (the client image carries
 # them), so the harness still needs nothing on the host but docker.
 dsock() { # dsock <request-json> [jq-filter]
@@ -184,7 +184,7 @@ write_cfg bash "[]"
 ok "config seeded: zsh-box ignore_dirs=[$IGNORE_DIR], backups on (2s) both hosts"
 
 # ===========================================================================
-# 3. Generate load — ONE docker exec per host running a bash loop
+# 3. Generate load: ONE docker exec per host running a bash loop
 # ===========================================================================
 # The generator (below) is fed on stdin to `bash -s`; parameters arrive via -e
 # env vars. It emits a "STRESS_BULK_MS=<n>" line timing just the bulk (normal)
@@ -288,7 +288,7 @@ done
 if [ "$leaks" -eq 0 ]; then
   ok "redaction/E2E: ZERO '$SECRET' in every client db AND the server db (server holds ciphertext only)"
 else
-  bad "redaction/E2E: $SECRET leaked ($leaks hits) — see above"
+  bad "redaction/E2E: $SECRET leaked ($leaks hits); see above"
 fi
 
 # helper: count headless search matches for a marker (dedupe-safe: markers unique)

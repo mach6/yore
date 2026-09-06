@@ -19,7 +19,7 @@ func osc52(s string) string {
 
 // osc52Seq builds the clipboard-set escape sequence for s. Without tmux it is a
 // bare OSC 52. Inside tmux the sequence must be wrapped in tmux's passthrough
-// form — ESC P tmux ; ESC <inner, every ESC doubled> ESC \ — or tmux swallows it
+// form (ESC P tmux ; ESC <inner, every ESC doubled> ESC \) or tmux swallows it
 // instead of forwarding it to the outer terminal. It is a pure function so the
 // framing (plain vs tmux-wrapped) is unit-testable without a terminal.
 func osc52Seq(s string, tmux bool) string {

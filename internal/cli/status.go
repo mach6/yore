@@ -26,7 +26,7 @@ func runSync() int {
 	}
 	st, err := c.Status()
 	if err == nil {
-		fmt.Printf("sync complete — remote: %s (%d hosts)\n", st.Remote.State, st.Remote.Hosts)
+		fmt.Printf("sync complete. remote: %s (%d hosts)\n", st.Remote.State, st.Remote.Hosts)
 	} else {
 		fmt.Println("sync complete")
 	}
@@ -63,7 +63,7 @@ func runStatus() int {
 		// "revoked" alone reads like a transient. It is not: this device is out
 		// of the group, its cached copy of everyone else's history has been
 		// deleted, and only re-enrolling changes that.
-		fmt.Println("            this device was revoked — its cached remote history has been deleted")
+		fmt.Println("            this device was revoked: its cached remote history has been deleted")
 		fmt.Println("            re-enroll it with `yore enroll` to sync again")
 	}
 	return 0

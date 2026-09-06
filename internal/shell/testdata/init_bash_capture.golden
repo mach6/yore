@@ -1,4 +1,4 @@
-# yore — bash shell integration (capture mode).
+# yore; bash shell integration (capture mode).
 # Emitted by `yore init bash`; load with:  eval "$(yore init bash)"
 # Sourcing repeatedly is safe and produces no output during normal operation.
 
@@ -398,7 +398,7 @@ __yore_preexec() {
 
 # precmd runs after the command finishes, before the next prompt is drawn.
 __yore_precmd() {
-	local exit=$?   # the user's exit status — must be captured first
+	local exit=$?   # the user's exit status; must be captured first
 	[[ -n ${__yore_cmd-} ]] || return "$exit"
 	local -a dur=()
 	if [[ -n ${__yore_start-} && -n ${EPOCHREALTIME-} ]]; then

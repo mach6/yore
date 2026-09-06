@@ -1,21 +1,17 @@
-// Package rstore is the daemon's on-disk cache of OTHER machines' history.
-//
-// It holds exactly what the sync server holds — sealed record blobs this
-// package cannot read and has no key for — so yore's rule that other hosts'
-// PLAINTEXT never touches this machine's disk is untouched: decryption happens
-// in the daemon's RAM, from here, and the result is never written back.
-//
-// What it buys is bounded, incremental startup. Pull cursors used to live only
-// in RAM, so every daemon lifetime re-downloaded and re-decrypted every other
-// machine's entire archive from seq 0 — work proportional to all history ever
-// recorded, repeated several times a day once the idle timeout recycles the
-// process. Here the cursor is persisted next to the ciphertext it describes, so
-// a restart fetches only what is genuinely new, and Keep caps how much of each
-// host's tail is retained at all.
-//
-// The cache is DERIVED data: deleting the file costs one full re-pull and
-// nothing else. It is stored separately from data.db precisely because data.db
-// is defined as holding only this host's own history.
+// Package rstore is the daemon's on-disk cache of OTHER machines' history. It
+// holds exactly what the sync server holds (sealed record blobs this package
+// cannot read and has no key for) so yore's rule that other hosts' PLAINTEXT
+// never touches this machine's disk is untouched: decryption happens in the
+// daemon's RAM, from here, and the result is never written back. What it buys
+// is bounded, incremental startup. Pull cursors used to live only in RAM, so
+// every daemon lifetime re-downloaded and re-decrypted every other machine's
+// entire archive from seq 0; work proportional to all history ever recorded,
+// repeated several times a day once the idle timeout recycles the process. Here
+// the cursor is persisted next to the ciphertext it describes, so a restart
+// fetches only what is genuinely new, and Keep caps how much of each host's
+// tail is retained at all. The cache is DERIVED data: deleting the file costs
+// one full re-pull and nothing else. It is stored separately from data.db
+// precisely because data.db is defined as holding only this host's own history.
 package rstore
 
 import (
@@ -49,7 +45,7 @@ var bucketCursors = []byte("cursors")
 // bucketCounts maps hostID -> how many records its stream holds (8-byte BE).
 // It is maintained rather than measured because bbolt's Bucket.Stats reports
 // the B-tree as last written, NOT including puts still pending in the current
-// transaction — so trimming off Stats inside the same Update that appended
+// transaction, so trimming off Stats inside the same Update that appended
 // would work from a count several records stale and under-trim.
 var bucketCounts = []byte("counts")
 
@@ -146,9 +142,8 @@ func (s *Store) Records(hostID string) ([]wire.PullRecord, error) {
 // Append caches a batch of sealed records for one host, advances that host's
 // cursor to `cursor`, and trims the stream to the newest `keep` records
 // (keep <= 0 retains everything). Records already present are overwritten
-// harmlessly — the server's stream is append-only and immutable per seq.
-//
-// It returns how many records were trimmed, so the caller can mirror the
+// harmlessly: the server's stream is append-only and immutable per seq. It
+// returns how many records were trimmed, so the caller can mirror the
 // eviction in its RAM cache.
 func (s *Store) Append(hostID string, recs []wire.PullRecord, cursor uint64, keep int) (trimmed int, err error) {
 	if hostID == "" {

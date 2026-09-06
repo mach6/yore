@@ -189,7 +189,7 @@ func resultText(res any) string {
 }
 
 // formatRiskSummary tallies recent agent commands by risk level and lists the
-// most severe ones — the pre-run safety picture for the current fleet.
+// most severe ones: the pre-run safety picture for the current fleet.
 func formatRiskSummary(rows []rec.Record, rs *risk.Ruleset) string {
 	counts := map[risk.Level]int{}
 	var flagged []struct {
@@ -221,7 +221,7 @@ func formatRiskSummary(rows []rec.Record, rs *risk.Ruleset) string {
 			if i >= 15 {
 				break
 			}
-			fmt.Fprintf(&b, "  [%s] %s — %s\n", f.a.Level, oneLine(f.r.Cmd, 80), f.a.Reason)
+			fmt.Fprintf(&b, "  [%s] %s: %s\n", f.a.Level, oneLine(f.r.Cmd, 80), f.a.Reason)
 		}
 	}
 	return b.String()

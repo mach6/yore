@@ -136,7 +136,7 @@ func TestRanges(t *testing.T) {
 }
 
 func TestRangesUTF8Offsets(t *testing.T) {
-	// "café ÉCLAIR" — the case-insensitive term "éclair" must report the
+	// "café ÉCLAIR": the case-insensitive term "éclair" must report the
 	// byte offsets of "ÉCLAIR" in the ORIGINAL string, not in a lowercased
 	// copy (é and É are 2 bytes each in UTF-8).
 	text := "café ÉCLAIR" // bytes: c a f é(2) sp É(2) C L A I R

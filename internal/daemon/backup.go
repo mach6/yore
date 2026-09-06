@@ -38,7 +38,7 @@ func (s *server) backupLoop() {
 // doBackup writes a consistent online snapshot of data.db into the backups dir
 // under a timestamped name, then prunes older backups to the configured keep
 // count. Called only from backupLoop (single goroutine), so writes and prunes
-// never overlap. Errors are logged, not fatal — a failed backup must never take
+// never overlap. Errors are logged, not fatal: a failed backup must never take
 // the daemon down.
 func (s *server) doBackup() {
 	dir := config.BackupDir(s.dir)

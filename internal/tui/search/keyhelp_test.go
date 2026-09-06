@@ -63,7 +63,7 @@ func handledKeys(t *testing.T) map[string]bool {
 			})
 		}
 	}
-	require.NotEmpty(t, keys, "found no key cases — the handler names must have drifted")
+	require.NotEmpty(t, keys, "found no key cases: the handler names must have drifted")
 	return keys
 }
 
@@ -103,11 +103,11 @@ func TestEveryHandledKeyIsDescribed(t *testing.T) {
 
 	for k := range handled {
 		require.Truef(t, described[k],
-			"key %q is handled but appears in no help text — add it to keys.go", k)
+			"key %q is handled but appears in no help text; add it to keys.go", k)
 	}
 	for k := range described {
 		require.Truef(t, handled[k],
-			"key %q is advertised but no handler dispatches on it — drop it from keys.go", k)
+			"key %q is advertised but no handler dispatches on it; drop it from keys.go", k)
 	}
 }
 
@@ -126,7 +126,7 @@ func altSlash() tea.KeyMsg {
 }
 
 // TestHelpFitsThePanel: the panel is drawn inline above the shell prompt, so the
-// key list has to live inside the rows the panel already claims — a list that
+// key list has to live inside the rows the panel already claims; a list that
 // grew past a full result set would shove the terminal's scrollback around every
 // time someone asked what a key does.
 func TestHelpFitsThePanel(t *testing.T) {
@@ -188,7 +188,7 @@ func TestQuestionMarkStillFiltersWhileTyping(t *testing.T) {
 
 // TestStatusHintsYieldToWarnings: the hints are the least important thing on the
 // status line, so a narrow terminal drops them before it drops "daemon
-// unreachable" — and never overflows.
+// unreachable", and never overflows.
 func TestStatusHintsYieldToWarnings(t *testing.T) {
 	for _, w := range []int{20, 40, 60, 100, 160} {
 		m := readyPanel(t, w)

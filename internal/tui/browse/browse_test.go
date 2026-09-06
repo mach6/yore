@@ -423,7 +423,7 @@ func TestCheckAll(t *testing.T) {
 }
 
 // TestCheckAllTogglesFromPartial: ctrl+a is a master-checkbox tri-state, not
-// a one-way "select everything" — a partial selection promotes to all, a full
+// a one-way "select everything"; a partial selection promotes to all, a full
 // selection clears, and a third press checks all again, exactly the way a
 // table header's own select-all checkbox behaves.
 func TestCheckAllTogglesFromPartial(t *testing.T) {
@@ -443,13 +443,13 @@ func TestCheckAllTogglesFromPartial(t *testing.T) {
 	m, _ = step(t, m, press("ctrl+a"))
 	require.Zero(t, m.checkedCount(), "ctrl+a on a full selection should clear it")
 
-	// A third press checks all again — the toggle keeps working, not a one-shot.
+	// A third press checks all again: the toggle keeps working, not a one-shot.
 	m, _ = step(t, m, press("ctrl+a"))
 	require.Equal(t, 3, m.checkedCount(), "ctrl+a should check all again after clearing")
 }
 
 // TestCheckAllClearsWhenAllCheckedBySpace: the "all checked" test is about
-// the state of m.checked, not about which key put it there — checking every
+// the state of m.checked, not about which key put it there; checking every
 // row one at a time with space must clear on the next ctrl+a exactly like
 // checking them with ctrl+a itself would.
 func TestCheckAllClearsWhenAllCheckedBySpace(t *testing.T) {
@@ -477,8 +477,8 @@ func TestCheckClearOnEsc(t *testing.T) {
 	require.Zero(t, m.checkedCount(), "esc should clear an active selection")
 }
 
-// TestCheckSurvivesUnzoomEsc: esc backs out one visible thing at a time — the
-// zoom first, then the selection — the same "innermost first" rule the agent
+// TestCheckSurvivesUnzoomEsc: esc backs out one visible thing at a time (the
+// zoom first, then the selection) the same "innermost first" rule the agent
 // explorer's esc already follows.
 func TestCheckSurvivesUnzoomEsc(t *testing.T) {
 	f := &fakeBackend{}
@@ -526,7 +526,7 @@ func TestDeleteConfirmShowsCheckedCount(t *testing.T) {
 
 // TestDeleteConfirmSingleCheckedUsesCountPrompt: even one row EXPLICITLY
 // checked goes through the bulk (count) prompt rather than the cursor-based
-// one — the user went through the selection mechanism on purpose, and the two
+// one; the user went through the selection mechanism on purpose, and the two
 // prompts confirm different things (a set of ids vs. "whatever the cursor is
 // on right now").
 func TestDeleteConfirmSingleCheckedUsesCountPrompt(t *testing.T) {
@@ -542,10 +542,10 @@ func TestDeleteConfirmSingleCheckedUsesCountPrompt(t *testing.T) {
 }
 
 // runBulkDelete confirms a bulk delete and delivers its result. The deletes run
-// in a command rather than inline in Update — the table holds every matching row
+// in a command rather than inline in Update (the table holds every matching row
 // (proto.LimitAll), so ctrl+a can check an archive and doing the round trips on
-// the event loop would freeze the UI — so a test has to drain the command the
-// way bubbletea would, or it asserts on a delete that has not happened yet.
+// the event loop would freeze the UI) so a test has to drain the command the way
+// bubbletea would, or it asserts on a delete that has not happened yet.
 func runBulkDelete(t *testing.T, m Model) Model {
 	t.Helper()
 	m, _ = step(t, m, press("d"))
@@ -571,7 +571,7 @@ func TestBulkDeleteDoesNotBlockUpdate(t *testing.T) {
 	m, _ = step(t, m, press("d"))
 	m, cmd := step(t, m, press("y"))
 
-	require.Empty(t, f.deleted, "confirming must not delete inline — the work belongs in the command")
+	require.Empty(t, f.deleted, "confirming must not delete inline: the work belongs in the command")
 	require.Len(t, m.rows, 3, "no row may leave the table before the deletes have run")
 	require.Contains(t, strip(m.View()), "deleting 3 records…", "the in-progress flash must be showing while the command runs")
 	require.NotNil(t, cmd, "confirming must hand back the command that does the work")
@@ -642,9 +642,8 @@ func TestBulkDeleteAllFail(t *testing.T) {
 }
 
 // --- selection goes stale ---------------------------------------------------
-//
 // Every path that can change which records the table shows must drop a bulk
-// selection made under the old rows — a mark that survived would be a mark on
+// selection made under the old rows: a mark that survived would be a mark on
 // data the user never looked at, and the one consumer today is delete.
 
 func TestCheckClearedOnNewSearch(t *testing.T) {
@@ -707,7 +706,7 @@ func TestCheckClearedOnViewSwitch(t *testing.T) {
 // different rows, so a selection has to survive it. The init-time warm loop
 // re-queries once a second for the first several seconds of every session, so
 // clearing there made space/ctrl+a in a freshly-opened browser look like it
-// undid itself a beat later — and then start working once the loop stopped.
+// undid itself a beat later, and then start working once the loop stopped.
 
 func TestCheckSurvivesWarmLoopRefresh(t *testing.T) {
 	rows := mkRows("a", "b", "c")
@@ -729,7 +728,7 @@ func TestCheckSurvivesWarmLoopRefresh(t *testing.T) {
 	require.True(t, m.ticking, "the warm loop should still be running for this test to mean anything")
 	require.Equal(t, 3, m.checkedCount(), "issuing a background refresh must not drop the selection")
 
-	// ...and its answer — the same rows — arrives and keeps every mark.
+	// ...and its answer (the same rows) arrives and keeps every mark.
 	m, _ = step(t, m, queryResultMsg{seq: m.seq, resp: f.resp})
 	require.Equal(t, 3, m.checkedCount(), "a background refresh returning the same rows must keep the selection")
 
@@ -757,7 +756,7 @@ func TestCheckSurvivesSyncRefresh(t *testing.T) {
 
 // A background refresh keeps marks by pruning, not by trusting: rows the
 // refresh no longer returns lose theirs, so a mark can never end up on a
-// different row's data — and rows the refresh newly brings in are never marked.
+// different row's data, and rows the refresh newly brings in are never marked.
 func TestRefreshPrunesChecksForVanishedRows(t *testing.T) {
 	rows := mkRows("a", "b", "c")
 	f := &fakeBackend{resp: mkResp(rows)}
@@ -887,7 +886,7 @@ func TestResizeStaysWithinWidth(t *testing.T) {
 
 // TestFrameFillsExactHeight pins the whole frame to the terminal height in every
 // view. The panes compose their own borders (titledBox) to seat each pane name in
-// its top rule, so a one-row arithmetic slip would not look like a bug — it would
+// its top rule, so a one-row arithmetic slip would not look like a bug: it would
 // scroll the alt-screen by a line.
 func TestFrameFillsExactHeight(t *testing.T) {
 	f := &fakeBackend{
@@ -902,7 +901,7 @@ func TestFrameFillsExactHeight(t *testing.T) {
 		m, _ = step(t, m, tea.WindowSizeMsg{Width: wh[0], Height: wh[1]})
 		for _, mode := range []viewMode{viewBrowse, viewStats, viewAgents} {
 			// Each view lays its panes out differently, so the geometry has to be
-			// resolved for the view being measured — exactly as switching to it does.
+			// resolved for the view being measured; exactly as switching to it does.
 			m.view = mode
 			m.applyLayout()
 			got := lipgloss.Height(m.View())
@@ -1060,8 +1059,8 @@ func TestRemoteWarmTriggersHostsRefresh(t *testing.T) {
 	require.Equal(t, 0, m.hostsRemote)
 	require.Equal(t, 0, f.hostsCallCount())
 
-	// A deep query result reports the remote cache just warmed with 2 hosts —
-	// a count the sidebar hasn't seen — so the model must refetch the host list.
+	// A deep query result reports the remote cache just warmed with 2 hosts (a
+	// count the sidebar hasn't seen) so the model must refetch the host list.
 	resp := mkResp(mkRows("ls"))
 	resp.Remote = proto.RemoteInfo{State: proto.RemoteOK, Hosts: 2}
 	m, cmd := step(t, m, queryResultMsg{seq: 10, resp: resp})
@@ -1211,7 +1210,7 @@ func TestExecutorFilter(t *testing.T) {
 }
 
 // TestTagFilter covers t: the mirror of e on the other axis. An agent-run row
-// with no user tag has nothing for it to adopt — which is the whole point of
+// with no user tag has nothing for it to adopt: which is the whole point of
 // keeping the two apart.
 func TestTagFilter(t *testing.T) {
 	f := &fakeBackend{}
@@ -1295,7 +1294,7 @@ func TestTypedFilterEmptyClears(t *testing.T) {
 	require.Contains(t, strip(m.View()), "executor filter cleared")
 }
 
-// TestTypedFilterEscAbandons: esc leaves the filter exactly as it was — unlike
+// TestTypedFilterEscAbandons: esc leaves the filter exactly as it was; unlike
 // the search field, where the text typed so far IS the filter.
 func TestTypedFilterEscAbandons(t *testing.T) {
 	f := &fakeBackend{}
@@ -1401,7 +1400,7 @@ func TestTagPromptShowsScopeAndResets(t *testing.T) {
 }
 
 // runBulkTag opens ctrl+t, types name, submits, and drains the resulting
-// command the way bubbletea would — the async mirror of runBulkDelete, since
+// command the way bubbletea would: the async mirror of runBulkDelete, since
 // a bulk tag's SubmitRecord round trips run in a tea.Cmd, not on Update.
 func runBulkTag(t *testing.T, m Model, name string) Model {
 	t.Helper()
@@ -1475,7 +1474,7 @@ func TestBulkTagSingleRowStillWorksUnchecked(t *testing.T) {
 }
 
 // TestBulkTagDoesNotBlockUpdate proves the round trips happen in a command,
-// not on the event loop — the same freeze bug fixed for bulk delete. This is
+// not on the event loop: the same freeze bug fixed for bulk delete. This is
 // the important assertion: it must fail if the loop moves back inline.
 func TestBulkTagDoesNotBlockUpdate(t *testing.T) {
 	f := &fakeBackend{}
@@ -1489,7 +1488,7 @@ func TestBulkTagDoesNotBlockUpdate(t *testing.T) {
 	}
 	m, cmd := step(t, m, press("enter"))
 
-	require.Empty(t, f.submitted, "confirming must not submit inline — the work belongs in the command")
+	require.Empty(t, f.submitted, "confirming must not submit inline: the work belongs in the command")
 	for _, r := range m.rows {
 		require.Emptyf(t, r.Tags, "no row may show the tag before the command has run: %+v", r)
 	}
@@ -1508,7 +1507,7 @@ func TestBulkTagDoesNotBlockUpdate(t *testing.T) {
 // TestBulkTagPartialFailure: one SubmitRecord call in the batch fails. The
 // others must still go through, the failed id must stay checked so it can be
 // retried, and the flash must report both counts. Note the whole selection
-// survives here, not just the failure — a bulk tag never unchecks anything,
+// survives here, not just the failure: a bulk tag never unchecks anything,
 // which is what makes the failed id retry-able without any special case.
 func TestBulkTagPartialFailure(t *testing.T) {
 	f := &fakeBackend{submitFailID: map[string]bool{"1": true}}
@@ -1527,8 +1526,8 @@ func TestBulkTagPartialFailure(t *testing.T) {
 	require.Empty(t, byID["1"], "the failing id must not show the tag")
 	require.Contains(t, strip(m.View()), "tagged 2, 1 failed")
 
-	// Tagging never drops anything from the checked set — rows survive it, so
-	// the selection is worth keeping for a follow-up tag — but the one id that
+	// Tagging never drops anything from the checked set (rows survive it, so
+	// the selection is worth keeping for a follow-up tag) but the one id that
 	// actually failed is exactly as retry-able as if nothing else had
 	// succeeded: it is (still) checked.
 	require.True(t, m.isChecked("0"))
@@ -1537,10 +1536,10 @@ func TestBulkTagPartialFailure(t *testing.T) {
 }
 
 // TestOptimisticTagSurvivesPeriodChange is the allRows regression test: the
-// single-row tag path used to mutate only m.rows, so applyPeriodFilter — which
-// rebuilds rows from allRows on every 1..5 press — silently dropped the tag
-// the next time the period changed. It must fail against the old
-// m.rows-only submitTag.
+// single-row tag path used to mutate only m.rows, so applyPeriodFilter (which
+// rebuilds rows from allRows on every 1..5 press) silently dropped the tag the
+// next time the period changed. It must fail against the old m.rows-only
+// submitTag.
 func TestOptimisticTagSurvivesPeriodChange(t *testing.T) {
 	f := &fakeBackend{}
 	m := ready(t, f, 120, 40)
@@ -1548,7 +1547,7 @@ func TestOptimisticTagSurvivesPeriodChange(t *testing.T) {
 	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(rows)})
 
 	// Narrow to "Today" first: on the default "All" period, rows and allRows
-	// are literally the same slice, so the bug would not reproduce there —
+	// are literally the same slice, so the bug would not reproduce there;
 	// applyPeriodFilter has to actually rebuild rows from allRows for the
 	// missing-allRows write to matter.
 	m, _ = step(t, m, press("1"))
@@ -1787,7 +1786,7 @@ func TestAgentsPaneFocusCycles(t *testing.T) {
 }
 
 // TestAgentsSidebarFilters proves picking an executor narrows the prompt,
-// command, and details panes to that agent's work — and that the "all agents"
+// command, and details panes to that agent's work, and that the "all agents"
 // row restores everything.
 func TestAgentsSidebarFilters(t *testing.T) {
 	m := agentModel(t, 140, 40)
@@ -1858,7 +1857,7 @@ func TestAgentsDetailsFollowFocus(t *testing.T) {
 	require.Containsf(t, out, "Command", "details should head with the command:\n%s", out)
 	require.Containsf(t, out, "Exit", "command details should carry the exit status:\n%s", out)
 	// The command pane runs oldest-first (the agent's working order), so the
-	// cursor starts on `cargo build` — the details pane must track that, not the
+	// cursor starts on `cargo build`: the details pane must track that, not the
 	// newest row.
 	require.Containsf(t, out, "cargo build", "command details should describe the selected command:\n%s", out)
 	require.Containsf(t, out, "/work/1", "command details should carry the selected command's cwd:\n%s", out)
@@ -1866,9 +1865,9 @@ func TestAgentsDetailsFollowFocus(t *testing.T) {
 
 // TestAgentsDetailsKeepsItsSubjectOnFocus: tabbing onto the details pane must not
 // change what it is describing. It used to read the focused pane, so the one
-// route to a command's full record — focus the pane, then z — swapped the
-// prompt's in on the way, and the arrows still drove the command cursor while
-// the prompt was on screen.
+// route to a command's full record (focus the pane, then z) swapped the prompt's
+// in on the way, and the arrows still drove the command cursor while the prompt
+// was on screen.
 func TestAgentsDetailsKeepsItsSubjectOnFocus(t *testing.T) {
 	m := agentModel(t, 140, 40)
 
@@ -1886,7 +1885,7 @@ func TestAgentsDetailsKeepsItsSubjectOnFocus(t *testing.T) {
 	require.Contains(t, strip(m.View()), "DETAILS  command",
 		"the title says which record it is holding")
 
-	// Zooming it — the reason to focus it at all — keeps the command too.
+	// Zooming it (the reason to focus it at all) keeps the command too.
 	m, _ = step(t, m, press("z"))
 	out := strip(m.View())
 	require.Containsf(t, out, "cargo build", "zoomed details must hold the command:\n%s", out)
@@ -1894,7 +1893,7 @@ func TestAgentsDetailsKeepsItsSubjectOnFocus(t *testing.T) {
 }
 
 // detailsBody is the explorer details pane's own text, without the rest of the
-// frame — the prompt list is on screen too, so a view-wide assertion cannot tell
+// frame: the prompt list is on screen too, so a view-wide assertion cannot tell
 // which pane a prompt's text came from.
 func detailsBody(m Model) string {
 	return strip(strings.Join(m.agentInfoLines(maxInt(1, m.geo.p[apInfo].w-2)), "\n"))
@@ -1908,7 +1907,7 @@ func TestAgentsDetailsSubjectFollowsTheListPanes(t *testing.T) {
 	require.False(t, m.infoCmd, "the explorer opens on the prompt list")
 
 	// shift+tab from prompts reaches DETAILS the long way round, via the panes
-	// that select a prompt — so it is a prompt that is being described.
+	// that select a prompt, so it is a prompt that is being described.
 	for range 3 {
 		m, _ = step(t, m, press("shift+tab"))
 	}
@@ -2145,7 +2144,7 @@ func TestMouseClickAndWheel(t *testing.T) {
 // TestZoomedPaneKeepsMouse proves the wheel still scrolls a zoomed pane. A
 // zoomed layout parks its one full-frame rect at the zoomed pane's OWN index, so
 // a hit test bounded by a pane count matched nothing unless that index happened
-// to be 0 — and neither view zooms to pane 0 by default.
+// to be 0, and neither view zooms to pane 0 by default.
 func TestZoomedPaneKeepsMouse(t *testing.T) {
 	// Browse: zoom the results table (index 1) and scroll it.
 	f := &fakeBackend{
@@ -2289,7 +2288,7 @@ func TestAgentsZoomDetail(t *testing.T) {
 	require.Equal(t, m.width, prompts.w+info.w)
 	require.Equal(t, prompts.w, m.geo.vDiv)
 
-	// Tabbing onto DETAILS keeps the same pair on screen — focus moves between
+	// Tabbing onto DETAILS keeps the same pair on screen; focus moves between
 	// the two visible panes rather than the layout collapsing to one.
 	m, _ = step(t, m, press("tab")) // prompts -> commands
 	m, _ = step(t, m, press("tab")) // commands -> details
@@ -2355,8 +2354,8 @@ func TestZoomDetailSplitSurvivesResize(t *testing.T) {
 	m, _ = step(t, m, queryResultMsg{seq: 1, resp: f.resp})
 	m, _ = step(t, m, press("Z"))
 	require.True(t, m.zoomDetail)
-	// This split is a new feature with no legacy layout to preserve, so — like
-	// the agent explorer's own splits — it opens at a sensible default rather
+	// This split is a new feature with no legacy layout to preserve, so (like
+	// the agent explorer's own splits) it opens at a sensible default rather
 	// than at 0 ("auto" for the browse view's pre-existing splits, which have
 	// an established layout to leave alone until dragged).
 	require.Equal(t, defaultZoomDetailRatio, m.splits.ZoomDetail, "an undragged companion opens at the default ratio")
@@ -2516,7 +2515,7 @@ func TestBrowsePaneHeaders(t *testing.T) {
 	require.Containsf(t, strip(m.View()), "COMMANDS  2/2", "the title should follow the cursor")
 }
 
-// TestAgentsKeyIsOnlyA proves `p` no longer opens the explorer — `a` owns it.
+// TestAgentsKeyIsOnlyA proves `p` no longer opens the explorer: `a` owns it.
 func TestAgentsKeyIsOnlyA(t *testing.T) {
 	f := &fakeBackend{
 		hosts: proto.HostsInfo{Hosts: []proto.HostCount{{Hostname: "boxA", Count: 3}}},
@@ -2604,7 +2603,7 @@ func statsModelWH(t *testing.T, w, h int) Model {
 }
 
 // TestStatsHeatmapSurvivesShortTerminal: the activity graph is the one view that
-// shows years at a glance, and it used to be gated on a pane 26 rows tall — so on
+// shows years at a glance, and it used to be gated on a pane 26 rows tall, so on
 // a stock 80×24 terminal it never appeared at all. It must compress instead.
 func TestStatsHeatmapSurvivesShortTerminal(t *testing.T) {
 	full := strip(statsModelWH(t, 100, 40).View())
@@ -2634,8 +2633,8 @@ func TestStatsChartsFitWholeOrNotAtAll(t *testing.T) {
 }
 
 // manyProgramsRows returns count records, each a distinct program run with a
-// distinct full command line ("progN --flag"), so every ranked list —
-// programs by first token, commands by full line — ends up with count
+// distinct full command line ("progN --flag"), so every ranked list
+// (programs by first token, commands by full line) ends up with count
 // distinct entries instead of collapsing onto one.
 func manyProgramsRows(count int) []rec.Record {
 	rows := make([]rec.Record, count)
@@ -2690,9 +2689,9 @@ func TestStatsTallTerminalRendersMoreThan12Rows(t *testing.T) {
 
 // TestStatsShortTerminalDoesNotRegressWithManyEntries proves raising the
 // aggregation's cap did not change short-terminal behavior: with the same
-// 40-distinct-program fixture, a short terminal still shows only what fits —
-// nowhere near every retained entry — and the ranked columns are not
-// starved below what minColumnsH promises.
+// 40-distinct-program fixture, a short terminal still shows only what fits
+// (nowhere near every retained entry) and the ranked columns are not starved
+// below what minColumnsH promises.
 func TestStatsShortTerminalDoesNotRegressWithManyEntries(t *testing.T) {
 	const count = 40
 	m := manyProgramsModel(t, 100, 8, count)
@@ -2775,7 +2774,7 @@ func TestStatsGraphsFillWidth(t *testing.T) {
 }
 
 // TestStatsGraphsIgnorePeriod proves the long-arc graphs keep their shape when
-// the period narrows — they exist to show activity AROUND the window.
+// the period narrows: they exist to show activity AROUND the window.
 func TestStatsGraphsIgnorePeriod(t *testing.T) {
 	m := statsModel(t, 140)
 	wide := strip(m.View())
@@ -2890,7 +2889,7 @@ func TestPeriodIsSharedAcrossViews(t *testing.T) {
 }
 
 // TestTodayIsCalendarDay pins "Today" to the local calendar day rather than a
-// rolling 24 hours — otherwise the same clock hour appears twice in the
+// rolling 24 hours; otherwise the same clock hour appears twice in the
 // hour-of-day histogram, from two different days.
 func TestTodayIsCalendarDay(t *testing.T) {
 	midnight := periodCutoff(now, 1)
@@ -2905,7 +2904,7 @@ func TestTodayIsCalendarDay(t *testing.T) {
 
 // TestHourOfDayOnPartialDay is the heart of it: on Today the chart must show the
 // hours that HAVE happened, and leave the rest blank rather than drawing them as
-// zero — "it isn't 11pm yet" is not "nothing ran at 11pm".
+// zero; "it isn't 11pm yet" is not "nothing ran at 11pm".
 func TestHourOfDayOnPartialDay(t *testing.T) {
 	// Commands every 20 minutes through the morning, up to `now` (14:13 local).
 	var rows []rec.Record
@@ -2954,7 +2953,7 @@ func TestHourOfDayOnPartialDay(t *testing.T) {
 }
 
 // TestSampleNoteExplainsFlatTabs proves a short aggregation says so. The
-// explorer asks for every row, so this should never fire in practice — but if a
+// explorer asks for every row, so this should never fire in practice, but if a
 // sample ever does arrive windowed, every period wider than its reach shows
 // identical numbers and the tabs read as broken unless the header owns up to it.
 func TestSampleNoteExplainsFlatTabs(t *testing.T) {
@@ -3011,7 +3010,7 @@ func TestBrowseAsksForEveryRow(t *testing.T) {
 }
 
 // TestStartViewOpensDirectly proves Options.Start lands on a full-screen view
-// and fetches the aggregation sample the `s`/`a` keys would have fetched — this
+// and fetches the aggregation sample the `s`/`a` keys would have fetched: this
 // is what `yore stats` and `yore agents` ride on.
 func TestStartViewOpensDirectly(t *testing.T) {
 	for _, tc := range []struct {
@@ -3104,7 +3103,7 @@ func collect(cmd tea.Cmd) []tea.Msg {
 }
 
 // TestPeriodTabsPinnedRight proves every period-aware view puts the tab strip in
-// the same place — hard against the right edge — so the filter never moves.
+// the same place (hard against the right edge) so the filter never moves.
 func TestPeriodTabsPinnedRight(t *testing.T) {
 	const w = 150
 	m := agentModel(t, w, 40)
@@ -3190,7 +3189,7 @@ func TestTokensPaneShowsWhatBecameOfEach(t *testing.T) {
 func TestTokensPaneRevoke(t *testing.T) {
 	m, f := devicesFixture(t)
 
-	// On the machines pane, x aims at the device — and this one is self, so it
+	// On the machines pane, x aims at the device, and this one is self, so it
 	// is refused outright.
 	m, _ = step(t, m, press("x"))
 	require.Empty(t, m.devConfirm, "you cannot revoke the machine you are sitting at")
@@ -3216,7 +3215,7 @@ func TestTokensPaneRevoke(t *testing.T) {
 	require.Empty(t, m.devConfirm, "a claimed token cannot be revoked")
 }
 
-// TestTokensPaneMint proves n mints and puts the plaintext on screen — the one
+// TestTokensPaneMint proves n mints and puts the plaintext on screen: the one
 // moment it exists, since the server keeps only a hash.
 func TestTokensPaneMint(t *testing.T) {
 	m, f := devicesFixture(t)
@@ -3239,7 +3238,7 @@ func TestTokensPaneMint(t *testing.T) {
 }
 
 // TestMintedTokenCopies: the banner is the only moment a token's plaintext
-// exists, and a narrow pane can clip it out of the mouse's reach — so y has to
+// exists, and a narrow pane can clip it out of the mouse's reach, so y has to
 // take it from the state rather than the screen.
 func TestMintedTokenCopies(t *testing.T) {
 	prev := localClipboardCopy
@@ -3274,7 +3273,7 @@ func TestMintedTokenCopies(t *testing.T) {
 }
 
 // TestMintedTokenCopyYieldsToAConfirmation: y answers an armed confirmation
-// before it copies. Both can be on screen at once — mint, then arm a revoke —
+// before it copies. Both can be on screen at once (mint, then arm a revoke)
 // and the destructive question is the one the footer is showing.
 func TestMintedTokenCopyYieldsToAConfirmation(t *testing.T) {
 	m, f := devicesFixture(t)
@@ -3302,7 +3301,7 @@ func (f *fakeBackend) setDevices(devs ...proto.DeviceInfo) {
 }
 
 // TestDevicesRefreshOnDemand: S refetches both lists, so a machine that enrolled
-// elsewhere while you were looking at this screen appears without leaving it —
+// elsewhere while you were looking at this screen appears without leaving it,
 // and nothing moves under you until you ask for it.
 func TestDevicesRefreshOnDemand(t *testing.T) {
 	m, f := devicesFixture(t)
@@ -3348,7 +3347,7 @@ func TestOpenTokenCountsDownToItsExpiry(t *testing.T) {
 // TestDetailPaneSurvivesTheDevicesView: the detail pane belongs to the browse
 // view, so it is sized from that view's geometry even while another view is on
 // screen. Sizing it from whatever was on screen squashed it to one column in the
-// devices view — and any refresh landing in that moment re-wrapped its content
+// devices view, and any refresh landing in that moment re-wrapped its content
 // one character per line, which is the state you came back to.
 func TestDetailPaneSurvivesTheDevicesView(t *testing.T) {
 	const cmd = "go test ./internal/tui/browse"
@@ -3362,7 +3361,7 @@ func TestDetailPaneSurvivesTheDevicesView(t *testing.T) {
 	require.Equal(t, viewDevices, m.view)
 	require.Equal(t, want, m.detail.Width, "the detail pane keeps its width while another view is up")
 
-	// A background refresh lands while the devices view is up — the moment that
+	// A background refresh lands while the devices view is up: the moment that
 	// used to bake the one-column wrapping in.
 	m, _ = step(t, m, queryResultMsg{seq: 2, resp: f.resp})
 	m, _ = step(t, m, press("esc"))
@@ -3372,7 +3371,7 @@ func TestDetailPaneSurvivesTheDevicesView(t *testing.T) {
 }
 
 // TestDevicesViewMouse: the devices view answers the mouse the way every other
-// multi-pane view does — click to focus, wheel to scroll the pane under the
+// multi-pane view does; click to focus, wheel to scroll the pane under the
 // pointer without stealing focus, drag the seam to resize. It used to fall
 // through to the browse arm of every one of those, so a wheel over the machine
 // list moved the *browse* host sidebar and re-ran its query, and dragging the
@@ -3447,7 +3446,7 @@ func TestDevicesViewMouse(t *testing.T) {
 	require.True(t, m.zoom, "clicking inside a zoomed pane must not drop the zoom")
 }
 
-// TestMintCannotBeSpammed: every press of n mints a REAL token — a standing
+// TestMintCannotBeSpammed: every press of n mints a REAL token; a standing
 // invitation into everything the group can read. Holding the key used to issue
 // one request per repeat, leaving that many live on the server and burying each
 // banner's plaintext under the next, which is the only copy there will ever be.
@@ -3475,7 +3474,7 @@ func TestMintCannotBeSpammed(t *testing.T) {
 	require.Equal(t, 1, f.mintCalls, "n must not clobber the banner")
 	require.Contains(t, strip(m.View()), "dismiss this token first")
 
-	// Dismissing it makes n live again — minting a second token is a deliberate
+	// Dismissing it makes n live again; minting a second token is a deliberate
 	// second act.
 	m, _ = step(t, m, press("esc"))
 	require.Empty(t, m.minted)
@@ -3486,7 +3485,7 @@ func TestMintCannotBeSpammed(t *testing.T) {
 }
 
 // TestFailedMintReleasesTheKey: the guard is cleared by the request landing, not
-// by it succeeding — otherwise one failed mint would disable n for the session.
+// by it succeeding; otherwise one failed mint would disable n for the session.
 func TestFailedMintReleasesTheKey(t *testing.T) {
 	m, _ := devicesFixture(t)
 	m, _ = step(t, m, press("n"))
@@ -3499,7 +3498,7 @@ func TestFailedMintReleasesTheKey(t *testing.T) {
 }
 
 // TestDevicesRefreshSaysSo: S reports itself the way the browse view's sync
-// does — a "refreshing…" while it runs, a "✓ refreshed" when it lands. A
+// does; a "refreshing…" while it runs, a "✓ refreshed" when it lands. A
 // refetch that finished silently was indistinguishable from a dead key, which
 // is exactly what it looks like when nothing has changed.
 func TestDevicesRefreshSaysSo(t *testing.T) {

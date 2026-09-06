@@ -331,7 +331,7 @@ func TestIsCommand(t *testing.T) {
 
 // TestSchemaStamped covers the two states every store in existence is in: a new
 // one gets the current version, and one predating versioning is stamped rather
-// than refused — the layout did not change, so an unversioned store IS v1.
+// than refused; the layout did not change, so an unversioned store IS v1.
 func TestSchemaStamped(t *testing.T) {
 	dir := t.TempDir()
 

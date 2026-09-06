@@ -29,12 +29,11 @@ import (
 // query time (see the daemon's prompt index).
 
 // promptState is the current prompt for a session, written by the prompt hook
-// so the separate tool-hook processes — different processes, no shared memory —
-// can attach its id to the commands that follow.
-//
-// Only the id travels through here. The text lives on the prompt record, which
-// went through the redaction gate; keeping a second, ungated copy in this file
-// would put the very thing the gate exists to catch on disk in plaintext.
+// so the separate tool-hook processes (different processes, no shared memory)
+// can attach its id to the commands that follow. Only the id travels through
+// here. The text lives on the prompt record, which went through the redaction
+// gate; keeping a second, ungated copy in this file would put the very thing
+// the gate exists to catch on disk in plaintext.
 type promptState struct {
 	ID string `json:"id"`
 	Ms int64  `json:"ms"`
@@ -65,14 +64,13 @@ func loadPromptState(dir, session string) (promptState, bool) {
 
 // recordPrompt is the shared body of every agent's prompt hook: it gates the
 // text through redaction, spools it as a prompt record, and remembers its id
-// for this session. Like every capture path it is best-effort and silent — a
-// hook that errored or stalled would disrupt the agent it observes.
-//
-// The gate runs HERE as well as inside spoolRecord because only the reasons
-// that DROP a record need catching before the id is remembered: a prompt we
-// refuse to record must not leave commands pointing at a prompt that does not
-// exist. Redaction is not one of those — a redacted prompt is still recorded,
-// so spoolRecord masking it is enough.
+// for this session. Like every capture path it is best-effort and silent: a
+// hook that errored or stalled would disrupt the agent it observes. The gate
+// runs HERE as well as inside spoolRecord because only the reasons that DROP
+// a record need catching before the id is remembered: a prompt we refuse to
+// record must not leave commands pointing at a prompt that does not exist.
+// Redaction is not one of those: a redacted prompt is still recorded, so
+// spoolRecord masking it is enough.
 func recordPrompt(dir, session, executor, cwd, text string) {
 	text = strings.TrimSpace(text)
 	if text == "" || session == "" {
@@ -110,7 +108,7 @@ func recordPrompt(dir, session, executor, cwd, text string) {
 
 // stampPrompt attaches the session's current prompt to a command record. Only
 // the id travels: the text lives on the prompt record recordPrompt spooled.
-// Best-effort — a session with no recorded prompt just leaves the command
+// Best-effort: a session with no recorded prompt just leaves the command
 // untraced.
 func stampPrompt(dir, session string, r *rec.Record) {
 	if ps, ok := loadPromptState(dir, session); ok {

@@ -14,13 +14,12 @@ import (
 // the group. The server accepts any version >= 1 at bootstrap and pins it.
 const bootstrapHKVersion = 1
 
-// Enroll registers this machine using a single-use enrollment token and
-// reports which path it landed on.
-//
-// The server decides: with no active device in the group this machine forms it
-// (Bootstrap), otherwise it is pending and an enrolled machine must approve the
-// returned verification code. The newcomer cannot determine this itself — it is
-// not yet authorized to read anything — so the registration response carries it.
+// Enroll registers this machine using a single-use enrollment token and reports
+// which path it landed on. The server decides: with no active device in the
+// group this machine forms it (Bootstrap), otherwise it is pending and an
+// enrolled machine must approve the returned verification code. The newcomer
+// cannot determine this itself (it is not yet authorized to read anything) so
+// the registration response carries it.
 func (s *Syncer) Enroll(ctx context.Context, deviceName, token string) (formed bool, code string, err error) {
 	pub := s.dev.Public()
 	resp, err := s.http.RegisterDevice(ctx, wire.RegisterReq{
@@ -107,12 +106,11 @@ func (s *Syncer) RevokeToken(ctx context.Context, id string) error {
 
 // RecoverHK retrieves the History Key using only the recovery passphrase, for
 // when no enrolled device survives. It fetches the salt, derives the recovery
-// keypair, proves possession by signing with it, and unwraps HK.
-//
-// It returns the History Key and the HK version the wrap carried. The key is
-// NOT yet usable for sync: this machine still has to enroll and be admitted,
-// which the caller drives — and after this call the passed client signs as the
-// recovery identity, which is what authorizes both.
+// keypair, proves possession by signing with it, and unwraps HK. It returns
+// the History Key and the HK version the wrap carried. The key is NOT yet
+// usable for sync: this machine still has to enroll and be admitted, which the
+// caller drives, and after this call the passed client signs as the recovery
+// identity, which is what authorizes both.
 func RecoverHK(ctx context.Context, http *HTTPClient, phrase string) (hk [32]byte, hkVersion int, err error) {
 	saltResp, err := http.RecoverySalt(ctx)
 	if err != nil {
@@ -278,7 +276,7 @@ func (s *Syncer) Revoke(ctx context.Context, deviceID string) error {
 // reWrapAllDEKs unwraps every DEK under the old HK and re-wraps it under the new
 // HK, returning the full re-wrapped set the server's Rotate demands (it must
 // cover exactly the existing keyIDs). Each wrap keeps its keyID, deviceID, and
-// epoch, so the DEK plaintext — and therefore every record it sealed — is
+// epoch, so the DEK plaintext, and therefore every record it sealed, is
 // unchanged.
 func (s *Syncer) reWrapAllDEKs(ctx context.Context, hkOld, hkNew [32]byte, oldVersion, newVersion int) ([]wire.DEKWrap, error) {
 	var out []wire.DEKWrap

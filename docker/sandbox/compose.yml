@@ -1,17 +1,17 @@
-# yore sandbox — a self-contained 4-container playground:
+# yore sandbox: a self-contained 4-container playground:
 #   server   the sync server (ciphertext only), on the internal network
 #   zsh      a client with zsh + yore hooks (hostname zsh-box)
 #   bash     a client with bash + yore hooks (hostname bash-box)
 #   fish     a client with fish + yore hooks (hostname fish-box)
 #
-# Clients reach the server over the internal Docker network (plain HTTP — no TLS
+# Clients reach the server over the internal Docker network (plain HTTP: no TLS
 # needed inside the sandbox; per-device request signing authenticates everything).
 # Nothing is published to the host.
 #
 # NOTE: server-data is a persistent volume, and a group that already has an
 # active device refuses the bootstrap token by design. Since sandbox clients are
 # ephemeral, their device keys vanish with the containers and nothing is left to
-# mint an enrolment token — so ALWAYS reset with `docker compose down -v`
+# mint an enrolment token, so ALWAYS reset with `docker compose down -v`
 # (not plain `down`) before bringing the sandbox back up.
 #
 #   cd docker/sandbox

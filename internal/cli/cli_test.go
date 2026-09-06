@@ -74,7 +74,7 @@ func TestFilterDecision(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			// An empty state dir has no redact.yml, so Load falls back to the
-			// built-ins — the behavior this gate is asserting.
+			// built-ins: the behavior this gate is asserting.
 			require.Equal(t, tc.keep, filterDecision(t.TempDir(), tc.cfg, tc.cmd, tc.cwd))
 		})
 	}
@@ -168,7 +168,7 @@ func TestFormatHeadless(t *testing.T) {
 }
 
 // TestHeadlessShowHost pins the rule that only `--scope all` (hsa) leads results
-// with the host column — every single-host scope stays a bare command list.
+// with the host column: every single-host scope stays a bare command list.
 func TestHeadlessShowHost(t *testing.T) {
 	assert.True(t, headlessShowHost(proto.ScopeAll, false), "all-scope shows the host column")
 	assert.False(t, headlessShowHost(proto.ScopeAll, true), "--no-host suppresses it even for all-scope")
@@ -184,9 +184,8 @@ func TestHeadlessShowHost(t *testing.T) {
 // checks the root for unknown subcommands, which left `yore tag refactor`
 // printing help and exiting 0 while `yore daemon bogus` ignored the word and
 // started the daemon. All of them now fail the same way, with the same status.
-//
-// Nothing here reaches a RunE — argument validation rejects the line first —
-// so no daemon, server, or socket is touched.
+// Nothing here reaches a RunE (argument validation rejects the line first) so
+// no daemon, server, or socket is touched.
 func TestUnknownSubcommandIsAnError(t *testing.T) {
 	for _, args := range [][]string{
 		{"bogus"},
@@ -195,7 +194,7 @@ func TestUnknownSubcommandIsAnError(t *testing.T) {
 		{"daemon", "bogus"},
 		{"server", "bogus"},
 		{"devices", "bogus"},
-		// Devices are managed in one place — the browser's pane. These were a
+		// Devices are managed in one place: the browser's pane. These were a
 		// second implementation of the same actions and are gone.
 		{"devices", "approve", "01AAAAAAAAAAAAAAAAAAAAAAAA"},
 		{"devices", "revoke", "01AAAAAAAAAAAAAAAAAAAAAAAA"},

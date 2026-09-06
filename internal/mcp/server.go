@@ -1,17 +1,14 @@
-// Package mcp is yore's Model Context Protocol server: a local, read-only,
-// stdio JSON-RPC 2.0 endpoint that lets a coding agent (Claude Code, Cursor, …)
-// query the shell history it is creating — across every machine you own.
-//
-// It never opens the bbolt store or a network port. It is a thin adapter over
-// the daemon's query layer (internal/proto over the unix socket), so it inherits
-// the daemon's single-writer guarantee and its cross-machine RAM corpus for
-// free: an agent can ask "have I ever run this migration anywhere?" and get an
-// answer spanning all enrolled devices, while the sync server still holds only
-// ciphertext.
-//
+// Package mcp is yore's Model Context Protocol server: a local, read-only, stdio
+// JSON-RPC 2.0 endpoint that lets a coding agent (Claude Code, Cursor, …) query
+// the shell history it is creating, across every machine you own. It never opens
+// the bbolt store or a network port. It is a thin adapter over the daemon's
+// query layer (internal/proto over the unix socket), so it inherits the daemon's
+// single-writer guarantee and its cross-machine RAM corpus for free: an agent
+// can ask "have I ever run this migration anywhere?" and get an answer spanning
+// all enrolled devices, while the sync server still holds only ciphertext.
 // Transport is stdio only (newline-delimited JSON, one message per line);
 // logging goes to stderr. Security rests on the OS process boundary plus the
-// read-only query surface — the server has no way to mutate history.
+// read-only query surface: the server has no way to mutate history.
 package mcp
 
 import (
@@ -51,7 +48,7 @@ type Options struct {
 	Version           string   // reported in serverInfo.version
 	LocalHost         string   // this machine's hostname, for labeling
 
-	// Risk is the ruleset behind assess_risk and the risk-summary resource —
+	// Risk is the ruleset behind assess_risk and the risk-summary resource;
 	// risk.Load's result, so the user's risk.toml applies here exactly as it
 	// does to the browse detail panes. Nil falls back to the built-in rules.
 	Risk *risk.Ruleset
@@ -210,7 +207,7 @@ func (s *Server) handleInitialize(params json.RawMessage) any {
 		},
 		"instructions": "yore shell-history server. Query command history, agent " +
 			"prompts, exit codes, sessions, and stats across ALL your machines " +
-			"(pass scope=\"all\") — end-to-end encrypted, nothing leaves your devices.",
+			"(pass scope=\"all\"): end-to-end encrypted, nothing leaves your devices.",
 	}
 }
 

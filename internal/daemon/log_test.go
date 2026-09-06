@@ -27,7 +27,7 @@ func TestRotatingWriter(t *testing.T) {
 	require.NoError(t, w.Close(), "Close")
 	assert.NoError(t, w.Close(), "second Close is a no-op")
 
-	// keep=2 means daemon.log plus at most .1 and .2 — never .3.
+	// keep=2 means daemon.log plus at most .1 and .2; never .3.
 	_, err = os.Stat(path)
 	require.NoError(t, err, "live log must exist")
 	_, err = os.Stat(path + ".1")

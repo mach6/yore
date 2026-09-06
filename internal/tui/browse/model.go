@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -54,22 +55,21 @@ type Options struct {
 
 	// Prefs restores what the user last left the UI looking like; its zero value
 	// starts every view at its own defaults. SavePrefs, when set, is called
-	// whenever a choice changes so it sticks across runs — in a tea.Cmd, off the
+	// whenever a choice changes so it sticks across runs, in a tea.Cmd, off the
 	// render path, with its error ignored, because remembered layout is a
-	// convenience and losing it must never interrupt browsing.
-	//
-	// One struct and one callback because there is one file: a callback that
-	// carried only the splits would rewrite ui.toml without the column choices in
-	// it, erasing them every time a seam moved.
+	// convenience and losing it must never interrupt browsing. One struct and one
+	// callback because there is one file: a callback that carried only the splits
+	// would rewrite ui.toml without the column choices in it, erasing them every
+	// time a seam moved.
 	Prefs     Prefs
 	SavePrefs func(Prefs) error
 
-	// Start is the screen to open on — how `yore stats` and `yore agents` land
+	// Start is the screen to open on; how `yore stats` and `yore agents` land
 	// straight where they mean to. An unknown value opens the browse table, so a
 	// bad string costs nothing. Esc still drops through to browse from either.
 	Start StartView
 
-	// Risk is the ruleset behind the detail panes' Risk row — risk.Load's
+	// Risk is the ruleset behind the detail panes' Risk row; risk.Load's
 	// result, so the user's risk.toml applies here exactly as it does to the
 	// MCP assess_risk tool. Nil falls back to the built-in rules.
 	Risk *risk.Ruleset
@@ -85,14 +85,13 @@ const (
 	StartDevices StartView = "devices" // the enrolled-device pane
 )
 
-// Tunables.
-//
-// Neither the table nor the aggregation caps how much history it asks for: this
-// is the screen you open to look through your archive, and a row budget makes
-// the oldest of it unreachable by scrolling. The daemon sorts every match before
-// windowing regardless, so asking for all of them buys the whole timeline for
-// the cost of serializing it — and a non-empty query is narrowed server-side, so
-// the full corpus only crosses the socket when you asked to see the full corpus.
+// Tunables. Neither the table nor the aggregation caps how much history it asks
+// for: this is the screen you open to look through your archive, and a row
+// budget makes the oldest of it unreachable by scrolling. The daemon sorts every
+// match before windowing regardless, so asking for all of them buys the whole
+// timeline for the cost of serializing it, and a non-empty query is narrowed
+// server-side, so the full corpus only crosses the socket when you asked to see
+// the full corpus.
 const (
 	leftWidth = 24   // host-sidebar outer width (incl. border)
 	flashMs   = 1500 // how long the copied/deleted flash lingers
@@ -186,14 +185,18 @@ type bulkDeleteDoneMsg struct {
 	err     error
 }
 
-// bulkTagDoneMsg carries the result of a bulk tag — the ctrl+t mirror of
+// bulkTagDoneMsg carries the result of a bulk tag: the ctrl+t mirror of
 // bulkDeleteDoneMsg, and for the same reason: N checked rows means N
-// SubmitRecord round trips, which must not run on the event loop.
+// SubmitRecord round trips, which must not run on the event loop. remove says
+// which op ran: add (ctrl+t) and remove (ctrl+x) differ only in the record they
+// submit and the word they report, so they share one message rather than
+// duplicating the batch loop that carries them.
 type bulkTagDoneMsg struct {
-	name   string
-	tagged map[string]struct{}
-	failed int
-	err    error
+	name    string
+	remove  bool
+	applied map[string]struct{}
+	failed  int
+	err     error
 }
 
 // Model is the Bubble Tea model backing the browser. Exported so tests can
@@ -229,7 +232,7 @@ type Model struct {
 	hasTags   bool // any current row carries a user tag (gates the tags column)
 
 	// hideAgents keeps agent-run commands out of the table (the A key). hidden
-	// is how many the daemon dropped for the current query — the number the
+	// is how many the daemon dropped for the current query: the number the
 	// status bar and the empty state quote, so the filter never costs the user
 	// history without telling them.
 	hideAgents bool
@@ -277,34 +280,35 @@ type Model struct {
 	appliedStats uint64
 
 	// interaction state
-	view          viewMode
-	focus         focus
-	vim           bool // vi-style navigation (from Options.Keymap == "vim")
-	searching     bool
-	tagging       bool // ctrl+t: entering a freeform tag for the selected row
+	view      viewMode
+	focus     focus
+	vim       bool // vi-style navigation (from Options.Keymap == "vim")
+	searching bool
+	tagging   bool // ctrl+t/ctrl+x: entering a freeform tag for the selected row
+	// tagRemove is which op the open box will submit: ctrl+x sets it, ctrl+t
+	// clears it. One box serves both, so the two share the whole path (the
+	// prompt, the footer, esc/enter) and only the op and the wording differ.
+	tagRemove     bool
 	tagInput      textinput.Model
 	confirmDelete bool
 	// checked is the bulk-selection set behind the space key: record IDs marked
 	// for a multi-row action, keyed by ID rather than table index so a resort (the
 	// c pane) or a delete earlier in the same batch never silently carries a mark
-	// onto a different row's data. Nil is empty — every reader and mutator treats
-	// a nil map as such — so a Model with nothing checked costs nothing extra to
-	// copy on every Update, which happens on every keystroke.
-	//
-	// It is cleared on every path where the USER changed which records the table
-	// shows: issueQuery (a new search, host, tag/executor filter, or hide-agents
-	// toggle), setPeriod (the period filter is applied client-side, without a
-	// query), and leaving the browse view for stats/agents/devices. A mark that
-	// survived any of those would be a mark on rows the user never looked at —
-	// and the one consumer today is delete.
-	//
-	// A BACKGROUND refresh of the same query (refreshQuery: the init-time warm
-	// loop, a finished sync) does not clear it — it only prunes, in applyResult,
-	// to the rows the refresh actually returned. Clearing there would wipe a
-	// selection out from under the user a second after they made it, since the
-	// warm loop re-queries once a second for the first several seconds of every
-	// session; pruning keeps the invariant that matters (a mark can never end up
-	// on a row nobody looked at) without the marks being unmakeable.
+	// onto a different row's data. Nil is empty (every reader and mutator treats a
+	// nil map as such) so a Model with nothing checked costs nothing extra to copy
+	// on every Update, which happens on every keystroke. It is cleared on every
+	// path where the USER changed which records the table shows: issueQuery (a new
+	// search, host, tag/executor filter, or hide-agents toggle), setPeriod (the
+	// period filter is applied client-side, without a query), and leaving the
+	// browse view for stats/agents/devices. A mark that survived any of those
+	// would be a mark on rows the user never looked at, and the one consumer today
+	// is delete. A BACKGROUND refresh of the same query (refreshQuery: the
+	// init-time warm loop, a finished sync) does not clear it; it only prunes, in
+	// applyResult, to the rows the refresh actually returned. Clearing there would
+	// wipe a selection out from under the user a second after they made it, since
+	// the warm loop re-queries once a second for the first several seconds of
+	// every session; pruning keeps the invariant that matters (a mark can never
+	// end up on a row nobody looked at) without the marks being unmakeable.
 	checked        map[string]struct{}
 	showHelp       bool   // ?: the key panel, over whichever view is beneath it
 	helpTop        int    // first visible row of that panel, when it overflows
@@ -317,8 +321,8 @@ type Model struct {
 	axis        filterAxis
 	filterInput textinput.Model
 
-	// Each reshapeable table's column choices — which are hidden and which one it
-	// is ordered by. They are session state, not settings, for the reason
+	// Each reshapeable table's column choices: which are hidden and which one it is
+	// ordered by. They are session state, not settings, for the reason
 	// toggleHideAgents gives: a keystroke that quietly rewrote config would make an
 	// experiment permanent, and reshaping a table is the most experimental thing in
 	// the view. Arrays, not maps, because the Model is copied on every update and a
@@ -343,14 +347,14 @@ type Model struct {
 	gotTokens  bool
 	// minted is a token this session just created, held only so it can be read
 	// off the screen. The server keeps a hash, so this is the one moment the
-	// plaintext exists — and it goes nowhere but here: not to ui.toml, not to
+	// plaintext exists, and it goes nowhere but here: not to ui.toml, not to
 	// the log, not to disk.
 	minted     string
 	mintedTill int64 // expiry of that token, unix ms
 	// minting is a mint already in flight. Holding n would otherwise issue one
 	// request per repeat and leave that many live tokens on the server.
 	minting bool
-	// devRefreshing is an S refresh in flight, so its result can be announced —
+	// devRefreshing is an S refresh in flight, so its result can be announced,
 	// and only its result, since the same message also carries the first load and
 	// the outcome of an approve or revoke.
 	devRefreshing bool
@@ -358,7 +362,7 @@ type Model struct {
 	// and devConfirmKind say which action, on which kind of thing. Every action
 	// here asks first: revoking a device rotates the group's keys, revoking a
 	// token cannot be undone, and approving admits a machine to everything the
-	// group can read — which is only safe if the verification code on screen is
+	// group can read; which is only safe if the verification code on screen is
 	// checked against the one that machine is showing.
 	devConfirm     string
 	devApproving   bool
@@ -396,8 +400,8 @@ type Model struct {
 	zoom   bool
 	// zoomDetail is the Z key's variant of z: while zoomed, keep the zoomed
 	// pane's detail companion visible as a side pane instead of hiding it. It
-	// is inert on its own — applyGeometry only honors it for panes that have
-	// such a companion (see zoomHasDetail) — so tabbing onto a pane with
+	// is inert on its own (applyGeometry only honors it for panes that have
+	// such a companion (see zoomHasDetail)) so tabbing onto a pane with
 	// nothing to pair it with falls back to plain zoom without this having to
 	// be unset.
 	zoomDetail bool
@@ -432,7 +436,7 @@ func NewModel(b Backend, opts Options) Model {
 	tagInput.Cursor.SetMode(cursor.CursorStatic)
 	tagInput.Cursor.Style = th.Accent
 
-	// The typed filter box draws its own prompt, which names the axis — the box
+	// The typed filter box draws its own prompt, which names the axis: the box
 	// sits on the search line, where two of them would otherwise look identical.
 	filterInput := textinput.New()
 	filterInput.Prompt = ""
@@ -721,7 +725,7 @@ func (m Model) applyStats(msg statsResultMsg) (tea.Model, tea.Cmd) {
 // change routes through to ask the daemon for a fresh table. A bulk selection
 // is cleared here, not only on the paths that obviously change the row set:
 // the user asked for a different set of rows, so a mark made against the old
-// one is a mark on rows they are no longer looking at — worth a reselect, not
+// one is a mark on rows they are no longer looking at; worth a reselect, not
 // worth the risk to delete.
 func (m Model) issueQuery() (Model, tea.Cmd) {
 	m.seq++
@@ -729,9 +733,9 @@ func (m Model) issueQuery() (Model, tea.Cmd) {
 	return m, m.queryCmd(m.seq, m.buildReq())
 }
 
-// refreshQuery re-asks the SAME question on the app's own initiative — the
-// init-time warm loop, a sync that just landed — with no keystroke behind it.
-// It keeps the bulk selection: the warm loop fires once a second for the first
+// refreshQuery re-asks the SAME question on the app's own initiative (the
+// init-time warm loop, a sync that just landed) with no keystroke behind it. It
+// keeps the bulk selection: the warm loop fires once a second for the first
 // several seconds of a session, so clearing here made a space or ctrl+a in that
 // window appear to undo itself a beat later. The daemon's answer to the same
 // query can still differ between calls (a pull converged the remote cache), so
@@ -813,7 +817,7 @@ func (m Model) buildReq() proto.QueryReq {
 		Limit:    proto.LimitAll,
 		Dedupe:   false, // browse shows the real timeline, newest first
 		// Asking for one executor is asking for agent commands, so the two
-		// filters cannot both apply — e wins over A while it is set.
+		// filters cannot both apply; e wins over A while it is set.
 		HumanOnly: m.hideAgents && m.executorFilter == "",
 	}
 	return req
@@ -924,7 +928,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "Z":
 		return m.toggleZoomDetail()
 	case "1", "2", "3", "4", "5":
-		// The period is global, so the tabs work in every view — including the
+		// The period is global, so the tabs work in every view; including the
 		// browse table, which had no time filter at all before.
 		return m.setPeriod(int(s[0] - '1'))
 	case "S":
@@ -978,22 +982,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.toggleHideAgents()
 	case "ctrl+t":
 		// With rows checked, ctrl+t tags the whole checked set instead of the
-		// cursor row — submitTag decides which, the same split doDelete makes
-		// for d — so the prompt says how many records are about to be tagged
+		// cursor row (submitTag decides which, the same split doDelete makes
+		// for d) so the prompt says how many records are about to be tagged
 		// rather than showing the single-row "tag: " while acting on twelve.
-		n := m.checkedCount()
-		if n == 0 && (m.sel < 0 || m.sel >= len(m.rows)) {
-			return m, nil
-		}
-		m.tagging = true
-		m.tagInput.SetValue("")
-		if n > 0 {
-			m.tagInput.Prompt = "tag " + plural(n, "record") + ": "
-		} else {
-			m.tagInput.Prompt = "tag: "
-		}
-		m.tagInput.Focus()
-		return m, nil
+		return m.openTagInput(false)
+	case "ctrl+x":
+		// The mirror of ctrl+t, down to the checked-set split: x is the app's
+		// verb for taking something away (the devices pane's revoke and cancel
+		// both sit on it), and a terminal cannot tell ctrl+shift+t from ctrl+t,
+		// so the removal half of tagging needs a key of its own.
+		return m.openTagInput(true)
 	case "tab":
 		m.cycleFocus(1)
 		return m, nil
@@ -1084,7 +1082,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "d":
 			// Delete stays a single-key action (with y/n confirm) in both
 			// keymaps; vim's "dd" is intentionally NOT implemented. With rows
-			// checked it acts on the checked set instead of the cursor row —
+			// checked it acts on the checked set instead of the cursor row;
 			// doDelete decides which.
 			if len(m.rows) > 0 || m.checkedCount() > 0 {
 				m.confirmDelete = true
@@ -1108,9 +1106,9 @@ func (m Model) openHelp() (tea.Model, tea.Cmd) {
 }
 
 // handleHelpKey services the key panel: it scrolls when the list is taller than
-// the pane, and esc/?/q dismiss it. q closes the panel rather than quitting —
-// the panel is transient, and on the devices screen underneath it q means "back",
-// so a q that quit from here would be the one place it ended the session.
+// the pane, and esc/?/q dismiss it. q closes the panel rather than quitting: the
+// panel is transient, and on the devices screen underneath it q means "back", so
+// a q that quit from here would be the one place it ended the session.
 func (m Model) handleHelpKey(s string) (tea.Model, tea.Cmd) {
 	page := maxInt(1, m.helpBodyHeight())
 	switch s {
@@ -1148,7 +1146,7 @@ func (m Model) handleHelpKey(s string) (tea.Model, tea.Cmd) {
 func (m Model) helpBodyWidth() int  { return maxInt(1, m.width-2) }
 func (m Model) helpBodyHeight() int { return maxInt(1, m.midHeight-2) }
 
-// helpMaxTop is how far the panel can scroll — zero unless the list is taller
+// helpMaxTop is how far the panel can scroll; zero unless the list is taller
 // than the pane, which on a stock 80×24 terminal it can be.
 func (m Model) helpMaxTop() int {
 	body := m.helpBodyHeight()
@@ -1158,7 +1156,7 @@ func (m Model) helpMaxTop() int {
 
 // applyPeriodFilter narrows the queried rows to the selected period. The daemon's
 // query protocol carries no time window, so the browse table filters the rows it
-// got back — every row matching the query, so the period narrows the whole
+// got back: every row matching the query, so the period narrows the whole
 // timeline rather than a slice of it. The "All" tab is a straight pass-through.
 func (m *Model) applyPeriodFilter() {
 	cutoff := periodCutoff(m.now(), m.periodDays())
@@ -1186,7 +1184,7 @@ func (m *Model) applyPeriodFilter() {
 	m.clampWindow()
 }
 
-// setPeriod switches the shared time window. It applies everywhere at once — the
+// setPeriod switches the shared time window. It applies everywhere at once: the
 // browse table, the agent explorer, and the stats screen all read the same
 // period, so the 1..5 keys mean one thing wherever they are pressed.
 func (m Model) setPeriod(p int) (tea.Model, tea.Cmd) {
@@ -1195,7 +1193,7 @@ func (m Model) setPeriod(p int) (tea.Model, tea.Cmd) {
 	}
 	m.period = p
 	// The period filter narrows rows client-side (see applyPeriodFilter), so
-	// unlike a search or a host change it never goes through issueQuery — it
+	// unlike a search or a host change it never goes through issueQuery: it
 	// needs its own clear, for the same reason: the row set the table shows is
 	// about to be different.
 	m.clearChecked()
@@ -1213,10 +1211,9 @@ func (m Model) setPeriod(p int) (tea.Model, tea.Cmd) {
 // hiddenAgentsNote describes what the agent filter is holding back, or "" when
 // it is holding nothing back worth reporting. The footer always names the
 // filter's state; this speaks only when history is actually being withheld.
-//
 // The count is the daemon's, taken across everything the query matched. The
 // period tabs narrow further, client-side, over rows the daemon has already
-// dropped — so with a period selected the count cannot be attributed to the
+// dropped, so with a period selected the count cannot be attributed to the
 // window on screen, and the note states the filter without quoting a number
 // that may be describing last month.
 func (m Model) hiddenAgentsNote() string {
@@ -1276,14 +1273,14 @@ func (m Model) toggleTagFilter() (tea.Model, tea.Cmd) {
 	}
 	r, ok := m.selected()
 	if !ok || len(r.Tags) == 0 {
-		return m.flashOnly("no tags on this row — ^t adds one")
+		return m.flashOnly("no tags on this row; ^t adds one")
 	}
 	m.tagFilter = r.Tags[0]
 	return m.afterFilterChange("tag: " + r.Tags[0])
 }
 
 // rowFilterValue is the highlighted row's value on one axis, or "" if it has
-// none — what t and e adopt, and what T and E open pre-filled with.
+// none; what t and e adopt, and what T and E open pre-filled with.
 func (m Model) rowFilterValue(a filterAxis) string {
 	r, ok := m.selected()
 	if !ok {
@@ -1301,9 +1298,9 @@ func (m Model) rowFilterValue(a filterAxis) string {
 // openFilterEntry opens the typed value box for one axis (T and E). It is
 // pre-filled with the filter in force, or failing that the highlighted row's own
 // value, so T is a strict superset of t: Enter alone does what t does, and typing
-// first reaches a tag or executor no row on screen happens to carry — which is
-// the whole reason the box exists, since adopting from the cursor can only ever
-// find values already in front of you.
+// first reaches a tag or executor no row on screen happens to carry; which is the
+// whole reason the box exists, since adopting from the cursor can only ever find
+// values already in front of you.
 func (m Model) openFilterEntry(a filterAxis) (tea.Model, tea.Cmd) {
 	v := m.tagFilter
 	if a == axisExec {
@@ -1351,7 +1348,7 @@ func (m Model) submitFilterEntry() (tea.Model, tea.Cmd) {
 }
 
 // handleFilterEntryKey services the typed value box: esc abandons it, enter
-// applies. Unlike the search field it does not filter as you type — each change
+// applies. Unlike the search field it does not filter as you type: each change
 // is a round trip to the daemon, and a half-typed tag matches nothing, so the
 // table would empty out under every prefix on the way to the name you wanted.
 func (m Model) handleFilterEntryKey(msg tea.KeyMsg, s string) (tea.Model, tea.Cmd) {
@@ -1446,7 +1443,7 @@ func (m Model) toggleAgents() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.view = viewAgents
-	// Leaving the browse table for a view with no checkmarks to show — a
+	// Leaving the browse table for a view with no checkmarks to show: a
 	// selection you cannot see is a trap for whatever presses d after coming
 	// back and finding the cursor somewhere else entirely.
 	m.clearChecked()
@@ -1468,7 +1465,7 @@ func (m Model) toggleAgents() (tea.Model, tea.Cmd) {
 // the tiled layout). Only the multi-pane views have anything to zoom. z and Z
 // are a mirrored pair, one per flavor: each claims plain-or-detail zoom, and
 // pressing the key for the flavor already showing exits back to the tiled
-// layout — so z always reaches the exact single-pane zoom this had before Z
+// layout, so z always reaches the exact single-pane zoom this had before Z
 // existed, and esc (which calls this too) peels a detail companion off before
 // it drops the zoom entirely, one visible thing at a time like everywhere else
 // esc backs out of a state.
@@ -1487,8 +1484,8 @@ func (m Model) toggleZoom() (tea.Model, tea.Cmd) {
 }
 
 // toggleZoomDetail is Z: the same full-frame zoom as z, but for the two panes
-// with a meaningful detail view — the browse table and the agent explorer's
-// prompt and command lists — it keeps that detail pane on screen as a side
+// with a meaningful detail view (the browse table and the agent explorer's
+// prompt and command lists) it keeps that detail pane on screen as a side
 // pane instead of hiding it. A pane with nothing to show there (the host
 // sidebar, the explorer's executor and host lists) has no side pane to offer,
 // so Z falls back to plain zoom exactly there.
@@ -1535,12 +1532,12 @@ func (m Model) zoomDetailActive() bool {
 	return m.zoom && m.zoomDetail && m.zoomHasDetail()
 }
 
-// zoomDetailAgentPane is the explorer pane that pairs with DETAILS when
-// zoomed with the companion kept visible: whichever of the prompt or command
-// list last pointed the details pane at itself. Reusing infoCmd here — rather
-// than a second field — is what keeps the pairing right even when focus is
-// sitting on DETAILS itself, whose own apPrompts/apCommands neighbor cannot be
-// read off m.apane.
+// zoomDetailAgentPane is the explorer pane that pairs with DETAILS when zoomed
+// with the companion kept visible: whichever of the prompt or command list
+// last pointed the details pane at itself. Reusing infoCmd here (rather than a
+// second field) is what keeps the pairing right even when focus is sitting on
+// DETAILS itself, whose own apPrompts/apCommands neighbor cannot be read off
+// m.apane.
 func (m Model) zoomDetailAgentPane() agentPane {
 	if m.infoCmd {
 		return apCommands
@@ -1612,7 +1609,7 @@ func (m Model) handleAgentsKey(s string) (tea.Model, tea.Cmd) {
 
 // filterTarget is the list the / key filters from the current pane. The two list
 // panes filter themselves; the sidebar and the details pane have no list of
-// their own to narrow, so they aim at the prompts — the list everything else in
+// their own to narrow, so they aim at the prompts: the list everything else in
 // the view hangs off.
 func (m Model) filterTarget() agentPane {
 	if m.apane == apCommands {
@@ -1660,9 +1657,9 @@ func (m Model) openAgentFilter() (tea.Model, tea.Cmd) {
 }
 
 // handleAgentFilterKey services the filter box. Esc and Enter both leave it with
-// the query kept — the filter is the point, and there is nothing to "cancel"
-// that closing the box would not also undo — so the way to drop a filter is to
-// empty it, or Esc again once the box is closed.
+// the query kept (the filter is the point, and there is nothing to "cancel" that
+// closing the box would not also undo) so the way to drop a filter is to empty
+// it, or Esc again once the box is closed.
 func (m Model) handleAgentFilterKey(msg tea.KeyMsg, s string) (tea.Model, tea.Cmd) {
 	switch s {
 	case "esc", "enter":
@@ -1702,7 +1699,7 @@ func (m *Model) focusAgentPane(d int) {
 	m.setAgentPane(agentPane((int(m.apane) + d + agentPaneCount) % agentPaneCount))
 }
 
-// setAgentPane focuses a specific pane — the mouse path, and where tabbing ends
+// setAgentPane focuses a specific pane: the mouse path, and where tabbing ends
 // up. Landing on a list pane points the details pane at what that list selects;
 // landing on the details pane itself changes nothing, so tabbing over to read or
 // zoom a command's record cannot swap the prompt's in on the way.
@@ -1722,7 +1719,7 @@ func (m *Model) setAgentPane(p agentPane) {
 }
 
 // moveAgentPane moves the focused pane's cursor by d rows. The details pane has
-// no cursor, but it does have more body than fits, so there it scrolls — the same
+// no cursor, but it does have more body than fits, so there it scrolls: the same
 // thing ↑/↓ do in the browse view's detail pane. Moving the command cursor from
 // here instead, as it once did, meant the keys drove a list the focused pane was
 // not even showing.
@@ -1839,8 +1836,8 @@ func (m *Model) selectAgentHost(i int) {
 	m.recomputeStats()
 }
 
-// cycleAgentHost is the H key: one stop around the host pane's rows — all
-// hosts, each host in name order, back to all — from anywhere in the explorer.
+// cycleAgentHost is the H key: one stop around the host pane's rows (all
+// hosts, each host in name order, back to all) from anywhere in the explorer.
 func (m Model) cycleAgentHost() (tea.Model, tea.Cmd) {
 	if len(m.agentHosts) < 2 {
 		return m.flashOnly("one host in this sample")
@@ -1850,10 +1847,9 @@ func (m Model) cycleAgentHost() (tea.Model, tea.Cmd) {
 }
 
 // cycleAgent is the A key: H's mirror on the other axis, one stop around the
-// executor sidebar — all agents, each executor in turn, back to all. With a
+// executor sidebar; all agents, each executor in turn, back to all. With a
 // single executor in the sample the "all agents" row and its one child show the
 // same work, so there is nothing to cycle between and the key says so instead.
-//
 // A means this only in the explorer. In the browse table the same key hides and
 // shows agent commands, which is that view's one agent-shaped question; here
 // every row is agent work already, so the useful question is which agent.
@@ -1939,7 +1935,7 @@ func (m Model) hScrollTarget() (text string, colW int, ok bool) {
 }
 
 // selectPrompt moves the top-pane cursor and, whenever it lands on a different
-// prompt, resets the command pane to the top — the bottom pane now reflects a
+// prompt, resets the command pane to the top: the bottom pane now reflects a
 // different prompt's commands.
 func (m *Model) selectPrompt(i int) {
 	next := clampIndex(i, m.promptLen())
@@ -1949,9 +1945,9 @@ func (m *Model) selectPrompt(i int) {
 	m.promptSel = next
 }
 
-// applyPromptFilter narrows the aggregated prompts to those matching promptQ.
-// It runs whenever the sample, the period, the executor filter or the query text
-// changes — everything downstream (the list, the cursor, the command pane, the
+// applyPromptFilter narrows the aggregated prompts to those matching promptQ. It
+// runs whenever the sample, the period, the executor filter or the query text
+// changes; everything downstream (the list, the cursor, the command pane, the
 // details) reads the narrowed slice, so this is the one place the filter is
 // applied.
 func (m *Model) applyPromptFilter() {
@@ -1972,7 +1968,7 @@ func (m *Model) applyPromptFilter() {
 		m.filteredPrompts = kept
 	}
 	// computePrompts left the aggregate most-recent-first, which is also the
-	// default sort — so any other order is applied to a COPY. The unfiltered slice
+	// default sort, so any other order is applied to a COPY. The unfiltered slice
 	// above is m.prompts.prompts itself, and sorting that in place would reorder
 	// the aggregate every pane reads from.
 	if !m.sortedByDefault(ctPrompts) {
@@ -2003,7 +1999,7 @@ func (m Model) visibleCmds() []rec.Record {
 		out = kept
 	}
 	// computePrompts left p.cmds chronological, which is this list's default sort,
-	// so any other order goes on a COPY — p.cmds belongs to the prompt aggregate.
+	// so any other order goes on a COPY; p.cmds belongs to the prompt aggregate.
 	if !m.sortedByDefault(ctCommands) {
 		sorted := append([]rec.Record(nil), out...)
 		sortRows(drillSpecs, m.cols[ctCommands], sorted)
@@ -2070,13 +2066,13 @@ func (m Model) moveHost(d int) (tea.Model, tea.Cmd) {
 	return m.issueQuery()
 }
 
-// cycleHost is the H key: one stop down the sidebar — all hosts, then each
-// machine in the order the sidebar lists them, and around again — from anywhere
+// cycleHost is the H key: one stop down the sidebar (all hosts, then each
+// machine in the order the sidebar lists them, and around again) from anywhere
 // in the browse view, the mirror of the explorer's H. It wraps where ↑/↓ clamp:
 // a key you press repeatedly to sweep the machines has to come back around,
 // while an arrow key that jumped from the last row to the first would be a
 // cursor that lost its place. The header's scope word reports where it landed,
-// so it needs no flash of its own — but with only the aggregate row there is
+// so it needs no flash of its own, but with only the aggregate row there is
 // nothing to cycle through, and saying so beats a keypress that looks broken.
 func (m Model) cycleHost() (tea.Model, tea.Cmd) {
 	if len(m.hosts) < 2 {
@@ -2129,101 +2125,197 @@ func (m Model) copySelected() (tea.Model, tea.Cmd) {
 	return m.copyText(cmd.Cmd, "✓ copied")
 }
 
-// closeTagInput blurs the tag box and puts its prompt back to the single-row
-// default. Without this, opening ctrl+t on a selection (which sets a
-// "tag N records: " prompt) and later closing it and opening it again on the
-// cursor row alone would still show that stale count.
-func (m *Model) closeTagInput() {
-	m.tagging = false
-	m.tagInput.Blur()
-	m.tagInput.Prompt = "tag: "
+// openTagInput raises the freeform tag box for an add (ctrl+t) or a remove
+// (ctrl+x). The prompt names the op and, with rows checked, how many records it
+// is about to touch; showing the single-row "tag: " while acting on twelve is
+// the thing this exists to prevent.
+func (m Model) openTagInput(remove bool) (tea.Model, tea.Cmd) {
+	n := m.checkedCount()
+	if n == 0 && (m.sel < 0 || m.sel >= len(m.rows)) {
+		return m, nil
+	}
+	m.tagging, m.tagRemove = true, remove
+	m.tagInput.SetValue("")
+	m.tagInput.Prompt = tagPrompt(remove, n)
+	m.tagInput.Focus()
+	return m, nil
 }
 
-// submitTag sends a user-tag record for the row under the cursor and
-// optimistically shows the tag at once (the daemon folds it on ingest; a
-// later query confirms). With rows checked it tags the whole checked set
-// instead — the exact mirror of doDelete's single-row/checked-set split — and
-// that path runs off the event loop (see tagChecked).
+// tagPrompt is the label on the tag box: the verb, plus the count when the box
+// is aimed at a checked set rather than the cursor row.
+func tagPrompt(remove bool, checked int) string {
+	verb := "tag"
+	if remove {
+		verb = "untag"
+	}
+	if checked > 0 {
+		return verb + " " + plural(checked, "record") + ": "
+	}
+	return verb + ": "
+}
+
+// closeTagInput blurs the tag box and puts its prompt back to the single-row
+// add default. Without this, opening it on a selection (which sets a "tag N
+// records: " prompt) and later closing it and opening it again on the cursor
+// row alone would still show that stale count, and the same for the verb, so
+// a ctrl+x that was cancelled cannot leave the next ctrl+t reading "untag".
+func (m *Model) closeTagInput() {
+	m.tagging, m.tagRemove = false, false
+	m.tagInput.Blur()
+	m.tagInput.Prompt = tagPrompt(false, 0)
+}
+
+// submitTag sends a user-tag record for the row under the cursor (an add from
+// ctrl+t, a remove from ctrl+x) and shows the result at once (the daemon folds
+// it on ingest; a later query confirms). With rows checked it acts on the whole
+// checked set instead, the exact mirror of doDelete's single-row/checked-set
+// split, and that path runs off the event loop (see tagChecked).
 func (m Model) submitTag() (tea.Model, tea.Cmd) {
 	name := strings.ToLower(strings.TrimSpace(m.tagInput.Value()))
+	remove := m.tagRemove // closeTagInput clears it; the op outlives the box
 	m.closeTagInput()
 	if name == "" {
 		return m, nil
 	}
 	if m.checkedCount() > 0 {
-		return m.tagChecked(name)
+		return m.tagChecked(name, remove)
 	}
 	if m.sel < 0 || m.sel >= len(m.rows) {
 		return m, nil
 	}
 	id := m.rows[m.sel].ID
+	v := verbsFor(remove)
 	m.flashID++
-	if err := m.b.SubmitRecord(rec.Record{ID: rec.NewID(), Type: rec.TypeTag, TagName: name, TargetID: id}); err != nil {
-		m.flash = "tag failed"
+	// Removing a tag the row does not carry would submit a record the daemon
+	// folds into nothing and then report as done, so say what is actually true
+	// instead. Adding needs no such check: the add is idempotent either way.
+	if remove && !slices.Contains(m.rows[m.sel].Tags, name) {
+		m.flash = "not tagged: " + name
+		return m, flashTick(m.flashID)
+	}
+	rc := rec.Record{ID: rec.NewID(), Type: rec.TypeTag, TagName: name, TargetID: id, TagOp: tagOp(remove)}
+	if err := m.b.SubmitRecord(rc); err != nil {
+		m.flash = v.bare + " failed"
 		m.lastErr = err
 		return m, flashTick(m.flashID)
 	}
-	m.applyTagLocal(id, name)
-	m.flash = "tagged: " + name
+	if remove {
+		m.removeTagLocal(id, name)
+	} else {
+		m.applyTagLocal(id, name)
+	}
+	m.flash = v.ed + ": " + name
 	return m, flashTick(m.flashID)
+}
+
+// tagVerbs is how an op reports itself: the bare verb for a failure, the
+// progressive while it runs, the past tense once it has. Spelled out rather
+// than assembled from a stem; "untag"+"ged" happens to come out right, but a
+// reader should not have to check that it does.
+type tagVerbs struct{ bare, ing, ed string }
+
+func verbsFor(remove bool) tagVerbs {
+	if remove {
+		return tagVerbs{bare: "untag", ing: "untagging", ed: "untagged"}
+	}
+	return tagVerbs{bare: "tag", ing: "tagging", ed: "tagged"}
+}
+
+// tagOp is the record op an add or a remove submits.
+func tagOp(remove bool) string {
+	if remove {
+		return rec.TagOpRemove
+	}
+	return rec.TagOpAdd
 }
 
 // tagChecked submits name for every checked record. It mirrors deleteChecked:
 // proto has no batch tag call, so N checked rows costs N SubmitRecord round
 // trips over the same connection, run off the event loop the same way (see
-// bulkTagCmd) so the UI keeps redrawing for however long the batch takes.
-func (m Model) tagChecked(name string) (tea.Model, tea.Cmd) {
-	ids := make([]string, 0, len(m.checked))
-	for id := range m.checked {
-		ids = append(ids, id)
+// bulkTagCmd) so the UI keeps redrawing for however long the batch takes. A
+// remove is narrowed to the checked rows that actually carry the tag. That is
+// not the efficiency argument the add path deliberately passes up: it is that "✓
+// untagged 12 records" over a set where three were tagged is a lie, and the only
+// way to count honestly is to know which rows were in scope before asking. A row
+// whose tag arrived since the last query is missed by this; the next query shows
+// it still tagged, which is recoverable, whereas a wrong count is not.
+func (m Model) tagChecked(name string, remove bool) (tea.Model, tea.Cmd) {
+	var ids []string
+	if remove {
+		// One pass over the corpus, not a lookup per checked id: ctrl+a can check
+		// an entire archive, and this runs on the event loop; the scan-per-id
+		// version of it is quadratic in exactly the case the bulk paths exist for.
+		// allRows rather than rows, because the checked set survives a filter: an
+		// id can be checked while its row is off the visible page.
+		for i := range m.allRows {
+			if m.isChecked(m.allRows[i].ID) && slices.Contains(m.allRows[i].Tags, name) {
+				ids = append(ids, m.allRows[i].ID)
+			}
+		}
+	} else {
+		ids = make([]string, 0, len(m.checked))
+		for id := range m.checked {
+			ids = append(ids, id)
+		}
+	}
+	m.flashID++
+	if len(ids) == 0 {
+		m.flash = "no checked record has that tag"
+		return m, flashTick(m.flashID)
 	}
 	// In-progress flash with no expiry tick: replaced by applyBulkTag when the
-	// run ends, so it shows for the real duration however long that is — see
+	// run ends, so it shows for the real duration however long that is; see
 	// deleteChecked's flash for the same reasoning.
-	m.flash = "tagging " + plural(len(ids), "record") + "…"
-	m.flashID++
-	return m, m.bulkTagCmd(ids, name)
+	m.flash = verbsFor(remove).ing + " " + plural(len(ids), "record") + "…"
+	return m, m.bulkTagCmd(ids, name, remove)
 }
 
 // bulkTagCmd submits name for ids one at a time off the event loop. Every id
-// is attempted even after a failure — the same policy as bulkDeleteCmd — so a
+// is attempted even after a failure (the same policy as bulkDeleteCmd) so a
 // partial run still tags everything it can rather than giving up on the rest
 // because one call failed.
-func (m Model) bulkTagCmd(ids []string, name string) tea.Cmd {
+func (m Model) bulkTagCmd(ids []string, name string, remove bool) tea.Cmd {
 	b := m.b
+	op := tagOp(remove)
 	return func() tea.Msg {
-		msg := bulkTagDoneMsg{name: name, tagged: make(map[string]struct{}, len(ids))}
+		msg := bulkTagDoneMsg{name: name, remove: remove, applied: make(map[string]struct{}, len(ids))}
 		for _, id := range ids {
-			if err := b.SubmitRecord(rec.Record{ID: rec.NewID(), Type: rec.TypeTag, TagName: name, TargetID: id}); err != nil {
+			if err := b.SubmitRecord(rec.Record{ID: rec.NewID(), Type: rec.TypeTag, TagName: name, TargetID: id, TagOp: op}); err != nil {
 				msg.failed++
 				msg.err = err
 				continue
 			}
-			msg.tagged[id] = struct{}{}
+			msg.applied[id] = struct{}{}
 		}
 		return msg
 	}
 }
 
-// applyBulkTag folds a finished bulk tag back into the table, applying the
-// tag optimistically to every record that succeeded. Unlike applyBulkDelete,
-// it never drops anything from m.checked: tagging is additive and the rows
-// survive it, so a user tagging "wip" then "review" over the same checked set
-// should not have to reselect between the two — and an id whose call failed
-// stays checked regardless, so a retry acts on exactly what failed.
+// applyBulkTag folds a finished bulk tag or untag back into the table,
+// optimistically applying the op to every record that succeeded. Unlike
+// applyBulkDelete, it never drops anything from m.checked: neither op destroys
+// the rows, so a user tagging "wip" then "review" over the same checked set,
+// or untagging one and tagging the other, should not have to reselect between
+// the two, and an id whose call failed stays checked regardless, so a retry
+// acts on exactly what failed.
 func (m Model) applyBulkTag(msg bulkTagDoneMsg) (tea.Model, tea.Cmd) {
-	for id := range msg.tagged {
-		m.applyTagLocal(id, msg.name)
+	for id := range msg.applied {
+		if msg.remove {
+			m.removeTagLocal(id, msg.name)
+		} else {
+			m.applyTagLocal(id, msg.name)
+		}
 	}
+	v := verbsFor(msg.remove)
 	m.flashID++
 	switch {
 	case msg.failed == 0:
-		m.flash = "✓ tagged " + plural(len(msg.tagged), "record")
-	case len(msg.tagged) == 0:
-		m.flash = "tag failed"
+		m.flash = "✓ " + v.ed + " " + plural(len(msg.applied), "record")
+	case len(msg.applied) == 0:
+		m.flash = v.bare + " failed"
 		m.lastErr = msg.err
 	default:
-		m.flash = fmt.Sprintf("tagged %d, %d failed", len(msg.tagged), msg.failed)
+		m.flash = fmt.Sprintf("%s %d, %d failed", v.ed, len(msg.applied), msg.failed)
 		m.lastErr = msg.err
 	}
 	return m, flashTick(m.flashID)
@@ -2234,7 +2326,7 @@ func (m Model) applyBulkTag(msg bulkTagDoneMsg) (tea.Model, tea.Cmd) {
 // Touching only m.rows (as the single-row path used to) works until the next
 // period-tab change: applyPeriodFilter rebuilds rows from allRows on every
 // 1..5 press, so a tag that never reached allRows would silently vanish the
-// moment the period changed — the same class of bug removeRows exists to
+// moment the period changed; the same class of bug removeRows exists to
 // prevent for delete.
 func (m *Model) applyTagLocal(id, name string) {
 	changed := appendTag(m.allRows, id, name)
@@ -2244,6 +2336,21 @@ func (m *Model) applyTagLocal(id, name string) {
 	if changed {
 		m.hasTags = true
 	}
+}
+
+// removeTagLocal is applyTagLocal's mirror: it drops name from the record's
+// Tags in BOTH m.rows and m.allRows, for the same reason; a change that reached
+// only m.rows is undone the next time applyPeriodFilter rebuilds them. It
+// cannot unset m.hasTags. The tags column is gated on that flag, and hiding the
+// column the moment the last visible tag goes would take the row's other tags
+// off screen with it; the next query settles the flag either way. The removal
+// is a command-level one, which is all a command-level record can be: a tag the
+// row inherits from its session, or from an auto_tags cwd rule, is not the
+// command's to drop and comes back when the daemon next resolves the row.
+// Untagging those means `yore tag rm --session`, or editing the rule.
+func (m *Model) removeTagLocal(id, name string) {
+	dropTag(m.allRows, id, name)
+	dropTag(m.rows, id, name)
 }
 
 // appendTag adds name to the Tags of the record with the given id within
@@ -2264,8 +2371,34 @@ func appendTag(rows []rec.Record, id, name string) bool {
 	return false
 }
 
+// dropTag removes name from the Tags of the record with the given id within
+// rows. It builds a fresh slice rather than filtering in place, because the two
+// calls removeTagLocal makes can share one backing array: applyPeriodFilter
+// copies each record into m.rows, so m.rows[i].Tags and m.allRows[j].Tags are
+// distinct headers over the same array. Compacting in place would rewrite that
+// array under the second header, which still has the old length; leaving the
+// row showing its next tag twice instead of losing the one asked for.
+func dropTag(rows []rec.Record, id, name string) {
+	for i := range rows {
+		if rows[i].ID != id {
+			continue
+		}
+		kept := make([]string, 0, len(rows[i].Tags))
+		for _, tg := range rows[i].Tags {
+			if tg != name {
+				kept = append(kept, tg)
+			}
+		}
+		if len(kept) == 0 {
+			kept = nil
+		}
+		rows[i].Tags = kept
+		return
+	}
+}
+
 // doDelete carries out the confirmed delete: the checked set if anything is
-// marked, otherwise the single row under the cursor — the y/n prompt (and its
+// marked, otherwise the single row under the cursor; the y/n prompt (and its
 // count) already told the user which of the two is about to happen.
 func (m Model) doDelete() (tea.Model, tea.Cmd) {
 	m.confirmDelete = false
@@ -2292,19 +2425,18 @@ func (m Model) doDelete() (tea.Model, tea.Cmd) {
 }
 
 // deleteChecked deletes every checked record. proto.OpDelete tombstones one
-// record per call — there is no batch delete in the daemon protocol — so N
+// record per call (there is no batch delete in the daemon protocol) so N
 // checked rows costs N round trips over the same unix-socket connection the
-// rest of the browser already uses.
-//
-// A failure partway through does not abort the rest: every call is attempted
-// regardless of an earlier one failing, because stopping early would leave
-// the choice of which rows survive up to network timing rather than the
-// user's selection, and a row already tombstoned by a prior call in this same
-// batch cannot be un-deleted by giving up on the ones after it. Rows whose
-// call succeeded are dropped locally; rows whose call failed stay in the
-// table (and checked, so the user can retry) and the flash reports both
-// counts — "deleted 10, 2 failed" — rather than silently losing the
-// difference between what was asked for and what actually happened.
+// rest of the browser already uses. A failure partway through does not abort
+// the rest: every call is attempted regardless of an earlier one failing,
+// because stopping early would leave the choice of which rows survive up to
+// network timing rather than the user's selection, and a row already
+// tombstoned by a prior call in this same batch cannot be un-deleted by
+// giving up on the ones after it. Rows whose call succeeded are dropped
+// locally; rows whose call failed stay in the table (and checked, so the user
+// can retry) and the flash reports both counts ("deleted 10, 2 failed")
+// rather than silently losing the difference between what was asked for and
+// what actually happened.
 func (m Model) deleteChecked() (tea.Model, tea.Cmd) {
 	ids := make([]string, 0, len(m.checked))
 	for id := range m.checked {
@@ -2365,18 +2497,17 @@ func (m Model) applyBulkDelete(msg bulkDeleteDoneMsg) (tea.Model, tea.Cmd) {
 }
 
 // removeRows drops every record in ids from both allRows and the
-// period-filtered rows the table renders — the one place a confirmed daemon
+// period-filtered rows the table renders: the one place a confirmed daemon
 // delete is reflected locally, single or bulk. Touching allRows too (the
 // earlier single-delete path did not) matters because applyPeriodFilter
 // rebuilds rows from allRows on every period-tab change: leaving a deleted
 // record in allRows would resurrect it the next time 1..5 was pressed, right
-// back into a table that no longer has it selected or checked.
-//
-// Both filters allocate a fresh backing array rather than compacting in
-// place: applyPeriodFilter hands rows the SAME slice as allRows outright when
-// the period is "All" (the default), so a compaction of one in place would
-// silently mutate the array the other still reads through its own,
-// unrelated length — corrupting rows that were never asked to be removed.
+// back into a table that no longer has it selected or checked. Both filters
+// allocate a fresh backing array rather than compacting in place:
+// applyPeriodFilter hands rows the SAME slice as allRows outright when the
+// period is "All" (the default), so a compaction of one in place would
+// silently mutate the array the other still reads through its own, unrelated
+// length; corrupting rows that were never asked to be removed.
 func (m *Model) removeRows(ids map[string]struct{}) {
 	if len(ids) == 0 {
 		return
@@ -2401,7 +2532,7 @@ func (m *Model) removeRows(ids map[string]struct{}) {
 }
 
 // clampSel keeps the cursor in range after rows have been removed from under
-// it — the same clamp doDelete always did, now shared with the bulk path.
+// it: the same clamp doDelete always did, now shared with the bulk path.
 func (m *Model) clampSel() {
 	if m.sel >= len(m.rows) {
 		m.sel = len(m.rows) - 1
@@ -2430,11 +2561,11 @@ func hostsTick() tea.Cmd {
 
 // onHostsTick drives the bounded init-time warm loop. While the remote cache is
 // enabled but not yet OK, it re-issues the table query and the host fetch so a
-// cold daemon converges without a keystroke, then reschedules itself. It STOPS
-// — and never reschedules — once the cache is OK (one final fetch), the remote
-// is Off (disabled), or a hard tick cap is reached, so it can never spin
-// forever. A single in-flight chain is enforced by m.ticking: any tick arriving
-// after the chain has stopped is dropped.
+// cold daemon converges without a keystroke, then reschedules itself. It STOPS,
+// and never reschedules, once the cache is OK (one final fetch), the remote is
+// Off (disabled), or a hard tick cap is reached, so it can never spin forever.
+// A single in-flight chain is enforced by m.ticking: any tick arriving after
+// the chain has stopped is dropped.
 func (m Model) onHostsTick() (tea.Model, tea.Cmd) {
 	if !m.ticking {
 		return m, nil // stale tick from a superseded/stopped chain
@@ -2532,7 +2663,7 @@ func (m Model) selected() (rec.Record, bool) {
 // checkedCount is how many rows are currently marked.
 func (m Model) checkedCount() int { return len(m.checked) }
 
-// isChecked reports whether a record is in the bulk-selection set — what the
+// isChecked reports whether a record is in the bulk-selection set; what the
 // table's marker column and the pane title's count both read.
 func (m Model) isChecked(id string) bool {
 	_, ok := m.checked[id]
@@ -2558,7 +2689,7 @@ func (m *Model) toggleChecked() {
 // toggleCheckAll implements ctrl+a's master-checkbox tri-state, the same
 // convention as a table header's "select all" checkbox: if every row the
 // table is CURRENTLY SHOWING is already checked, it clears the selection
-// outright; otherwise — nothing checked, or only some of it — it checks every
+// outright; otherwise (nothing checked, or only some of it) it checks every
 // row shown. "Shown" means after the query, the period filter and any search
 // have narrowed it, not the whole archive, since that is what "all" means on
 // screen to select from. A second press after a full select-all is what
@@ -2566,7 +2697,7 @@ func (m *Model) toggleChecked() {
 func (m *Model) toggleCheckAll() {
 	if len(m.rows) == 0 {
 		// Select-all of nothing is nothing, not "leave whatever was checked
-		// before alone" — otherwise ctrl+a on an empty table would be a no-op
+		// before alone"; otherwise ctrl+a on an empty table would be a no-op
 		// that quietly preserves a selection made over rows no longer shown.
 		m.checked = nil
 		return
@@ -2611,8 +2742,8 @@ func (m *Model) pruneChecked() {
 }
 
 // clearChecked drops the bulk selection outright. Called from esc, and from
-// every path that can change which records the table shows — see the checked
-// field's own comment for the full list — so a mark can never survive onto
+// every path that can change which records the table shows (see the checked
+// field's own comment for the full list) so a mark can never survive onto
 // rows the user never looked at.
 func (m *Model) clearChecked() {
 	m.checked = nil
@@ -2632,7 +2763,7 @@ func (m *Model) applyLayout() {
 	}
 
 	// header (1) + status line (1) + the footer hint line (1). The footer is one
-	// line in every state — the expanded key list is a panel over the view, not a
+	// line in every state: the expanded key list is a panel over the view, not a
 	// footer that grows and reflows the panes under it.
 	mid := h - 3
 	if mid < 3 {
@@ -2683,7 +2814,7 @@ func (m *Model) applyLayout() {
 	m.tableWidth = tableContent
 
 	// Visible data rows: table content height less the two border rows and the
-	// column-header line. The pane title costs nothing — it rides in the border.
+	// column-header line. The pane title costs nothing: it rides in the border.
 	m.tableRows = m.tableOuterH - 2 - 1
 	if m.tableRows < 1 {
 		m.tableRows = 1
@@ -2691,21 +2822,19 @@ func (m *Model) applyLayout() {
 
 	m.applyGeometry(w, mid)
 
-	// The detail viewport fills its box interior — which, zoomed, is the whole
-	// frame — or the side pane, zoomed with the detail kept beside the table —
-	// so a long record rewraps to that width instead of staying wrapped for the
-	// tile it came from.
-	//
-	// It is sized from the BROWSE geometry, not from m.geo, because the detail
-	// pane belongs to the browse view and m.geo describes whichever view is on
-	// screen. Reading m.geo while the devices view was up found the rect no view
-	// but browse lays out at that index — zero — and sized the viewport to one
-	// column. Any refresh landing in that moment (a query result, a token mint)
-	// re-wrapped the pane's content one character per line, and the wrapping is
-	// baked in at SetContent time, so it stayed stacked after coming back.
-	//
-	// m.geo is safe to read in the two zoomed cases below precisely because both
-	// are gated on the browse view being the one on screen.
+	// The detail viewport fills its box interior (which, zoomed, is the whole
+	// frame) or the side pane, zoomed with the detail kept beside the table, so
+	// a long record rewraps to that width instead of staying wrapped for the
+	// tile it came from. It is sized from the BROWSE geometry, not from m.geo,
+	// because the detail pane belongs to the browse view and m.geo describes
+	// whichever view is on screen. Reading m.geo while the devices view was up
+	// found the rect no view but browse lays out at that index (zero) and sized
+	// the viewport to one column. Any refresh landing in that moment (a query
+	// result, a token mint) re-wrapped the pane's content one character per
+	// line, and the wrapping is baked in at SetContent time, so it stayed
+	// stacked after coming back. m.geo is safe to read in the two zoomed cases
+	// below precisely because both are gated on the browse view being the one on
+	// screen.
 	dr := rect{w: rightOuter, h: m.detailOuterH}
 	if m.zoom && m.view == viewBrowse && (m.focus == focusDetail || m.zoomDetailActive()) {
 		dr = m.geo.p[focusDetail] // on screen: the whole frame, or the side pane
@@ -2733,10 +2862,10 @@ func (m *Model) applyLayout() {
 }
 
 // applyGeometry records where the active view's panes and seams landed, so the
-// renderers and the mouse agree on one set of rectangles. A zoomed pane owns
-// the whole frame and has no seams to grab — unless zoomDetail is asking to
-// keep its detail companion visible, in which case the two share the frame
-// with one seam between them, sized like every other split from splits.ZoomDetail.
+// renderers and the mouse agree on one set of rectangles. A zoomed pane owns the
+// whole frame and has no seams to grab, unless zoomDetail is asking to keep its
+// detail companion visible, in which case the two share the frame with one seam
+// between them, sized like every other split from splits.ZoomDetail.
 func (m *Model) applyGeometry(w, mid int) {
 	if m.zoom {
 		g := noDividers()
@@ -2766,8 +2895,8 @@ func (m *Model) applyGeometry(w, mid int) {
 	case viewAgents:
 		lw := splitAt(m.splits.AgentLeft, w, minPaneCols, w*defaultAgentLeftRatio/ratioFull)
 		topH := splitAt(m.splits.AgentTop, mid, minPaneRows, mid*defaultAgentTopRatio/ratioFull)
-		// Until its seam is dragged, the host pane is content-sized — you have as
-		// many hosts as you have — and the executor list flexes above it. A drag
+		// Until its seam is dragged, the host pane is content-sized (you have as
+		// many hosts as you have) and the executor list flexes above it. A drag
 		// stores AgentHosts and that proportion takes over, like every other seam.
 		hostsH := m.hostRows() + 2 // one row per entry plus the two border lines
 		if hostsH > topH/2 {

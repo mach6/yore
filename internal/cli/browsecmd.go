@@ -64,7 +64,7 @@ func uiFromPrefs(p browse.Prefs) config.UIState {
 }
 
 // runBrowse opens the full-screen history browser (the `h` alias target) on the
-// given start view — `yore stats` and `yore agents` are the same program landed
+// given start view; `yore stats` and `yore agents` are the same program landed
 // on a different screen. The command the user accepts with Enter is delivered
 // out-of-band: to acceptFile when the `h` shell function passes --accept-file
 // (so it can drop it on the next prompt), otherwise printed to stdout so a bare
@@ -81,8 +81,8 @@ func runBrowse(acceptFile string, start browse.StartView) int {
 	cwd, _ := os.Getwd()
 	dir := stateDir()
 	cfg, _ := config.Load(dir)
-	// A layout that can't be read (or written) is a convenience lost, not a
-	// reason to refuse to open the browser — both errors are deliberately dropped.
+	// A layout that can't be read (or written) is a convenience lost, not a reason
+	// to refuse to open the browser: both errors are deliberately dropped.
 	ui, _ := config.LoadUI(dir)
 	accepted, err := browse.Run(c, browse.Options{
 		Version: Version,

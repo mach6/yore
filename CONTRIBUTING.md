@@ -5,15 +5,14 @@ a change so it passes CI on the first try.
 
 ## Prerequisites
 
-- **Go 1.26+** (yore is CGO-free — no C toolchain needed).
-- For the full local CI dry-run: **Docker** and the **`drone`** CLI.
-- Tooling the `make` targets expect on your `PATH`:
-  - [`golangci-lint`](https://golangci-lint.run/) — the lint gate.
-  - [`gotestfmt`](https://github.com/GoTestTools/gotestfmt) — human-readable test
-    output (`go install github.com/gotesttools/gotestfmt/v2/cmd/gotestfmt@latest`).
-  - [`go-covercheck`](https://github.com/mach6/go-covercheck) — the coverage-floor
-    gate.
-  - `goimports` — import grouping (also run by the lint gate).
+- **Go 1.26+** (yore is CGO-free, so no C toolchain is needed). - For the full
+local CI dry-run: **Docker** and the **`drone`** CLI. - Tooling the `make`
+targets expect on your `PATH`: - [`golangci-lint`](https://golangci-lint.run/):
+the lint gate. - [`gotestfmt`](https://github.com/GoTestTools/gotestfmt):
+human-readable test output (`go install
+github.com/gotesttools/gotestfmt/v2/cmd/gotestfmt@latest`). -
+[`go-covercheck`](https://github.com/mach6/go-covercheck): the coverage-floor
+gate. - `goimports`: import grouping (also run by the lint gate).
 
 ## Build & run
 
@@ -50,19 +49,23 @@ make lint && make test && make coverage-check
 
 CI (`.drone.yml`) runs, in order, and every gate must be green:
 
-1. **yamllint** — YAML is linted with `.yamllint.yml` (120-col lines, no trailing
+1. **yamllint**: YAML is linted with `.yamllint.yml` (120-col lines, no trailing
    whitespace, newline at EOF). Keep any YAML you add clean.
-2. **golangci-lint** — **zero** issues. The enabled linters are in `.golangci.yml`
+2. **golangci-lint**: **zero** issues. The enabled linters are in `.golangci.yml`
    (errcheck, govet, staticcheck, unused, ineffassign, gocritic, misspell, nilerr,
    prealloc, revive, unconvert, unparam).
-3. **go test** — the coverage pass and the `-race` pass (both via gotestfmt).
-4. **go-covercheck** — the repo-wide coverage floor in `.go-covercheck.yml`. Don't
+3. **go test**: the coverage pass and the `-race` pass (both via gotestfmt).
+4. **go-covercheck**: the repo-wide coverage floor in `.go-covercheck.yml`. Don't
    lower the floor to pass; add tests. Ratchet it up when coverage rises.
+
+After the gates, CI builds the server image and smoke-tests it. On `main` and on
+tags it also pushes that image to the registry. Nothing you need to run, but it
+is why a change that breaks `docker/Dockerfile` fails CI after the tests pass.
 
 ## Testing conventions
 
-- Use **testify `require`** — table-driven where it fits.
-- **No `t.Fatal`, `t.Error`, or `t.Fail`** — assert with `require`.
+- Use **testify `require`**, table-driven where it fits.
+- **No `t.Fatal`, `t.Error`, or `t.Fail`**: assert with `require`.
 - Use **`t.TempDir()`** for any transient storage; never write into the working
   tree or `$HOME`.
 - Server tests use `httptest`; crypto tests assert round-trips **and**
@@ -76,14 +79,14 @@ These are enforced by review (see `CLAUDE.md`):
 
 - **No transient files in the working tree.** Debug scripts, scratch output, and
   throwaway data go in `.agents/` (gitignored). Never litter the repo.
-- **No planning references in code or comments** — no roadmap/phase numbers,
+- **No planning references in code or comments**: no roadmap/phase numbers,
   token IDs, or session notes. A comment explains the code to someone who has
   never seen the plan. Design rationale belongs in `docs/architecture.md`;
   roadmaps, phases, and open issues belong in the issue tracker, not in the
   repo.
 - **Never commit secrets or real history.** Device keys, tokens, and history live
   under `~/.config/yore/`, never in the repo or tests. `*.db` and `.env` are
-  gitignored — keep it that way.
+  gitignored; keep it that way.
 - **Errors propagate**; decryption/tamper failures must abort loudly, never be
   silently skipped. Anything doing I/O or blocking takes a `context.Context`.
 - **Stay CGO-free.** The binary must build with `CGO_ENABLED=0` on every tier-1
@@ -93,11 +96,11 @@ These are enforced by review (see `CLAUDE.md`):
 
 When you change a capability, update it in the same PR:
 
-- **`README.md`** — user-facing. What it does and how to use it, in the tone of
+- **`README.md`**: user-facing. What it does and how to use it, in the tone of
   something you hand a stranger. No internals.
-- **`docs/architecture.md`** — a design doc for engineers. How the pieces fit and
+- **`docs/architecture.md`**: a design doc for engineers. How the pieces fit and
   why they are shaped that way, not what the code makes obvious.
-- **`docs/protocol.md`** — the exact formats: the sync API, the crypto scheme,
+- **`docs/protocol.md`**: the exact formats: the sync API, the crypto scheme,
   the daemon socket protocol.
 
 Docs describe what is true now. They are not a changelog, a roadmap, or a place
@@ -115,7 +118,7 @@ redaction, the daemon, sync, or the shell integration.** It takes about twenty
 seconds, tears itself down afterwards, and it is the only thing that exercises
 the CLI the way a user does. Unit tests do not: the harness has twice been the
 thing that noticed a subcommand had been removed from under it, and both times
-only because someone ran it. Nothing runs it for you — neither harness is in CI
+only because someone ran it. Nothing runs it for you: neither harness is in CI
 (they need Docker and minutes, and `.drone.yml` deliberately stays fast).
 
 For a change to sync, multi-user isolation, or anything whose behavior depends
@@ -132,7 +135,7 @@ multi-tenant server, with cross-user isolation and per-record accounting.
 4. If you touched recording, redaction, the daemon, sync, or the shell
    integration, run `make stress N=150` as well.
 5. Open a PR with a clear description of the behavior change and its rationale.
-   Call out any change to a **default** explicitly — an existing user who never
+   Call out any change to a **default** explicitly. An existing user who never
    set the key gets the new behavior on upgrade, and that belongs in the PR
    description whether or not the code change looks small.
 

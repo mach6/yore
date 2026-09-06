@@ -153,7 +153,7 @@ func TestNoMatchesNeverLies(t *testing.T) {
 }
 
 // TestExplicitExecutorOverridesTheFilter: `yore search --executor claude-code`
-// is a request for agent commands, so the panel must not open with them hidden —
+// is a request for agent commands, so the panel must not open with them hidden,
 // nor let ⌥a hide the very rows that were asked for.
 func TestExplicitExecutorOverridesTheFilter(t *testing.T) {
 	q := &agentQuerier{}

@@ -26,7 +26,7 @@ import (
 
 // testClient talks to the server the way the real client (internal/syncer)
 // must: every authenticated request is signed with reqsign over the request's
-// RequestURI and the exact body bytes. There is no bearer token — a client
+// RequestURI and the exact body bytes. There is no bearer token: a client
 // without a signing identity can reach only the open endpoints and enrollment,
 // the latter authorized by token.
 type testClient struct {
@@ -70,8 +70,8 @@ func (c *testClient) doRaw(method, path string, raw []byte) (status int, resp []
 	return c.send(method, path, raw, true)
 }
 
-// send issues the request, attaching the bearer token and — when sign is true
-// and the client has a signing identity — the reqsign headers over the exact
+// send issues the request, attaching the bearer token and, when sign is true
+// and the client has a signing identity, the reqsign headers over the exact
 // body bytes and the request's RequestURI.
 func (c *testClient) send(method, path string, body []byte, sign bool) (status int, resp []byte) {
 	c.t.Helper()
@@ -263,7 +263,7 @@ func registerWithToken(t *testing.T, base *testClient, id, token string) *testCl
 	return dc
 }
 
-// activateDevice activates id, signed by `signer` — an already-active device,
+// activateDevice activates id, signed by `signer`: an already-active device,
 // or (for the very first device) the pending device itself at bootstrap.
 func activateDevice(t *testing.T, signer *testClient, id string) {
 	t.Helper()
@@ -619,7 +619,7 @@ func TestRevokeSignature(t *testing.T) {
 }
 
 // TestRevokedDeviceIsToldSo pins how a revoked device learns its standing: it is
-// refused everything, but with a code it can act on — that is what lets it stop
+// refused everything, but with a code it can act on; that is what lets it stop
 // syncing and drop the group's ciphertext instead of silently serving a cache it
 // may no longer read. The distinction is only ever revealed to a caller whose
 // signature verified, so it cannot be used to probe who is in the group.
@@ -904,7 +904,7 @@ func TestTokenLifecycleIsRecorded(t *testing.T) {
 	require.Equal(t, wire.TokenOpen, toks[0].State)
 	require.NotEmpty(t, toks[0].ID, "a token needs a handle to revoke it by")
 	require.NotContains(t, string(marshal(t, toks)), tok,
-		"the listing must never carry a token's plaintext — the server does not have it")
+		"the listing must never carry a token's plaintext: the server does not have it")
 
 	// Claimed by the device that enrolled on it, and it says which.
 	registerWithToken(t, a, "dev-b", tok)
@@ -960,7 +960,7 @@ func TestRevokeTokenRules(t *testing.T) {
 		require.Equalf(t, http.StatusNoContent, status, "revoke: body %s", body)
 	}
 
-	// A token that was already claimed cannot be revoked — revoking would say
+	// A token that was already claimed cannot be revoked; revoking would say
 	// something untrue about how that machine got in, and take nothing away.
 	tok2 := mintToken(t, a)
 	registerWithToken(t, a, "dev-b", tok2)
@@ -984,7 +984,7 @@ func TestRevokeTokenRules(t *testing.T) {
 }
 
 // TestTokenEndpointsRequireASignature: an enrollment token is a credential, so
-// who is outstanding — and cancelling one — is not readable by an unsigned
+// who is outstanding, and cancelling one, is not readable by an unsigned
 // caller holding only the bearer token.
 func TestTokenEndpointsRequireASignature(t *testing.T) {
 	base := setup(t)

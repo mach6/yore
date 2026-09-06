@@ -63,7 +63,7 @@ func explorer(t *testing.T) Model {
 	return m
 }
 
-// typeIn drives the filter box a rune at a time, the way a user does — so the
+// typeIn drives the filter box a rune at a time, the way a user does, so the
 // live re-filtering on every keystroke is what is under test, not a SetValue.
 func typeIn(t *testing.T, m Model, s string) Model {
 	t.Helper()
@@ -109,7 +109,7 @@ func TestFilterPromptsNarrowsTheList(t *testing.T) {
 }
 
 // TestFilterCommandsNarrowsOnlyThatPane: with the command pane focused, / aims
-// at the commands — the prompt list must not move under the user.
+// at the commands; the prompt list must not move under the user.
 func TestFilterCommandsNarrowsOnlyThatPane(t *testing.T) {
 	m := explorer(t)
 	m = focusCommands(t, m)
@@ -179,7 +179,7 @@ func TestEscBacksOutOneLevelAtATime(t *testing.T) {
 	require.False(t, m.afiltering, "the box closes with the filter kept")
 	require.Equal(t, "tower", m.promptQ)
 
-	// z only zooms once the box is closed — inside it, every letter is text.
+	// z only zooms once the box is closed; inside it, every letter is text.
 	m, _ = step(t, m, press("z"))
 	require.True(t, m.zoom)
 
@@ -270,7 +270,7 @@ func TestFilterMarkerIsOnThePane(t *testing.T) {
 }
 
 // TestFilterBoxOwnsTheHeaderLine: the query goes where this UI already puts a
-// query — and the footer names the list being narrowed, since two panes on
+// query, and the footer names the list being narrowed, since two panes on
 // screen can both be filtered.
 func TestFilterBoxOwnsTheHeaderLine(t *testing.T) {
 	m := explorer(t)

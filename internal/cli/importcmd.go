@@ -88,7 +88,7 @@ func runImport(format string, rest []string) int {
 
 		warnUntimed(src, recs)
 
-		// Mask credentials before they ever reach the store — years of shell
+		// Mask credentials before they ever reach the store; years of shell
 		// history is full of them, and the first sync would otherwise ship the
 		// lot. The commands themselves are kept: that history is the whole point
 		// of importing. Entries the user asked to ignore are dropped outright.
@@ -127,11 +127,11 @@ func runImport(format string, rest []string) int {
 var histTimeFormatHint = `echo "export HISTTIMEFORMAT='%F %T '" >> ~/.bashrc`
 
 // warnUntimed reports a bash history file that carries no timestamps at all.
-// Bash writes a "#<epoch>" line before each command only when HISTTIMEFORMAT
-// was set in the shell that flushed the file; by default it stores bare command
+// Bash writes a "#<epoch>" line before each command only when HISTTIMEFORMAT was
+// set in the shell that flushed the file; by default it stores bare command
 // lines, so every entry imports with no time. The information is not recoverable
 // after the fact, and a silent import leaves a screen of untimed rows that reads
-// like yore lost the dates — so say it once, at the moment it becomes true, with
+// like yore lost the dates, so say it once, at the moment it becomes true, with
 // the fix for future entries. A partly-timestamped file (HISTTIMEFORMAT set at
 // some point) is normal and says nothing.
 func warnUntimed(src importer.Source, recs []rec.Record) {
@@ -143,7 +143,7 @@ func warnUntimed(src importer.Source, recs []rec.Record) {
 			return
 		}
 	}
-	fmt.Fprintf(os.Stderr, "yore: %s: no timestamps — bash records them only when HISTTIMEFORMAT is set,\n", src.Path)
+	fmt.Fprintf(os.Stderr, "yore: %s: no timestamps. Bash records them only when HISTTIMEFORMAT is set,\n", src.Path)
 	fmt.Fprintln(os.Stderr, "      so these entries import with an unknown time (existing entries cannot be dated).")
 	fmt.Fprintln(os.Stderr, "      To timestamp future entries: "+histTimeFormatHint)
 }

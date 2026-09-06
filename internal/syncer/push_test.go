@@ -43,7 +43,7 @@ func TestPushSplitsOversizedBatchByBytes(t *testing.T) {
 	a, aStore, b, _ := enrollPair(t, url)
 
 	// ~24 KiB each: a thousand of these is ~24 MiB, well past the server's cap,
-	// but only 1000 records — the old count-only bound would have sent them all.
+	// but only 1000 records; the old count-only bound would have sent them all.
 	const n, size = 1000, 24 * 1024
 	recs := fatRecords(n, size)
 	_, err := aStore.AppendBatch(recs)
@@ -208,7 +208,7 @@ func wirePush(id, key string, blobLen int) wire.PushRecord {
 
 // stubPush stands in for the sync server so the backoff can be driven directly:
 // it accepts a push of at most accept records and rejects anything larger with
-// status. Signatures are not checked — this exercises batch splitting, which the
+// status. Signatures are not checked: this exercises batch splitting, which the
 // real integration tests cannot, since the size estimate deliberately keeps
 // bodies under the real server's limit.
 func stubPush(t *testing.T, accept, status int) (client *HTTPClient, calls *int) {

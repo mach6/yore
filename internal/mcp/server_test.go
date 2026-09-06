@@ -15,7 +15,7 @@ import (
 )
 
 // fakeQ is a minimal in-memory Querier: it honors Q (substring), Tag, ScopeCwd
-// (exact cwd), and Limit — enough to drive the tool handlers deterministically.
+// (exact cwd), and Limit; enough to drive the tool handlers deterministically.
 type fakeQ struct{ rows []rec.Record }
 
 func (f fakeQ) Query(q proto.QueryReq) (proto.QueryResp, error) {

@@ -67,7 +67,7 @@ func TestPathSegs(t *testing.T) {
 		{"/home/dev/Work/yore", []string{"/home/dev/Work/", "yore"}, []bool{true, false}},
 		{"/tmp/", []string{"/tmp/"}, []bool{true}},
 		{"relative", []string{"relative"}, []bool{false}},
-		{"—", []string{"—"}, []bool{false}},
+		{theme.Unknown, []string{theme.Unknown}, []bool{false}},
 	} {
 		segs := pathSegs(th, tc.path, 80)
 		require.Len(t, segs, len(tc.want), tc.path)
@@ -106,7 +106,7 @@ func TestRiskStyleAndSegs(t *testing.T) {
 	require.Equal(t, th.RiskHigh.GetForeground(), segs[0].style.GetForeground())
 	require.Equal(t, th.Dim.GetForeground(), segs[1].style.GetForeground())
 
-	// A clean verdict says "safe" once, not "safe (safe)" — but a row silenced
+	// A clean verdict says "safe" once, not "safe (safe)", but a row silenced
 	// by the user's ignore patterns still names why it went quiet.
 	require.Equal(t, "✓ safe",
 		segText(riskSegs(th, risk.Assessment{Level: risk.None, Category: "safe", Reason: "no risky pattern matched"})))
@@ -115,7 +115,7 @@ func TestRiskStyleAndSegs(t *testing.T) {
 }
 
 // TestWrapHighlightedSyntaxAndMatch: the detail wrap carries the same syntax
-// ink as the table, and a match overrides it — matches always win.
+// ink as the table, and a match overrides it; matches always win.
 func TestWrapHighlightedSyntaxAndMatch(t *testing.T) {
 	th := truecolorTheme()
 
@@ -217,7 +217,7 @@ func TestCommandsSegsSplit(t *testing.T) {
 
 // --- the Risk row in the panes (plain, strip-based) ------------------------
 
-// TestDetailShowsRiskRow: every selection carries a Risk line — a risky one
+// TestDetailShowsRiskRow: every selection carries a Risk line; a risky one
 // names its tier, a clean one says so, because silence reads as "not checked".
 func TestDetailShowsRiskRow(t *testing.T) {
 	f := &fakeBackend{}
@@ -266,7 +266,7 @@ func TestCmdInfoShowsRiskRow(t *testing.T) {
 	m, _ = step(t, m, statsResultMsg{seq: 1, resp: proto.QueryResp{Rows: rows, Total: 1, Prompts: prompts}})
 
 	require.NotContains(t, strip(m.View()), "⚠ high",
-		"prompt details carry no Risk row — the prompt is not one command")
+		"prompt details carry no Risk row: the prompt is not one command")
 
 	m = focusCommands(t, m)
 	out := strip(m.View())

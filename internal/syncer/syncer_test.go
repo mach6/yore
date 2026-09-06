@@ -322,7 +322,7 @@ func TestRevokeRotation(t *testing.T) {
 			require.Equal(t, wire.DeviceRevoked, d.Status, "B should be revoked")
 		}
 	}
-	// A revoked device is refused everything — but it is TOLD why, so it can stop
+	// A revoked device is refused everything, but it is TOLD why, so it can stop
 	// syncing and drop the group's ciphertext from its disk instead of quietly
 	// serving a cache it may no longer read. The signature still has to verify
 	// first (403, not 401: authenticated, not authorized), so only the holder of
@@ -353,7 +353,7 @@ func TestRevokeRotation(t *testing.T) {
 	hkA2, _, _ := a.resolveHK(ctx)
 	require.Equal(t, hkA2, hkC, "C's HK does not equal A's rotated HK")
 
-	// C decrypts every pre-rotation record — proving old records stayed
+	// C decrypts every pre-rotation record; proving old records stayed
 	// decryptable through the rotation without being re-encrypted.
 	recs, _, err := c.PullOthers(ctx, map[string]uint64{})
 	require.NoError(t, err, "C.PullOthers")
@@ -391,7 +391,7 @@ func TestRecoverAfterLosingEveryDevice(t *testing.T) {
 	want := canonicalByID(t, aStore)
 
 	// A is gone: a brand-new machine holds nothing but the phrase. Note that A is
-	// still ACTIVE server-side — that is exactly the real situation — so the
+	// still ACTIVE server-side (that is exactly the real situation) so the
 	// bootstrap allowance does not apply and nothing can vouch for B.
 	b, _ := newDevice(t, url)
 	rc := NewHTTPClient(url, "")

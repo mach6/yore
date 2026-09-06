@@ -45,11 +45,10 @@ func DefaultRuleset() *Ruleset { return defaultRuleset() }
 // Compile builds a Ruleset from the built-ins plus user specs and ignore
 // patterns. It is fail-safe: a blank pattern is dropped silently, an invalid
 // regexp or unknown level drops that one entry with a warning in errs, and the
-// built-ins always remain — a typo can never switch risk assessment off.
-//
-// User rules sit after the built-ins, so escalating a command to a higher
-// level always wins, while a same-level duplicate keeps the built-in's
-// category and reason.
+// built-ins always remain; a typo can never switch risk assessment off. User
+// rules sit after the built-ins, so escalating a command to a higher level
+// always wins, while a same-level duplicate keeps the built-in's category and
+// reason.
 func Compile(specs []Spec, ignore []string) (*Ruleset, []error) {
 	rs := &Ruleset{rules: make([]rule, len(rules), len(rules)+len(specs))}
 	copy(rs.rules, rules)
@@ -131,7 +130,7 @@ func (rs *Ruleset) Assess(cmd string) Assessment {
 	return rs.assess(parse(c, 0))
 }
 
-// maxPayloadDepth bounds how far assessment follows code into code — `sh -c` of
+// maxPayloadDepth bounds how far assessment follows code into code; `sh -c` of
 // a `python -c` of a string. Three is past anything a person writes by hand and
 // keeps a hostile line from costing unbounded work.
 const maxPayloadDepth = 3

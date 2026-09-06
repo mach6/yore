@@ -28,7 +28,7 @@ const (
 
 // Client is a connection to a running daemon. Each call is one request/response
 // over a single persistent connection. Calls are serialized by an internal
-// mutex, so it is safe to share one Client across goroutines — notably the
+// mutex, so it is safe to share one Client across goroutines; notably the
 // Bubble Tea TUIs, which fan out Query/Hosts/stats commands concurrently.
 type Client struct {
 	mu   sync.Mutex
@@ -49,13 +49,12 @@ func Dial(dir string) (*Client, error) {
 // solo runs one request on its OWN connection instead of the shared one. The
 // network-backed ops (sync, device management) can take tens of seconds against
 // an unreachable server, and roundtrip holds the client mutex for the whole
-// exchange — so on the shared connection they would stall every query queued
+// exchange, so on the shared connection they would stall every query queued
 // behind them and freeze the TUI. The daemon serves each connection on its own
-// goroutine, so a second connection runs genuinely in parallel.
-//
-// A client with no dir (constructed directly in tests) falls back to the shared
-// connection rather than failing. Every op routed here reaches the sync server,
-// so they all wait the same syncDeadline.
+// goroutine, so a second connection runs genuinely in parallel. A client with
+// no dir (constructed directly in tests) falls back to the shared connection
+// rather than failing. Every op routed here reaches the sync server, so they
+// all wait the same syncDeadline.
 func (c *Client) solo(req proto.Request) (proto.Response, error) {
 	if c.dir == "" {
 		return c.roundtrip(req, syncDeadline)
@@ -129,7 +128,7 @@ func (c *Client) Query(q proto.QueryReq) (proto.QueryResp, error) {
 }
 
 // SubmitRecord delivers one record to the daemon for immediate ingest. Used for
-// non-command records — user-tag ops — that the shell fast path never produces.
+// non-command records (user-tag ops) that the shell fast path never produces.
 func (c *Client) SubmitRecord(r rec.Record) error {
 	return c.ok(proto.Request{Op: proto.OpRecord, Record: &r})
 }
@@ -227,7 +226,7 @@ func (c *Client) Token() (proto.TokenInfo, error) {
 }
 
 // Tokens lists the enrollment tokens the server records, and what became of
-// each. It never carries a token's plaintext — that existed only at mint time.
+// each. It never carries a token's plaintext: that existed only at mint time.
 func (c *Client) Tokens() (proto.TokensInfo, error) {
 	resp, err := c.solo(proto.Request{Op: proto.OpTokens})
 	if err != nil {
@@ -274,13 +273,11 @@ func (c *Client) ok(req proto.Request) error {
 
 // roundtrip writes one request and reads one response under a deadline. It
 // holds the client mutex for the whole exchange so concurrent callers queue
-// rather than interleaving on the single connection.
-//
-// If the connection has gone — the usual reason being that the daemon idled out
-// under a TUI that was open but quiet, taking its connections with it — the
-// request is retried once on a fresh connection, spawning a daemon if none is
-// listening. A long-lived screen recovers by itself instead of turning into an
-// error message per keystroke.
+// rather than interleaving on the single connection. If the connection has gone
+// (the usual reason being that the daemon idled out under a TUI that was open
+// but quiet, taking its connections with it) the request is retried once on a
+// fresh connection, spawning a daemon if none is listening. A long-lived screen
+// recovers by itself instead of turning into an error message per keystroke.
 func (c *Client) roundtrip(req proto.Request, deadline time.Duration) (proto.Response, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -363,7 +360,7 @@ func respErr(resp proto.Response) error {
 // daemon handles the already-running race itself.
 func spawnDaemon() {
 	// Never re-exec under `go test`: os.Executable() is the test binary, so
-	// `<testbin> daemon` re-runs the whole suite and re-spawns recursively — a
+	// `<testbin> daemon` re-runs the whole suite and re-spawns recursively; a
 	// detached fork bomb. Production binaries return false here.
 	if testing.Testing() {
 		return

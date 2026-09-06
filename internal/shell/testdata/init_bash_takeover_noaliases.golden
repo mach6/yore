@@ -1,4 +1,4 @@
-# yore — bash shell integration (takeover mode).
+# yore; bash shell integration (takeover mode).
 # Emitted by `yore init bash`; load with:  eval "$(yore init bash)"
 # Sourcing repeatedly is safe and produces no output during normal operation.
 
@@ -398,7 +398,7 @@ __yore_preexec() {
 
 # precmd runs after the command finishes, before the next prompt is drawn.
 __yore_precmd() {
-	local exit=$?   # the user's exit status — must be captured first
+	local exit=$?   # the user's exit status; must be captured first
 	[[ -n ${__yore_cmd-} ]] || return "$exit"
 	local -a dur=()
 	if [[ -n ${__yore_start-} && -n ${EPOCHREALTIME-} ]]; then
@@ -437,7 +437,7 @@ history -r <(command yore export --shell --format bash 2>/dev/null) 2>/dev/null
 # nothing, and a yore process whose stdout is the terminal asks that terminal
 # for its background colour and waits for the reply. On a hook that runs for
 # every command that costs a round trip per prompt, and the reply-read swallows
-# input already queued — a pasted block loses lines.
+# input already queued: a pasted block loses lines.
 __yore_bash_gate() {
 	command yore filter --cwd "$PWD" >/dev/null 2>&1 <<< "$1" \
 		|| history -d "$(HISTTIMEFORMAT= history 1 | awk '{print $1}')" 2>/dev/null
@@ -458,7 +458,7 @@ _yore_enter_executes() {
 
 # Interactive search widget. The TUI draws on /dev/tty, so this command
 # substitution captures only the final selection printed to stdout. A missing
-# binary or a cancelled search (non-zero exit) leaves the line untouched —
+# binary or a cancelled search (non-zero exit) leaves the line untouched;
 # except under enter_executes, where a cancelled/empty search blanks the line so
 # the auto-appended Return (see the binding below) runs nothing, never a stale
 # partial query.

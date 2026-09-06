@@ -91,7 +91,7 @@ func TestTenantIsolation(t *testing.T) {
 	status, body := alice.do("POST", "/v1/records", wire.PushReq{HostID: "hostA", Records: mkRecords(1, 3)})
 	require.Equalf(t, http.StatusOK, status, "alice push: body %s", body)
 
-	// bob sees only his OWN device, and NO hosts, NO records — a separate db.
+	// bob sees only his OWN device, and NO hosts, NO records: a separate db.
 	status, body = bob.do("GET", "/v1/devices", nil)
 	require.Equalf(t, http.StatusOK, status, "bob list devices: body %s", body)
 	for _, d := range mustJSON[[]wire.Device](t, body) {
@@ -194,7 +194,7 @@ func TestNewTenantTokenErrors(t *testing.T) {
 }
 
 // TestMustDBMissingContext proves mustDB fails closed (500) when no tenant db is
-// bound — it must never fall back to a shared db.
+// bound: it must never fall back to a shared db.
 func TestMustDBMissingContext(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/v1/devices", http.NoBody)

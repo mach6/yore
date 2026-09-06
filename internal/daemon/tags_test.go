@@ -104,7 +104,7 @@ func TestTagIndexListCountsCommands(t *testing.T) {
 }
 
 // TestTagIndexListEmptyCorpus covers the daemon that has tags but no matching
-// history in scope — every name still lists, at zero.
+// history in scope: every name still lists, at zero.
 func TestTagIndexListEmptyCorpus(t *testing.T) {
 	idx := newTagIndex()
 	idx.apply(tagAdd("work", "", "sess1"))
@@ -129,7 +129,7 @@ func TestTagIndexAutoTags(t *testing.T) {
 	assert.Nil(t, idx.effective(sibling))
 	assert.False(t, idx.has(sibling, "refactor"))
 
-	// Auto-tags compose with explicit user tags — and with nothing else.
+	// Auto-tags compose with explicit user tags, and with nothing else.
 	idx.apply(tagAdd("urgent", "c1", ""))
 	withExec := rec.Record{ID: "c1", Cwd: "/work/proj", Executor: "claude-code"}
 	assert.ElementsMatch(t, []string{"refactor", "urgent"}, idx.effective(withExec))

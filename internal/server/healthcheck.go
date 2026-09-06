@@ -8,7 +8,7 @@ import (
 )
 
 // HealthCheck GETs url and returns (0, detail) if it responds 2xx, (1, detail)
-// otherwise. detail is a short human reason — "HTTP <code>" for a response, or
+// otherwise. detail is a short human reason; "HTTP <code>" for a response, or
 // the transport error for a failed connection. It backs the container
 // HEALTHCHECK (the distroless image ships no curl) and the `yore healthcheck`
 // CLI, which prints detail so an interactive probe isn't silent.

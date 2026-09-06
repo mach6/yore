@@ -1,8 +1,7 @@
-// Package secret stores yore's sensitive material — the device private key —
-// outside of config.toml, which stays plain, diffable, and safe to share.
-//
-// It prefers the OS keyring (Secret Service on Linux, Keychain on macOS) and
-// falls back to a 0600 file under the state dir whenever no keyring is usable:
+// Package secret stores yore's sensitive material (the device private key)
+// outside of config.toml, which stays plain, diffable, and safe to share. It
+// prefers the OS keyring (Secret Service on Linux, Keychain on macOS) and falls
+// back to a 0600 file under the state dir whenever no keyring is usable:
 // headless servers, containers, and SSH sessions without a session bus all land
 // there. The backend is probed once per process and reported by Backend(), so
 // `yore doctor` can tell the user which one is in effect rather than leaving it
@@ -28,7 +27,7 @@ import (
 const service = "yore"
 
 // probeTimeout bounds every keyring call. A locked or wedged Secret Service can
-// otherwise block indefinitely — unacceptable in the daemon, which must never
+// otherwise block indefinitely; unacceptable in the daemon, which must never
 // hang waiting on a desktop unlock prompt.
 const probeTimeout = 3 * time.Second
 
@@ -76,8 +75,8 @@ func Open(dir string) *Store {
 }
 
 // probe caches auto-detection for the process. Detection costs a full keyring
-// round-trip (three IPC calls), and Open sits on paths that run repeatedly —
-// the daemon re-resolves its configuration every few seconds — so probing once
+// round-trip (three IPC calls), and Open sits on paths that run repeatedly
+// (the daemon re-resolves its configuration every few seconds) so probing once
 // is the difference between a negligible cost and constant IPC chatter.
 var probe struct {
 	once sync.Once

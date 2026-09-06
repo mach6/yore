@@ -18,9 +18,8 @@ const agentCursor = "cursor"
 // cursorHookInput is the subset of Cursor's hook payloads we consume. Cursor
 // delivers the full JSON on stdin; unknown fields are ignored. Field names
 // follow the documented Cursor hooks schema (docs.cursor.com/agent/hooks).
-//
-// Note: afterShellExecution carries no cwd and no exit code — only command,
-// output, and duration — so recorded Cursor commands use workspace_roots[0] as
+// Note: afterShellExecution carries no cwd and no exit code (only command,
+// output, and duration) so recorded Cursor commands use workspace_roots[0] as
 // the cwd and leave the exit status unknown rather than fabricating one.
 type cursorHookInput struct {
 	HookEventName  string   `json:"hook_event_name"`
@@ -77,10 +76,9 @@ func runHookCursor() {
 }
 
 // runHookCursorPrompt ingests a Cursor beforeSubmitPrompt payload and records it
-// as the conversation's current prompt (for the shell-exec hook to attach).
-//
-// It MUST let the prompt through: Cursor treats this hook's stdout as the
-// allow/deny decision, so it always prints {"continue": true} and exits 0 — even
+// as the conversation's current prompt (for the shell-exec hook to attach). It
+// MUST let the prompt through: Cursor treats this hook's stdout as the
+// allow/deny decision, so it always prints {"continue": true} and exits 0; even
 // when it records nothing (empty prompt, or a secret-bearing one it drops).
 func runHookCursorPrompt() {
 	// Always allow the prompt, whatever happens below.

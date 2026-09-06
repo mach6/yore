@@ -65,7 +65,7 @@ func TestHTTPClientHealth(t *testing.T) {
 
 // TestHTTPClientUnknownDeviceIsAPIError pins the new auth model: a client whose
 // device the server does not know cannot read anything, and says so as a typed
-// 401. There is no token to get wrong — the device key IS the credential.
+// 401. There is no token to get wrong: the device key IS the credential.
 func TestHTTPClientUnknownDeviceIsAPIError(t *testing.T) {
 	ctx := context.Background()
 	c := NewHTTPClient(newServer(t), "")

@@ -23,7 +23,7 @@ type want struct {
 
 // check compares got against wants field by field. It uses assert (rather
 // than require) for the per-record checks so that a mismatch on one field or
-// one record doesn't hide mismatches on the others in the same run — but the
+// one record doesn't hide mismatches on the others in the same run, but the
 // length check stays a require since indexing got[i] below depends on it.
 func check(t *testing.T, got []rec.Record, wants []want) {
 	t.Helper()

@@ -1,4 +1,4 @@
-# yore — fish shell integration (coexist mode).
+# yore; fish shell integration (coexist mode).
 # Emitted by `yore init fish`; load with:  yore init fish | source
 # Sourcing repeatedly is safe and produces no output during normal operation.
 
@@ -26,7 +26,7 @@ end
 
 # postexec runs after the command finishes. $status is captured first, before
 # anything else in this function can disturb it. Duration comes straight from
-# fish's own $CMD_DURATION (already integer milliseconds) — unlike zsh/bash,
+# fish's own $CMD_DURATION (already integer milliseconds); unlike zsh/bash,
 # there is no start timestamp to capture in preexec and no math to do here.
 function _yore_postexec --on-event fish_postexec
 	set -l exit $status
@@ -48,7 +48,7 @@ end
 # Whether accepting a Ctrl-R result should run it immediately (Atuin parity).
 # Default: put the picked command on the prompt for review; opt in with
 # `yore set-config enter_executes true` to have Enter run it. Asked of yore at
-# call time — NOT cached at source time — so the setting takes effect without
+# call time: NOT cached at source time, so the setting takes effect without
 # re-sourcing. Falls back to the default (review) if yore is unavailable, which
 # is the safe direction: nothing runs that the user did not look at.
 function _yore_enter_executes
@@ -78,7 +78,7 @@ function _yore_search_widget
 end
 
 # Raw escape sequences (not fish 4's named keys, not fish 3's `bind -k up`) so
-# one binding works unchanged across fish versions — the same reasoning that
+# one binding works unchanged across fish versions: the same reasoning that
 # has zsh/bash bind literal sequences instead of symbolic key names.
 bind \cr _yore_search_widget
 # Coexist: bind Up to search only if the user opts in (bind_up_arrow).

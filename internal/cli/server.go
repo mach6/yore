@@ -22,8 +22,8 @@ import (
 // The server also shuts down gracefully on SIGINT/SIGTERM (Ctrl-C, docker
 // stop), so `stop` is a convenience for a backgrounded local server.
 //
-// It hosts either ONE tenant — its token from --token, $YORE_TOKEN, or
-// $YORE_TOKEN_FILE, its db at --db — or a set of NAMED tenants from
+// It hosts either ONE tenant (its token from --token, $YORE_TOKEN, or
+// $YORE_TOKEN_FILE, its db at --db) or a set of NAMED tenants from
 // $YORE_TOKENS_FILE (a JSON object {"name":"token", …}), each its own db at
 // <dir(--db)>/tenants/<name>.db. The two are mutually exclusive: configuring
 // both is an error, not a merge, so there is exactly one answer to which db a
@@ -91,7 +91,7 @@ func runServer(db, listen, token, pidfile string) int {
 
 // resolveServerToken returns the single tenant's bearer token from the --token
 // flag, else $YORE_TOKEN, else the contents of $YORE_TOKEN_FILE. An empty result
-// means none was configured — which is an error only if no tokens file was given
+// means none was configured: which is an error only if no tokens file was given
 // either; the caller decides.
 func resolveServerToken(flag string) (string, error) {
 	if flag != "" {
@@ -112,7 +112,7 @@ func resolveServerToken(flag string) (string, error) {
 }
 
 // loadTenants reads named tenants from a JSON object {"name":"token", …} at
-// path. An empty path means no named tenants — the single-token server. An
+// path. An empty path means no named tenants: the single-token server. An
 // unreadable file, invalid JSON, or an object with no tenants in it is a hard
 // error: the server must never silently fall back to some other mode when
 // multi-tenancy was intended.
@@ -210,15 +210,14 @@ func trimNL(b []byte) []byte {
 	return b
 }
 
-// runHealthcheck probes url's health endpoint. It backs the container
-// HEALTHCHECK (distroless has no curl) but also runs interactively, so it prints
-// a one-line result — "healthy: …" to stdout, "unhealthy: …" to stderr — and
-// returns the exit code the container probe reads (0 = 2xx).
-//
-// With no url it defaults to the configured server (like `yore doctor`), so a
-// bare `yore healthcheck` probes the server you actually sync with; it falls back
-// to the local server address only when no server is configured (the container
-// self-check). Pass --url only to probe somewhere else.
+// runHealthcheck probes url's health endpoint. It backs the container HEALTHCHECK
+// (distroless has no curl) but also runs interactively, so it prints a one-line
+// result ("healthy: …" to stdout, "unhealthy: …" to stderr) and returns the exit
+// code the container probe reads (0 = 2xx). With no url it defaults to the
+// configured server (like `yore doctor`), so a bare `yore healthcheck` probes the
+// server you actually sync with; it falls back to the local server address only
+// when no server is configured (the container self-check). Pass --url only to
+// probe somewhere else.
 func runHealthcheck(url string) int {
 	if url == "" {
 		if cfg, err := config.Load(stateDir()); err == nil && cfg.ServerURL != "" {

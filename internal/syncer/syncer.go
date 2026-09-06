@@ -31,7 +31,7 @@ const pushBatchLimit = 1000
 // maxPushBytes bounds the encoded size of one push body, comfortably under the
 // server's 10 MiB request cap. A record count alone is not a bound: a thousand
 // records carrying long prompts or heredocs is megabytes, and a body over the
-// server's limit fails EVERY retry — the watermark never advances and sync
+// server's limit fails EVERY retry; the watermark never advances and sync
 // wedges permanently. Size is what the server actually limits, so size is what
 // the client batches on.
 const maxPushBytes = 8 << 20
@@ -43,10 +43,9 @@ type dekEntry struct {
 }
 
 // Syncer is the sync engine for one machine. It owns all cryptobox usage and
-// holds unwrapped key material (the History Key and epoch DEKs) in RAM only —
+// holds unwrapped key material (the History Key and epoch DEKs) in RAM only;
 // never on disk. Its identity is the device key plus the store's stable hostID,
 // which doubles as this machine's device ID in the server's device registry.
-//
 // The zero value is unusable; construct one with New. A Syncer is safe for
 // concurrent use; a mutex guards the in-RAM key caches.
 type Syncer struct {
@@ -58,7 +57,7 @@ type Syncer struct {
 	// syncPrompts governs whether prompt records leave this machine. When false
 	// they stay in the local store and are never sealed or uploaded, so agent
 	// prompts remain readable here and nowhere else. Commands still sync, and
-	// still carry their PromptID — on another machine that id simply resolves to
+	// still carry their PromptID, on another machine that id simply resolves to
 	// no text.
 	syncPrompts bool
 
@@ -209,7 +208,7 @@ func recordFromPayload(pt []byte, hostID string, seq uint64, keyID string) (rec.
 
 // resolveHK fetches this device's HK wrap and unwraps it into RAM, caching the
 // result (and the HK version) for the lifetime of the Syncer. It errors if the
-// server has no wrap for us — meaning this device is not (or no longer) an
+// server has no wrap for us; meaning this device is not (or no longer) an
 // active member of the group.
 func (s *Syncer) resolveHK(ctx context.Context) (key [32]byte, version int, err error) {
 	s.mu.Lock()
@@ -312,7 +311,7 @@ func (s *Syncer) Push(ctx context.Context) (int, error) {
 				return pushed, fmt.Errorf("syncer: seal record: %w", err)
 			}
 			pr := wire.PushRecord{Seq: r.Seq, ID: r.ID, KeyID: entry.keyID, Blob: blob}
-			// Stop before exceeding the cap — but never emit an empty batch, so a
+			// Stop before exceeding the cap, but never emit an empty batch, so a
 			// single oversized record is still attempted (and fails loudly) rather
 			// than silently stalling the stream forever.
 			n := pushRecordSize(pr)
@@ -356,13 +355,12 @@ func (s *Syncer) Push(ctx context.Context) (int, error) {
 
 // pushWithBackoff uploads records, halving the batch and retrying whenever the
 // server rejects it in a way a smaller body would fix. It returns how many
-// leading records were accepted.
-//
-// The size estimate this backs up is only an estimate — a server configured
-// with a tighter limit, or a proxy in between, can still refuse a body we
-// thought was fine. Halving converges in a few round trips and, crucially,
-// terminates: once a single record is rejected the error is real and is
-// returned, instead of retrying an impossible batch forever.
+// leading records were accepted. The size estimate this backs up is only an
+// estimate: a server configured with a tighter limit, or a proxy in between,
+// can still refuse a body we thought was fine. Halving converges in a few
+// round trips and, crucially, terminates: once a single record is rejected the
+// error is real and is returned, instead of retrying an impossible batch
+// forever.
 func (s *Syncer) pushWithBackoff(ctx context.Context, records []wire.PushRecord) (int, error) {
 	n := len(records)
 	for {
@@ -378,10 +376,10 @@ func (s *Syncer) pushWithBackoff(ctx context.Context, records []wire.PushRecord)
 }
 
 // retryableSmaller reports whether an error is one a smaller batch might avoid:
-// an explicit 413, or a 400 — which is what a body cut off by the server's
-// MaxBytesReader looks like once JSON decoding fails on the truncated stream.
-// A genuinely malformed request also 400s, but it 400s at every size too, so
-// the halving loop terminates on it rather than masking it.
+// an explicit 413, or a 400; which is what a body cut off by the server's
+// MaxBytesReader looks like once JSON decoding fails on the truncated stream. A
+// genuinely malformed request also 400s, but it 400s at every size too, so the
+// halving loop terminates on it rather than masking it.
 func retryableSmaller(err error) bool {
 	var ae *APIError
 	if !errors.As(err, &ae) {
@@ -439,10 +437,9 @@ func (s *Syncer) ensurePushDEK(ctx context.Context, hk [32]byte, hkVersion int, 
 // the passed-in cursors, and returns them per host together with the advanced
 // cursor set. Nothing is decrypted here: the caller can cache the ciphertext
 // (see internal/rstore) before spending anything on crypto, which is what lets
-// a restart resume instead of re-downloading the whole archive.
-//
-// The self host is skipped — the local store already holds those records. The
-// passed-in cursors map is not mutated; a fresh advanced map is returned.
+// a restart resume instead of re-downloading the whole archive. The self host
+// is skipped: the local store already holds those records. The passed-in
+// cursors map is not mutated; a fresh advanced map is returned.
 func (s *Syncer) PullCiphertext(ctx context.Context, cursors map[string]uint64) (byHost map[string][]wire.PullRecord, advanced map[string]uint64, err error) {
 	newCursors := make(map[string]uint64, len(cursors))
 	for k, v := range cursors {

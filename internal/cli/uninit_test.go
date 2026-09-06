@@ -35,7 +35,7 @@ func TestRemoveHookCmdPrunesEmpty(t *testing.T) {
 }
 
 // TestDevinInitUninitRoundTrip proves `init` then `uninit` restores Devin's
-// config exactly — auth and a foreign MCP server survive, yore's keys are gone,
+// config exactly; auth and a foreign MCP server survive, yore's keys are gone,
 // and the file keeps its 0600 mode.
 func TestDevinInitUninitRoundTrip(t *testing.T) {
 	x := t.TempDir()

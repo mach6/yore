@@ -187,7 +187,7 @@ func TestChmodModeIsRead(t *testing.T) {
 }
 
 // TestFlagsBelongToTheirCommand: an rm is recursive-and-forced only when the
-// flags are the rm's own — `grep -rn` plus a quoted "rm -rf" is not a deletion,
+// flags are the rm's own; `grep -rn` plus a quoted "rm -rf" is not a deletion,
 // and `find … -exec rm -rf` is.
 func TestFlagsBelongToTheirCommand(t *testing.T) {
 	require.Equal(t, Critical, Assess(`rm -rf build`).Level)
@@ -199,7 +199,7 @@ func TestFlagsBelongToTheirCommand(t *testing.T) {
 }
 
 // TestInterpreterPayloads: text handed to something that will execute it is
-// assessed as the command it becomes, however deeply it is quoted — while the
+// assessed as the command it becomes, however deeply it is quoted, while the
 // same text handed to a reader stays inert.
 func TestInterpreterPayloads(t *testing.T) {
 	require.Equal(t, Critical, Assess(`sh -c 'rm -rf /'`).Level)

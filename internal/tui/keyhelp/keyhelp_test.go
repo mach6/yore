@@ -73,7 +73,7 @@ func TestLineKeepsTheFirstHint(t *testing.T) {
 }
 
 // TestPanelFillsExactlyItsBox: the panel is drawn inside a border that was sized
-// before it rendered, so it must return exactly h lines of at most w columns —
+// before it rendered, so it must return exactly h lines of at most w columns;
 // one line over and the frame no longer fits the terminal.
 func TestPanelFillsExactlyItsBox(t *testing.T) {
 	th := theme.New()

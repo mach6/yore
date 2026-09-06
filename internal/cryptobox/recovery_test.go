@@ -53,7 +53,7 @@ func TestDeriveRecoveryKeyDeterministic(t *testing.T) {
 	assert.Equal(t, a.Public(), b.Public(), "same phrase+salt must derive the same X25519 key")
 	assert.Equal(t, a.SignPublic(), b.SignPublic(), "same phrase+salt must derive the same Ed25519 key")
 
-	// Formatting must not matter — the user retypes this by hand.
+	// Formatting must not matter: the user retypes this by hand.
 	c, err := DeriveRecoveryKey(NormalizeRecoveryPhrase(phrase), salt)
 	require.NoError(t, err, "derive from normalized")
 	assert.Equal(t, a.Public(), c.Public(), "normalization must not change the key")

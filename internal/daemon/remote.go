@@ -85,7 +85,7 @@ func (s *server) mintToken() (proto.TokenInfo, error) {
 }
 
 // listTokens reports every enrollment token the server still records, and what
-// became of each. Hashes and outcomes only — the plaintexts are long gone.
+// became of each. Hashes and outcomes only: the plaintexts are long gone.
 func (s *server) listTokens() (proto.TokensInfo, error) {
 	sy := s.remote.syncer()
 	if sy == nil {
@@ -124,18 +124,15 @@ func (s *server) revokeToken(id string) error {
 	return sy.RevokeToken(ctx, id)
 }
 
-// remoteCache holds other hosts' history, decrypted, in RAM ONLY — the
-// plaintext is never written to disk (a hard requirement). What IS written to
-// disk is the ciphertext it was decrypted from, in internal/rstore, which the
-// server holds anyway and this machine could not read without its keys.
-//
-// That distinction is what makes the cache bounded. Cursors used to be RAM-only,
-// so every daemon lifetime re-downloaded and re-decrypted every other machine's
-// entire history from seq 0 — and the daemon recycles on a 30-minute idle
-// timeout. Now the cursor is persisted with the ciphertext, so a restart fetches
-// only what is new, and `keep` caps how much of each host's tail is retained in
-// either place.
-//
+// remoteCache holds other hosts' history, decrypted, in RAM ONLY: the plaintext
+// is never written to disk (a hard requirement). What IS written to disk is the
+// ciphertext it was decrypted from, in internal/rstore, which the server holds
+// anyway and this machine could not read without its keys. That distinction is
+// what makes the cache bounded. Cursors used to be RAM-only, so every daemon
+// lifetime re-downloaded and re-decrypted every other machine's entire history
+// from seq 0, and the daemon recycles on a 30-minute idle timeout. Now the
+// cursor is persisted with the ciphertext, so a restart fetches only what is
+// new, and `keep` caps how much of each host's tail is retained in either place.
 // When sync is not configured the cache is disabled and reports state "off".
 type remoteCache struct {
 	mu sync.RWMutex
@@ -149,7 +146,7 @@ type remoteCache struct {
 	state   string
 	lastMs  int64
 
-	// rs is the on-disk ciphertext cache, or nil when it could not be opened —
+	// rs is the on-disk ciphertext cache, or nil when it could not be opened,
 	// in which case the daemon degrades to the old re-pull-everything behaviour
 	// rather than refusing to run.
 	rs *rstore.Store
@@ -196,7 +193,7 @@ type syncConf struct {
 // configured reports whether there is enough configuration to sync at all.
 func (sc syncConf) configured() bool { return sc.url != "" }
 
-// sameServerAs reports whether sc points at the same server as prev — the test
+// sameServerAs reports whether sc points at the same server as prev: the test
 // that decides whether the warm remote cache survives a configuration change.
 // Only the URL identifies the server; every other field describes how to reach
 // it (pin) or what to do once there (epoch, prompts, retention). A field added
@@ -216,7 +213,7 @@ func loadSyncConf(dir string) syncConf {
 }
 
 // newSyncer builds a syncer for sc, or nil when sync is not configured or this
-// machine has no usable device key — a machine can run purely local.
+// machine has no usable device key: a machine can run purely local.
 func newSyncer(dir string, st *store.Store, sc syncConf) *syncer.Syncer {
 	if !sc.configured() {
 		return nil
@@ -230,24 +227,20 @@ func newSyncer(dir string, st *store.Store, sc syncConf) *syncer.Syncer {
 	return sy
 }
 
-// newRemote builds the remote cache from persisted config. Missing server,
-// token, or device key yields a disabled cache (state "off") rather than an
-// error; the daemon re-checks the configuration as it runs, so sync configured
-// later comes alive without a restart (see syncLoop).
-//
-// The on-disk ciphertext cache is opened best-effort: it is derived data, so a
-// cache that cannot be opened (locked, corrupt) costs a full re-pull and must
-// never stop the daemon starting.
-//
-// A device revoked in an earlier run starts here. onRevoked already deleted the
-// cache when the server said so; this is the backstop for when it could not —
-// the process died between recording and deleting, or the file was restored from
-// a backup. It runs BEFORE the cache is opened, so the ciphertext leaves the disk
-// even on a machine that comes back up offline and can never be told again.
-//
-// The state starts as revoked because that is the last thing the server said,
-// but the cycle is NOT latched: a device enrolled again since then learns so on
-// its first attempt, and a still-revoked one is simply refused again.
+// newRemote builds the remote cache from persisted config. Missing server, token,
+// or device key yields a disabled cache (state "off") rather than an error; the
+// daemon re-checks the configuration as it runs, so sync configured later comes
+// alive without a restart (see syncLoop). The on-disk ciphertext cache is opened
+// best-effort: it is derived data, so a cache that cannot be opened (locked,
+// corrupt) costs a full re-pull and must never stop the daemon starting. A device
+// revoked in an earlier run starts here. onRevoked already deleted the cache when
+// the server said so; this is the backstop for when it could not: the process
+// died between recording and deleting, or the file was restored from a backup. It
+// runs BEFORE the cache is opened, so the ciphertext leaves the disk even on a
+// machine that comes back up offline and can never be told again. The state
+// starts as revoked because that is the last thing the server said, but the cycle
+// is NOT latched: a device enrolled again since then learns so on its first
+// attempt, and a still-revoked one is simply refused again.
 func newRemote(dir string, st *store.Store, sc syncConf, tags *tagIndex, prompts *promptIndex) *remoteCache {
 	rc := &remoteCache{
 		state:   proto.RemoteOff,
@@ -273,13 +266,12 @@ func newRemote(dir string, st *store.Store, sc syncConf, tags *tagIndex, prompts
 }
 
 // metaRevoked is the local store's meta key recording that the sync server
-// refused this device as revoked. It has to outlive the process that learned it
-// — the response arrives while the daemon runs, but the cache is dropped at the
-// next start too, which may be days later and offline with no server to ask.
-//
-// It lives in data.db's meta bucket, not a file of its own: the daemon holds
-// that database under its write lock, so the record is not a loose file sitting
-// in the state directory inviting deletion.
+// refused this device as revoked. It has to outlive the process that learned
+// it: the response arrives while the daemon runs, but the cache is dropped at
+// the next start too, which may be days later and offline with no server to
+// ask. It lives in data.db's meta bucket, not a file of its own: the daemon
+// holds that database under its write lock, so the record is not a loose file
+// sitting in the state directory inviting deletion.
 const metaRevoked = "revoked_by_server"
 
 // wasRevoked reports whether a previous run recorded a revocation.
@@ -309,15 +301,12 @@ func setRevokedMeta(st *store.Store, revoked bool) {
 // never succeed, so the cycle stops for good and the group's ciphertext leaves
 // this disk NOW: the cache is detached before the file is deleted, so nothing
 // can write it back, and the cursors go with it (they describe streams this
-// device may no longer read).
-//
-// The decrypted history already in RAM is left alone deliberately — it is what
-// the user is looking at, and yanking it mid-session buys nothing that ending
-// the session does not. It is gone at the next start, which finds no cache to
-// hydrate from and no key to open one with.
-//
-// The meta record is written first and is the durable half: if this process dies
-// between the two, the next start still knows to finish the job.
+// device may no longer read). The decrypted history already in RAM is left alone
+// deliberately: it is what the user is looking at, and yanking it mid-session
+// buys nothing that ending the session does not. It is gone at the next start,
+// which finds no cache to hydrate from and no key to open one with. The meta
+// record is written first and is the durable half: if this process dies between
+// the two, the next start still knows to finish the job.
 func (rc *remoteCache) onRevoked() {
 	setRevokedMeta(rc.st, true)
 
@@ -336,7 +325,7 @@ func (rc *remoteCache) onRevoked() {
 }
 
 // onAccepted clears a recorded revocation once the server has served this device
-// again — the only evidence that can retire it, and what lets a re-enrolled
+// again: the only evidence that can retire it, and what lets a re-enrolled
 // machine come back without anyone deleting anything by hand. Caller holds no
 // lock; the store write is outside it.
 func (rc *remoteCache) onAccepted() {
@@ -394,7 +383,7 @@ func (rc *remoteCache) enabled() bool { return rc.syncer() != nil }
 
 // online reports whether the server is currently believed reachable: the last
 // sync attempt succeeded, or one is in flight. It gates the eager
-// push-on-record nudge — while the server is unreachable, new local records
+// push-on-record nudge, while the server is unreachable, new local records
 // simply stay spooled in the local store (already durable) and go out in a
 // batch once the next periodic sync reconnects, instead of firing a push that
 // would only fail against a dead server.
@@ -413,16 +402,16 @@ func (rc *remoteCache) online() bool {
 // sameServer says whether the new configuration still points at the server the
 // cache was filled from, and it decides the cache's fate:
 //
-//   - false — a different server (or none). Cached history and pull cursors are
+//   - false: a different server (or none). Cached history and pull cursors are
 //     dropped, in RAM and on disk both: they belong to the previous server, whose
 //     key hierarchy has nothing to do with the new one's, and must never be mixed
-//     with it. A revocation goes with them, marker and all — it was this device's
+//     with it. A revocation goes with them, marker and all: it was this device's
 //     standing in the OLD group, and keeping it would leave a device that has
 //     legitimately moved servers deleting its cache on every start.
-//   - true — the same server, reached differently: a certificate pin added or
+//   - true: the same server, reached differently. A certificate pin added or
 //     cleared, a rotation cadence, a retention bound. None of that invalidates
 //     one byte of the ciphertext already cached, so throwing it away would cost a
-//     full re-pull of every machine's archive for a transport edit — exactly what
+//     full re-pull of every machine's archive for a transport edit, exactly what
 //     the cache exists to avoid. It is kept, cursors and all, and so is any
 //     revocation, which the same group's server would only tell us again.
 //
@@ -783,8 +772,8 @@ func cloneCursors(m map[string]uint64) map[string]uint64 {
 }
 
 // syncLoop drives periodic and on-demand sync. It runs even when sync is not
-// configured, because its tick is also what notices sync being configured later
-// — otherwise a daemon started before `yore setup` would stay local-only for its
+// configured, because its tick is also what notices sync being configured later;
+// otherwise a daemon started before `yore setup` would stay local-only for its
 // whole life. A single goroutine, so syncOnce never overlaps itself.
 func (s *server) syncLoop() {
 	defer s.wg.Done()
@@ -799,7 +788,7 @@ func (s *server) syncLoop() {
 
 	// reload re-reads config.toml and re-attaches the syncer when the sync-relevant
 	// configuration changed, so `yore setup` (or a hand edit) takes effect live.
-	// Only a changed server URL invalidates the warm cache — everything else in
+	// Only a changed server URL invalidates the warm cache; everything else in
 	// syncConf describes how to reach the same server, not which one.
 	reload := func() {
 		sc := loadSyncConf(s.dir)
@@ -839,7 +828,7 @@ func (s *server) syncLoop() {
 			_ = s.doSync() // logged inside; the loop retries on the next tick
 		case <-s.pushWake:
 			// Coalesce a burst of new records into one push after pushDebounce.
-			// Arm only when enabled and not already pending — the timer is idle
+			// Arm only when enabled and not already pending: the timer is idle
 			// at that point, so Reset is race-free.
 			if arm, pending := pushArm(pushDebounce, pushPending); arm {
 				pushTimer.Reset(pushDebounce)

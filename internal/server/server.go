@@ -1,10 +1,10 @@
-// Package server is yore's sync server. It stores ONLY ciphertext (sealed
-// record blobs, HK wraps, DEK wraps) and device public keys; it can never
-// decrypt anything. A server hosts either exactly one tenant (Options.Token, its
-// db at Options.DBPath) or a set of named tenants (Options.Tenants, sharded
-// beside it) — never both. Each tenant is an isolated bbolt file owned solely by
-// this process, so tenants never see each other's data. The HTTP API is defined
-// by package internal/wire.
+// Package server is yore's sync server. It stores ONLY ciphertext (sealed record
+// blobs, HK wraps, DEK wraps) and device public keys; it can never decrypt
+// anything. A server hosts either exactly one tenant (Options.Token, its db at
+// Options.DBPath) or a set of named tenants (Options.Tenants, sharded beside
+// it); never both. Each tenant is an isolated bbolt file owned solely by this
+// process, so tenants never see each other's data. The HTTP API is defined by
+// package internal/wire.
 package server
 
 import (
@@ -86,7 +86,7 @@ var tenantNameRE = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 // Options configures a Server. Exactly one of Token (one tenant, its db at
 // DBPath) or Tenants (named tenants, sharded beside it) must be set: neither is
 // a server with no way in, both is two answers to "where does this token's data
-// live" — so New refuses either way.
+// live", so New refuses either way.
 type Options struct {
 	DBPath  string            // one tenant: its bbolt file. Named tenants: only roots tenants/ and backups/
 	Token   string            // the single tenant's bearer token; mutually exclusive with Tenants
@@ -125,7 +125,7 @@ const tokenTTL = 30 * time.Minute
 const tokenKeep = 7 * 24 * time.Hour
 
 // storedToken is one minted enrollment token. Only the hash of the token is a
-// key in the bucket, so the server never holds a usable token at rest — which
+// key in the bucket, so the server never holds a usable token at rest: which
 // is also why a token can never be shown again after it is minted.
 type storedToken struct {
 	CreatedMs int64  `json:"created_ms"`
@@ -222,13 +222,12 @@ type Server struct {
 }
 
 // probeStorage reports whether every tenant db can still commit a write,
-// caching the verdict for readyProbeTTL.
-//
-// A bbolt read is served from the existing mmap and needs no write at all, so a
-// server whose volume has filled (or gone read-only, or started failing I/O)
-// keeps answering every GET perfectly while every mutation fails — the archive
-// looks alive and silently stops accepting history. Nothing short of an actual
-// commit detects that, which is why this writes.
+// caching the verdict for readyProbeTTL. A bbolt read is served from the
+// existing mmap and needs no write at all, so a server whose volume has filled
+// (or gone read-only, or started failing I/O) keeps answering every GET
+// perfectly while every mutation fails: the archive looks alive and silently
+// stops accepting history. Nothing short of an actual commit detects that,
+// which is why this writes.
 func (s *Server) probeStorage(now time.Time) error {
 	s.readyMu.Lock()
 	defer s.readyMu.Unlock()
@@ -268,7 +267,7 @@ const (
 )
 
 // dbFromContext returns the tenant db the auth middleware bound to r, or nil if
-// none (which must be treated as an error, never a fallback — see mustDB).
+// none (which must be treated as an error, never a fallback; see mustDB).
 func dbFromContext(r *http.Request) *bbolt.DB {
 	db, _ := r.Context().Value(ctxKeyDB).(*bbolt.DB)
 	return db
@@ -282,8 +281,8 @@ func tenantFromContext(r *http.Request) string {
 
 // mustDB returns the tenant db bound to r by the auth middleware. Past auth it
 // is always present; a nil db would be a bug, so it fails the request 500 rather
-// than silently reaching for another tenant's storage — a cross-tenant leak
-// would be far worse than an error.
+// than silently reaching for another tenant's storage: a cross-tenant leak would
+// be far worse than an error.
 func mustDB(w http.ResponseWriter, r *http.Request) (*bbolt.DB, bool) {
 	db := dbFromContext(r)
 	if db == nil {
@@ -328,7 +327,7 @@ var (
 // replay it verbatim; the signature stays valid, so replay defence lives here.
 // It is keyed by device+"\x00"+nonce and, because a nonce is only meaningful for
 // reqsign.Skew (after which reqsign.Verify rejects the stale timestamp anyway),
-// stays bounded by the request rate over that 5-minute window — tiny for a
+// stays bounded by the request rate over that 5-minute window; tiny for a
 // single-user fleet. Expired entries are swept lazily on each insert.
 type nonceCache struct {
 	mu   sync.Mutex
@@ -390,7 +389,7 @@ func (s *Server) denySig(w http.ResponseWriter, r *http.Request, cause error) {
 
 // requireSignature verifies a mutating request's Ed25519 signature and records
 // its nonce, on top of the bearer token already checked by the auth middleware.
-// The verification key is selfKey when non-nil — a self-signed registration, or
+// The verification key is selfKey when non-nil: a self-signed registration, or
 // the first device forming the group (see bootstrapSelfKey); otherwise the
 // signer named in the headers is looked up in the devices bucket and must be
 // active. On any failure it writes a 401 and returns false. `target` is always
@@ -433,7 +432,7 @@ func (s *Server) requireSignature(w http.ResponseWriter, r *http.Request, db *bb
 		return false
 	}
 	// Status is checked AFTER the signature, so only the holder of this device's
-	// private key learns its standing — and a revoked one is told exactly that,
+	// private key learns its standing, and a revoked one is told exactly that,
 	// which is the only way it can find out it should stop syncing and drop the
 	// group's ciphertext. A device awaiting approval is refused without the
 	// distinction: "pending" is a state it already knows it is in.
@@ -503,7 +502,7 @@ func New(opts Options) (*Server, error) {
 	}
 
 	// Build the tenant table up front, validating names and rejecting duplicate
-	// tokens (two tenants sharing a token would be indistinguishable — a leak).
+	// tokens (two tenants sharing a token would be indistinguishable: a leak).
 	// Named tenants are ordered so startup, and any error it reports, does not
 	// depend on map iteration order.
 	type spec struct{ name, path, token string }
@@ -688,7 +687,7 @@ func (s *Server) limitBody(next http.Handler) http.Handler {
 //
 // There is no bearer token: an enrolled device authenticates with its Ed25519
 // key alone (see requireSignature), so the tenant is resolved from the device
-// named in X-Yore-Device — the device record itself is the credential, and no
+// named in X-Yore-Device: the device record itself is the credential, and no
 // long-lived shared secret exists to leak. Requests that predate having a
 // device record carry their own routing instead:
 //
@@ -739,13 +738,11 @@ func isEnrollPath(r *http.Request) bool {
 }
 
 // isRecoveryPath reports whether r must route by the recovery material rather
-// than by a device record — the case when no device of this group survives to
+// than by a device record: the case when no device of this group survives to
 // authenticate: the recovery reads, and minting the token that lets a
-// replacement machine enroll.
-//
-// Publishing the material (POST /v1/recovery) is deliberately excluded: it
-// happens at bootstrap, when there is nothing to route by yet and the
-// registering device is present to route by instead.
+// replacement machine enroll. Publishing the material (POST /v1/recovery) is
+// deliberately excluded: it happens at bootstrap, when there is nothing to
+// route by yet and the registering device is present to route by instead.
 func isRecoveryPath(r *http.Request) bool {
 	if r.Method == http.MethodPost {
 		return r.URL.Path == "/v1/recovery/token" ||
@@ -784,7 +781,7 @@ func (s *Server) tenantForDevice(deviceID string) *tenant {
 }
 
 // tenantForToken finds the tenant that minted an unredeemed enrollment token,
-// or — while a tenant has no active device at all — the one whose configured
+// or, while a tenant has no active device at all, the one whose configured
 // bootstrap token this is. The bootstrap allowance is what lets a brand-new (or
 // wiped) group form; once any device is active it stops applying, so every
 // later enrollment needs a token minted by an enrolled device.
@@ -873,15 +870,14 @@ func writeCodedErr(w http.ResponseWriter, status int, code, msg string) {
 	writeJSON(w, status, wire.ErrorResp{Error: msg, Code: code})
 }
 
-// writeAPIErr maps an error out of a transaction to its status, or 500.
-//
-// An *apiError is a decision this package made about the request, and its
-// message is the client's answer. Anything else is a storage or encoding
-// failure the client can do nothing about and is deliberately told nothing
-// about — which makes this the only place the cause can be recorded. The access
-// log carries the status and never the reason, so without this line a failed
-// write transaction (a full disk, a read-only volume, an I/O error) is
-// invisible from both ends of the connection.
+// writeAPIErr maps an error out of a transaction to its status, or 500. An
+// *apiError is a decision this package made about the request, and its message
+// is the client's answer. Anything else is a storage or encoding failure the
+// client can do nothing about and is deliberately told nothing about: which
+// makes this the only place the cause can be recorded. The access log carries
+// the status and never the reason, so without this line a failed write
+// transaction (a full disk, a read-only volume, an I/O error) is invisible from
+// both ends of the connection.
 func writeAPIErr(w http.ResponseWriter, r *http.Request, err error) {
 	var ae *apiError
 	if errors.As(err, &ae) {

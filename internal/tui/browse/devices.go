@@ -35,8 +35,8 @@ type tokensResultMsg struct {
 	err  error
 }
 
-// mintedMsg carries a freshly minted token. Its plaintext exists nowhere else —
-// the server kept only a hash — so it is put on screen and never written down.
+// mintedMsg carries a freshly minted token. Its plaintext exists nowhere else
+// (the server kept only a hash) so it is put on screen and never written down.
 type mintedMsg struct {
 	info proto.TokenInfo
 	err  error
@@ -70,7 +70,7 @@ func (m Model) tokensCmd() tea.Cmd {
 }
 
 // refreshDevicesCmd refetches both lists. They are one screen and an action on
-// either can change the other — enrolling claims a token, so a device appearing
+// either can change the other; enrolling claims a token, so a device appearing
 // and a token turning "claimed" are the same event.
 func (m Model) refreshDevicesCmd() tea.Cmd {
 	return tea.Batch(m.devicesCmd(), m.tokensCmd())
@@ -137,7 +137,7 @@ func (m Model) selectedToken() (proto.EnrollToken, bool) {
 
 // handleDevicesKey services the devices view. A pending confirmation swallows
 // input until answered, and a freshly minted token is dismissed before anything
-// else — it is on screen precisely because it cannot be recovered.
+// else: it is on screen precisely because it cannot be recovered.
 func (m Model) handleDevicesKey(s string) (tea.Model, tea.Cmd) {
 	if m.devConfirm != "" {
 		id, approve := m.devConfirm, m.devApproving
@@ -163,8 +163,8 @@ func (m Model) handleDevicesKey(s string) (tea.Model, tea.Cmd) {
 		m.applyLayout()
 		return m, nil
 	case "?":
-		// This pane runs before the global keys, so ? has to be handled here too
-		// — otherwise the one screen with destructive keys is the one screen that
+		// This pane runs before the global keys, so ? has to be handled here too;
+		// otherwise the one screen with destructive keys is the one screen that
 		// cannot show you what they are.
 		return m.openHelp()
 	case "ctrl+c":
@@ -196,7 +196,7 @@ func (m Model) handleDevicesKey(s string) (tea.Model, tea.Cmd) {
 		return m.toggleColumns()
 	case "S":
 		// The same key that syncs from the server everywhere else: here what the
-		// server has to say IS these two lists, so S refetches them — and says so
+		// server has to say IS these two lists, so S refetches them, and says so
 		// while it runs and when it lands, the way the browse view's sync does. A
 		// refetch that finished silently was indistinguishable from a key that did
 		// nothing, which is exactly what it looks like when nothing has changed.
@@ -209,7 +209,7 @@ func (m Model) handleDevicesKey(s string) (tea.Model, tea.Cmd) {
 		return m, m.refreshDevicesCmd()
 	case "n": // mint an enrollment token
 		// One at a time, and one on screen at a time. Every press mints a REAL
-		// token — a standing invitation into everything the group can read — so a
+		// token (a standing invitation into everything the group can read) so a
 		// held key would leave a fistful of them open on the server; and each new
 		// banner would bury the plaintext of the one before it, which exists
 		// nowhere else and can never be shown again. Dismissing is the second act
@@ -224,9 +224,9 @@ func (m Model) handleDevicesKey(s string) (tea.Model, tea.Cmd) {
 		return m, m.mintCmd()
 	case "y": // copy the token that was just minted
 		// The only secret this view ever holds. Every other token is a hash on
-		// the server and a short ID here, so there is nothing else worth copying
-		// — and the banner is the one place the plaintext exists, where a narrow
-		// pane may well have clipped it out of reach of the mouse.
+		// the server and a short ID here, so there is nothing else worth
+		// copying, and the banner is the one place the plaintext exists, where a
+		// narrow pane may well have clipped it out of reach of the mouse.
 		if m.minted == "" {
 			return m, nil
 		}
@@ -339,7 +339,7 @@ func (m Model) deviceListInner(w, h int) string {
 	case m.devErr != nil:
 		lines = []string{m.th.ExitErr.Render("  " + m.devErr.Error())}
 	case len(m.devices) == 0:
-		lines = []string{m.th.Dim.Render("  no devices enrolled — run `yore setup`")}
+		lines = []string{m.th.Dim.Render("  no devices enrolled; run `yore setup`")}
 	default:
 		l := m.tableLayout(ctDevices, w)
 		lines = []string{composeSegs(m.tableHeaderSegs(l), false, w, m.th)}
@@ -363,7 +363,7 @@ func (m Model) tokenListInner(w, h int) string {
 		head = []string{
 			m.th.Match.Render("  new token: ") + m.th.Accent.Render(m.minted),
 			m.th.Dim.Render("  valid until " + theme.AbsTime(m.mintedTill) +
-				" — y copies it, it is never shown again (esc to dismiss)"),
+				"; y copies it, it is never shown again (esc to dismiss)"),
 			"",
 		}
 	}
@@ -375,7 +375,7 @@ func (m Model) tokenListInner(w, h int) string {
 	case !m.gotTokens:
 		lines = []string{m.th.Dim.Render("  loading…")}
 	case len(m.tokens) == 0:
-		lines = []string{m.th.Dim.Render("  no tokens — n mints one for another machine")}
+		lines = []string{m.th.Dim.Render("  no tokens; n mints one for another machine")}
 	default:
 		l := m.tableLayout(ctTokens, w)
 		lines = []string{composeSegs(m.tableHeaderSegs(l), false, w, m.th)}
@@ -392,7 +392,7 @@ func (m Model) tokenListInner(w, h int) string {
 
 // stackPane assembles one devices pane: the minted-token banner over the list
 // over the pending question, with only the LIST clipped. padLines would truncate
-// too, but from the bottom — which is the end holding the question the user is
+// too, but from the bottom: which is the end holding the question the user is
 // being asked.
 func stackPane(head, list, tail []string, body, w, h int) string {
 	out := make([]string, 0, len(head)+len(list)+len(tail))
@@ -405,7 +405,7 @@ func stackPane(head, list, tail []string, body, w, h int) string {
 	return padLines(out, w, h)
 }
 
-// devPaneTail is what stands under a pane's list — the pending confirmation, and
+// devPaneTail is what stands under a pane's list: the pending confirmation, and
 // only in the pane whose row it is asking about, which is not necessarily the
 // focused one: a click can move focus while a question is armed. It is measured
 // before the list is windowed so the question cannot be pushed off the bottom by
@@ -420,8 +420,8 @@ func (m Model) devPaneTail(p devPane) []string {
 // devConfirmLines is the question standing over the list while an action waits
 // on y/n. Approving quotes the pending machine's verification code, because the
 // only thing that makes an approval safe is the user comparing it to the code
-// that machine is showing — a prompt that does not put the code in front of
-// them is a prompt that trains them to press y.
+// that machine is showing: a prompt that does not put the code in front of them
+// is a prompt that trains them to press y.
 func (m Model) devConfirmLines() []string {
 	if m.devConfirm == "" {
 		return nil
@@ -473,7 +473,7 @@ func (m Model) deviceRow(d proto.DeviceInfo, l colLayout, selected bool, w int, 
 }
 
 // tokenRow renders one token: its state, when it was minted, what became of it,
-// and its id. The token itself is not here and cannot be — only its hash was
+// and its id. The token itself is not here and cannot be; only its hash was
 // kept, which is what the id column shows.
 func (m Model) tokenRow(t proto.EnrollToken, l colLayout, selected bool, w int, now int64) string {
 	th := m.th

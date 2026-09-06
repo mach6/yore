@@ -13,14 +13,12 @@ import (
 
 // ui renders the styled output of the interactive commands (setup, recover,
 // devices) using the same theme as the TUIs, so the CLI and the full-screen
-// views look like one product.
-//
-// Everything here is decoration and goes to STDERR; any value a script would
-// want — a token, a device id — is printed bare on stdout by the caller, so
-// `$(yore devices token)` yields exactly the token and nothing else.
-//
-// Colour degrades on its own: lipgloss detects the output's capabilities, so a
-// piped or NO_COLOR run gets plain text without any special-casing here.
+// views look like one product. Everything here is decoration and goes to
+// STDERR; any value a script would want (a token, a device id) is printed bare
+// on stdout by the caller, so `$(yore devices token)` yields exactly the token
+// and nothing else. Colour degrades on its own: lipgloss detects the output's
+// capabilities, so a piped or NO_COLOR run gets plain text without any
+// special-casing here.
 type ui struct {
 	t         *theme.Theme
 	w         io.Writer
@@ -28,7 +26,7 @@ type ui struct {
 }
 
 // Layout constants. Setup output is a short transcript, not a full-screen view,
-// so it does not reflow with the terminal — a stable width keeps a scrollback of
+// so it does not reflow with the terminal: a stable width keeps a scrollback of
 // several runs aligned, and a fixed label column lines the details up.
 const (
 	panelWidth = 58
@@ -50,7 +48,7 @@ func (u *ui) title(s string) {
 }
 
 // section prints a group heading in a multi-part report (yore doctor). Headings
-// are separated by a blank line, but the first one follows the title directly —
+// are separated by a blank line, but the first one follows the title directly:
 // the title already provides the gap.
 func (u *ui) section(name string) {
 	if u.sectioned {
@@ -126,11 +124,10 @@ func (u *ui) next(heading string, cmds ...string) {
 	u.blank()
 }
 
-// printf writes one formatted line of decoration.
-//
-// The write error is deliberately discarded: this is human-facing output on
-// stderr, and if stderr is broken there is nowhere left to report that fact —
-// failing a working enrollment over it would be strictly worse.
+// printf writes one formatted line of decoration. The write error is
+// deliberately discarded: this is human-facing output on stderr, and if
+// stderr is broken there is nowhere left to report that fact; failing a
+// working enrollment over it would be strictly worse.
 func (u *ui) printf(format string, args ...any) {
 	_, _ = fmt.Fprintf(u.w, format, args...)
 }

@@ -58,7 +58,7 @@ func TestSeedWritesDefault(t *testing.T) {
 }
 
 // TestLoadFromFile: a file that drops the jwt rule loses JWT detection while its
-// remaining rules (pem-block) keep working — the file, not the built-ins, wins.
+// remaining rules (pem-block) keep working; the file, not the built-ins, wins.
 func TestLoadFromFile(t *testing.T) {
 	dir := t.TempDir()
 	body, err := marshalSpecs(specsExcept("jwt"))
@@ -85,7 +85,7 @@ func TestLoadMissingFallsBackToBuiltins(t *testing.T) {
 }
 
 // TestLoadBrokenFileFailsSafe: a malformed or empty rules file must fall back to
-// the built-ins (redaction stays ON) and warn — never a filter that redacts
+// the built-ins (redaction stays ON) and warn; never a filter that redacts
 // nothing.
 func TestLoadBrokenFileFailsSafe(t *testing.T) {
 	cases := []struct {

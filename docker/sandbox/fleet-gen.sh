@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 #
-# fleet-gen.sh — randomized history generator, run INSIDE one fleet node.
+# fleet-gen.sh; randomized history generator, run INSIDE one fleet node.
 #
 # fleet.sh pipes this to `bash -s` in each of the twenty containers (one exec
 # per node, never one per command) with its parameters in the environment. It
-# writes N records through `yore record` — the exact call the shell hook makes —
+# writes N records through `yore record`: the exact call the shell hook makes;
 # choosing each command from a weighted mix of categories with randomized text,
 # directory, exit status, duration, session, and timestamp.
 #
 # Every generated command carries a trailing "#<MARK>-<n>" comment naming its
 # node and its position, so a match is unambiguous, a count is a grep, and no
-# two records are textually identical — headless search dedupes identical
+# two records are textually identical; headless search dedupes identical
 # commands, so a corpus with repeats cannot be counted. Secrets additionally
 # embed SEKRETMARKER, which must never survive into ANY database.
 #
@@ -30,7 +30,7 @@
 #   IGNORE_DIR   directory configured in ignore_dirs
 #   SPAN_DAYS    spread timestamps over this many days back from now
 #
-# Output: "GEN <key>=<value>" lines on stdout — tallies and the in-container
+# Output: "GEN <key>=<value>" lines on stdout; tallies and the in-container
 # timing of the record loop itself (measured from /proc/uptime, which every
 # distro and busybox has, unlike date +%N).
 set -u
@@ -130,22 +130,22 @@ while (( i < N )); do
 
   # Weighted category roll (out of 100).
   case $(( RANDOM % 100 )) in
-    0|1|2|3)      # 4%  secret — stored, but the credential must be redacted
+    0|1|2|3)      # 4%  secret; stored, but the credential must be redacted
       gen_secret; n_secret=$(( n_secret + 1 ))
       printf '%s #%s-%d' "$cmd" "$MARK" "$i" | yore record --cwd "$cwd" --exit 0 \
         --duration-ms "$dur" --start-ms "$start" --session "$session" >/dev/null 2>&1
       ;;
-    4|5|6)        # 3%  leading space — must be dropped
+    4|5|6)        # 3%  leading space; must be dropped
       gen_cmd; n_space=$(( n_space + 1 ))
       printf ' %s #%s' "$cmd" "$MARK" | yore record --cwd "$cwd" --exit 0 \
         --duration-ms "$dur" --start-ms "$start" --session "$session" >/dev/null 2>&1
       ;;
-    7|8|9)        # 3%  inside the ignored directory — must be dropped
+    7|8|9)        # 3%  inside the ignored directory; must be dropped
       gen_cmd; n_ignore=$(( n_ignore + 1 ))
       printf '%s #%s-%d' "$cmd" "$MARK" "$i" | yore record --cwd "$IGNORE_DIR" --exit 0 \
         --duration-ms "$dur" --start-ms "$start" --session "$session" >/dev/null 2>&1
       ;;
-    1[0-9])       # 10% agent-run — stored and tagged
+    1[0-9])       # 10% agent-run; stored and tagged
       gen_cmd; n_agent=$(( n_agent + 1 ))
       case $(( RANDOM % 3 )) in
         0) n_cc=$(( n_cc + 1 ))
@@ -162,7 +162,7 @@ while (( i < N )); do
              --session "$session" >/dev/null 2>&1 ;;
       esac
       ;;
-    2[0-7])       # 8%  a command that failed — stored with its exit status
+    2[0-7])       # 8%  a command that failed; stored with its exit status
       gen_cmd; n_fail=$(( n_fail + 1 ))
       exit_code=$(( 1 + RANDOM % 130 ))
       printf '%s #%s-%d' "$cmd" "$MARK" "$i" | yore record --cwd "$cwd" --exit "$exit_code" \

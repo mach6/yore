@@ -1,14 +1,12 @@
 // Package risk is a deterministic, rule-based classifier for how dangerous a
-// shell command is — no model, no network. It answers "is this safe to run?"
+// shell command is: no model, no network. It answers "is this safe to run?"
 // for the MCP assess_risk tool, the browse views, and `yore agent report
 // --fail-on`. Highest-severity match wins; a command that only reads or prints
-// is never flagged.
-//
-// It is intentionally conservative and explainable: every verdict names a
-// category and a short reason, so an agent (or a human) can see WHY.
-//
-// Rules are written against a parsed command (see parse.go), not against the
-// raw string, so they can ask what a line *runs* rather than what it contains.
+// is never flagged. It is intentionally conservative and explainable: every
+// verdict names a category and a short reason, so an agent (or a human) can
+// see WHY. Rules are written against a parsed command (see parse.go), not
+// against the raw string, so they can ask what a line *runs* rather than what
+// it contains.
 package risk
 
 import (

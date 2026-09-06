@@ -1,10 +1,9 @@
-// Package wire defines the JSON types of the sync server's HTTP API.
-// It is a leaf contract package shared by internal/server and internal/syncer;
-// like internal/proto it must not import any non-leaf yore package.
-//
-// []byte fields marshal as base64 (encoding/json's default) — that is the
-// wire encoding for all ciphertext blobs. The server never sees plaintext:
-// record blobs, HK wraps, and DEK wraps are sealed client-side.
+// Package wire defines the JSON types of the sync server's HTTP API. It is a
+// leaf contract package shared by internal/server and internal/syncer; like
+// internal/proto it must not import any non-leaf yore package. []byte fields
+// marshal as base64 (encoding/json's default): that is the wire encoding for
+// all ciphertext blobs. The server never sees plaintext: record blobs, HK
+// wraps, and DEK wraps are sealed client-side.
 package wire
 
 // Device lifecycle states.
@@ -53,14 +52,14 @@ type TokenResp struct {
 // Token states, as computed by the server so every client agrees on what
 // "expired" means without re-deriving it from its own clock.
 const (
-	TokenOpen    = "open"    // unclaimed, unrevoked, not yet expired — still admits a machine
+	TokenOpen    = "open"    // unclaimed, unrevoked, not yet expired; still admits a machine
 	TokenClaimed = "claimed" // a device enrolled on it; ClaimedBy names which
 	TokenExpired = "expired" // its window passed without anyone using it
 	TokenRevoked = "revoked" // cancelled before it was used
 )
 
 // EnrollToken is one enrollment token as listed. ID is the hex of the token's
-// storage key — sha256 of the token, never the token itself, which the server
+// storage key; sha256 of the token, never the token itself, which the server
 // does not keep. Publishing it is safe: enrolling requires presenting the
 // plaintext, which the server hashes, so the id is a handle and not a
 // credential.
@@ -142,7 +141,7 @@ type PushReq struct {
 }
 
 // PushResp acknowledges a push. Duplicate (host_id, seq) rows are skipped
-// silently — pushes are idempotent.
+// silently; pushes are idempotent.
 type PushResp struct {
 	Stored int    `json:"stored"`
 	MaxSeq uint64 `json:"max_seq"`
@@ -187,7 +186,7 @@ const (
 	// CodeDeviceRevoked tells a device that its own membership was revoked, so
 	// it can stop syncing and drop the group's ciphertext from its disk. It is
 	// returned ONLY after the request's signature verified, i.e. only to the
-	// holder of that device's private key — otherwise it would let anyone who
+	// holder of that device's private key; otherwise it would let anyone who
 	// knows a device id probe the group's membership.
 	CodeDeviceRevoked = "device_revoked"
 )

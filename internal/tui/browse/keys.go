@@ -7,9 +7,8 @@ import (
 // The browser's bindings, described once. Behavior is dispatched from handleKey
 // on the raw key string (so tests can synthesize keys directly); these tables are
 // what the footer and the "?" panel show, and each row carries the raw keys it
-// stands for so a test can hold the two to each other — a key that does something
+// stands for so a test can hold the two to each other: a key that does something
 // but is described nowhere is a bug, and so is a key described but not handled.
-//
 // The tables are contextual: a view advertises the keys that do something *in
 // that view*, in the state it is in. The devices pane, for one, cannot reach the
 // global keys at all (handleDevicesKey runs before them), so it must not claim
@@ -32,7 +31,7 @@ func (m Model) agentToggleDesc() string {
 }
 
 // mouseRow describes a pointer gesture. It carries no keys, so the coverage test
-// skips it — but it belongs in the panel: the panes are resizable by drag and
+// skips it, but it belongs in the panel: the panes are resizable by drag and
 // nothing else on screen says so.
 func mouseRow(gesture, desc string) keyhelp.Row {
 	return keyhelp.Row{Keys: gesture, Desc: desc}
@@ -90,6 +89,7 @@ func (m Model) browseGroups() []keyhelp.Group {
 		row("enter", "put it on the prompt", "enter"),
 		row("y", "copy", "y"),
 		row("^t", "tag (the selection, if any)", "ctrl+t"),
+		row("^x", "untag (the selection, if any)", "ctrl+x"),
 	}
 	if m.vim {
 		act = append(act, row("d", "delete (the selection, if any)", "d"))
@@ -170,7 +170,7 @@ func (m Model) agentsGroups() []keyhelp.Group {
 }
 
 // devicesGroups is the devices view, which owns its keys outright: the global
-// switch never runs here, so nothing from it may be advertised — and q goes back
+// switch never runs here, so nothing from it may be advertised, and q goes back
 // rather than quitting, which is the one place the browser's q does not quit.
 func devicesGroups() []keyhelp.Group {
 	return []keyhelp.Group{
@@ -229,8 +229,8 @@ func columnsGroups() []keyhelp.Group {
 	}
 }
 
-// globalRows are the keys handled for every view that reaches the global switch
-// — browse, stats and the agent explorer. `except` drops the one that would name
+// globalRows are the keys handled for every view that reaches the global switch;
+// browse, stats and the agent explorer. `except` drops the one that would name
 // the view you are already in, since there it reads as "back", listed separately.
 func globalRows(except string) []keyhelp.Row {
 	all := []keyhelp.Row{
@@ -267,7 +267,7 @@ func (m Model) footerRows() []keyhelp.Row {
 	case m.afiltering:
 		return agentFilterRows(m.afilterPane)
 	case m.tagging:
-		return taggingRows()
+		return taggingRows(m.tagRemove)
 	case m.showHelp:
 		return m.helpOpenRows()
 	case m.showCols:
@@ -313,7 +313,7 @@ func (m Model) footerRows() []keyhelp.Row {
 			row("H", "host", "H"),
 			row("A", "agent", "A"),
 		)
-		// With a filter up, esc means "drop it" before it means "leave" — say the
+		// With a filter up, esc means "drop it" before it means "leave"; say the
 		// one that will actually happen next.
 		if m.filterFor(m.filterTarget()) != "" {
 			rows = append(rows, row("esc", "clear filter", "esc"))
@@ -331,7 +331,7 @@ func (m Model) footerRows() []keyhelp.Row {
 			rows = append(rows, row("a", "approve", "a"), row("x", "revoke", "x"))
 		}
 		// A minted token is on screen for one moment and never again, so the key
-		// that saves it leads while it is up — from either pane, since n mints
+		// that saves it leads while it is up, from either pane, since n mints
 		// from either.
 		if m.minted != "" {
 			rows = append([]keyhelp.Row{row("y", "copy the token", "y")}, rows...)
@@ -372,10 +372,10 @@ func (m Model) footerRows() []keyhelp.Row {
 			row("tab", "pane", "tab"),
 		}
 	}
-	// Advertise the agent filter exactly when it is holding something back —
-	// which is exactly when someone might be wondering where a command they
-	// remember running went. With nothing hidden there is nothing to explain, and
-	// "?" still carries the key.
+	// Advertise the agent filter exactly when it is holding something back: which
+	// is exactly when someone might be wondering where a command they remember
+	// running went. With nothing hidden there is nothing to explain, and "?"
+	// still carries the key.
 	if m.hiddenAgentsNote() != "" {
 		rows = append(rows, row("A", "show agents", "A"))
 	}
@@ -413,7 +413,7 @@ func confirmDeviceRows(approving bool) []keyhelp.Row {
 	return []keyhelp.Row{
 		row("y", verb, "y", "Y"),
 		// Deliberately not a binding: anything that is not y cancels. Both actions
-		// here are ones you cannot take back quietly — approving admits a machine
+		// here are ones you cannot take back quietly; approving admits a machine
 		// to the group, revoking rotates its keys.
 		{Keys: "any other key", Desc: "cancel"},
 	}
@@ -438,9 +438,16 @@ func agentFilterRows(p agentPane) []keyhelp.Row {
 	}
 }
 
-func taggingRows() []keyhelp.Row {
+// taggingRows is the footer while the tag box has focus. One box serves both
+// ops, so it says which one enter is about to commit; "save the tag" over a
+// box that is going to remove one would be exactly backwards.
+func taggingRows(remove bool) []keyhelp.Row {
+	desc := "save the tag"
+	if remove {
+		desc = "remove the tag"
+	}
 	return []keyhelp.Row{
-		row("enter", "save the tag", "enter"),
+		row("enter", desc, "enter"),
 		row("esc", "cancel", "esc"),
 	}
 }
@@ -461,7 +468,7 @@ func filterEntryRows(a filterAxis) []keyhelp.Row {
 }
 
 // helpOpenRows offers a scroll hint only when the list actually overflows the
-// pane — on a wide terminal it never does, and a hint for a key that would move
+// pane, on a wide terminal it never does, and a hint for a key that would move
 // nothing is worse than no hint.
 func (m Model) helpOpenRows() []keyhelp.Row {
 	var rows []keyhelp.Row

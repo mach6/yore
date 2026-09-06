@@ -32,7 +32,7 @@ func (m Model) renderHelp(w, h int) string {
 	return m.titledBox(true, bw, bh, "KEYS", suffix, body)
 }
 
-// helpViewName names the view the panel is describing — the panel covers it, so
+// helpViewName names the view the panel is describing: the panel covers it, so
 // without this the list has no subject.
 func (m Model) helpViewName() string {
 	switch m.view {
@@ -110,7 +110,7 @@ func (m Model) searchLine(w int) string {
 
 // showPeriodTabs reports whether there is room for the tab strip beside a view's
 // own header content. On a narrow terminal the header wins and the keys still
-// work — the status bar names the active window.
+// work: the status bar names the active window.
 func (m Model) showPeriodTabs() bool { return m.width >= periodTabsWidth()+24 }
 
 // clipW truncates a (possibly styled) line to at most w columns, ANSI-aware.
@@ -134,7 +134,7 @@ func clipW(s string, w int) string {
 // The name goes in the rule rather than on a line of its own inside the box
 // because a pane only has so many rows: a title line costs one, and in the
 // four-pane explorer that was four rows of data spent on chrome. It also stops
-// the title competing with the first data row for the eye — a border is read as
+// the title competing with the first data row for the eye; a border is read as
 // frame, a line inside the box is read as content.
 //
 // inner is expected to be w columns wide already, but every line is padded and
@@ -171,7 +171,7 @@ func (m Model) titledBox(focused bool, w, h int, name, suffix, inner string) str
 }
 
 // topRule composes the pane's top border with its name inside it. The rule is
-// exactly w+2 columns. A pane too narrow to seat a name gets a plain rule — the
+// exactly w+2 columns. A pane too narrow to seat a name gets a plain rule: the
 // status bar and the focus ring still say where you are.
 func (m Model) topRule(ink lipgloss.Style, focused bool, w int, name, suffix string) string {
 	plain := ink.Render("╭" + strings.Repeat("─", w) + "╮")
@@ -208,7 +208,7 @@ func padTo(s string, w int) string {
 
 // renderPanes lays out the three browse panes: host sidebar on the left, the
 // results table over the detail pane on the right. Zoomed, the focused pane
-// alone fills the frame — unless zoomDetail is keeping the detail pane beside
+// alone fills the frame, unless zoomDetail is keeping the detail pane beside
 // it, in which case both render side by side from the same geometry the mouse
 // hit-tests against.
 func (m Model) renderPanes(w int) string {
@@ -259,7 +259,7 @@ func (m Model) browsePaneBox(f focus, focused bool, w, h int) string {
 }
 
 // browsePaneHeading names a browse pane and the count/position that goes beside
-// it — the host count, the cursor's place in the result set, the selected
+// it: the host count, the cursor's place in the result set, the selected
 // command's host.
 func (m Model) browsePaneHeading(f focus) (name, suffix string) {
 	switch f {
@@ -271,8 +271,8 @@ func (m Model) browsePaneHeading(f focus) (name, suffix string) {
 			return "COMMANDS", "0"
 		}
 		suffix := fmt.Sprintf("%d/%d", m.sel+1, m.total)
-		// The one place a bulk selection is visible whichever pane holds focus
-		// — a mark you cannot see is a trap for the delete key.
+		// The one place a bulk selection is visible whichever pane holds
+		// focus: a mark you cannot see is a trap for the delete key.
 		if n := m.checkedCount(); n > 0 {
 			suffix += fmt.Sprintf("  %d selected", n)
 		}
@@ -338,7 +338,7 @@ func (m Model) hostLine(i, w int) string {
 // --- results table ------------------------------------------------------
 
 // Executor and tags are two columns, never one. They answer different questions
-// — which agent ran this, versus what did I label it — and merging them meant a
+// (which agent ran this, versus what did I label it) and merging them meant a
 // user tag competed for cells with "claude-code" on every agent row. The set, the
 // widths, the shedding order and the sort keys all live in columns.go.
 
@@ -360,11 +360,11 @@ func (m Model) tableInner(w, h int) string {
 		// nothing. A search that found nothing is the user's own doing and needs no
 		// instruction; an empty history means yore has nothing to show yet. But
 		// when the only matches are behind the agent filter, "no matches" is a lie
-		// about the user's own history — so that case names the way through.
-		msg := "no history yet — run a command, or import with: yore import auto"
+		// about the user's own history, so that case names the way through.
+		msg := "no history yet; run a command, or import with: yore import auto"
 		switch note := m.hiddenAgentsNote(); {
 		case note != "":
-			msg = note + " — A shows them"
+			msg = note + ": A shows them"
 		case m.ti.Value() != "":
 			msg = "no matches"
 		}
@@ -387,7 +387,7 @@ func (m Model) tableInner(w, h int) string {
 // table row: a glyph plus its trailing space. It is carried outside the
 // colSpec system (columns.go) rather than as a column of its own, because a
 // colSpec's cell renders one row with no way to see the Model's selection
-// state — and the prompt, command, device and token tables share that same
+// state, and the prompt, command, device and token tables share that same
 // colLayout machinery, so giving cell that signature for one browse-only
 // column would mean plumbing it through every table for a concept only one of
 // them has. colLayout (columns.go) subtracts this out of the pane's content
@@ -407,9 +407,9 @@ func (m Model) checkGlyph(id string) styledSeg {
 
 // tableHeader names each visible column of the results table; the shared builder
 // puts the sort arrow on the ordered one where its cell can hold it. The
-// selection gutter has no heading of its own — the pane title already carries
-// the count — so it is just blank space here, aligning the header with the
-// glyph column every row draws.
+// selection gutter has no heading of its own (the pane title already carries the
+// count) so it is just blank space here, aligning the header with the glyph
+// column every row draws.
 func (m Model) tableHeader(l colLayout, w int) string {
 	segs := append([]styledSeg{{text: strings.Repeat(" ", selGutterW), raw: true}}, m.tableHeaderSegs(l)...)
 	return composeSegs(segs, false, w, m.th)
@@ -438,7 +438,7 @@ func (m Model) renderRow(r rec.Record, l colLayout, q match.Query, selected bool
 // exitMarker is a command's outcome as a glyph plus a style. Each of the three
 // states gets its OWN glyph: success and unknown used to share "·" and differ
 // only in color, which put a real distinction out of reach for anyone who cannot
-// separate dim grey from green — and put it out of reach of a screenshot.
+// separate dim grey from green, and put it out of reach of a screenshot.
 func exitMarker(th *theme.Theme, r rec.Record) (string, lipgloss.Style) {
 	switch {
 	case r.Exit == nil:
@@ -464,7 +464,7 @@ func exitWord(r rec.Record) string {
 	}
 }
 
-// exitSegs is exitWord with the table's outcome colors on the same glyphs —
+// exitSegs is exitWord with the table's outcome colors on the same glyphs:
 // the text is identical, only the ink differs.
 func exitSegs(th *theme.Theme, r rec.Record) []styledSeg {
 	switch {
@@ -479,7 +479,7 @@ func exitSegs(th *theme.Theme, r rec.Record) []styledSeg {
 
 // pathSegs dims a path's directory and keeps its leaf normal, so the eye lands
 // on the name rather than the boilerplate prefix. Values without a slash
-// (including the "—" placeholder) render plain.
+// (including the "; " placeholder) render plain.
 func pathSegs(th *theme.Theme, path string, maxCols int) []styledSeg {
 	p := truncCols(path, maxCols)
 	i := strings.LastIndexByte(p, '/')
@@ -497,13 +497,13 @@ func pathSegs(th *theme.Theme, path string, maxCols int) []styledSeg {
 // stable hue, or a plain dash when absent.
 func hueSeg(th *theme.Theme, name string) []styledSeg {
 	if name == "" {
-		return []styledSeg{{text: "—", style: th.Norm}}
+		return []styledSeg{{text: theme.Unknown, style: th.Norm}}
 	}
 	return []styledSeg{{text: name, style: th.Host(name)}}
 }
 
 // riskStyle maps a risk level to its ink: critical borrows the exit red and
-// safe the exit green — the same ✓ means the same thing on both rows — medium
+// safe the exit green (the same ✓ means the same thing on both rows) medium
 // the match amber, and high is the ramp's own orange between them.
 func riskStyle(th *theme.Theme, l risk.Level) lipgloss.Style {
 	switch l {
@@ -523,7 +523,7 @@ func riskStyle(th *theme.Theme, l risk.Level) lipgloss.Style {
 // riskSegs renders a verdict as "⚠ high (script-exec)": glyph and level in the
 // tier's ink, the category dim. Glyph-first, so the tier survives without color.
 // A clean verdict is categorized "safe", which would only stutter after the
-// level, so the category is dropped when it repeats the label — but "ignored"
+// level, so the category is dropped when it repeats the label, but "ignored"
 // survives, since a row silenced by the user's risk.toml should say so.
 func riskSegs(th *theme.Theme, a risk.Assessment) []styledSeg {
 	segs := []styledSeg{{text: a.Level.Glyph() + " " + a.Level.String(), style: riskStyle(th, a.Level)}}
@@ -578,7 +578,7 @@ func (m *Model) syncDetail() {
 		metaSegs("Tags", []styledSeg{{text: strings.Join(r.Tags, ", "), style: m.th.Accent}})
 	}
 	meta("Time", theme.AbsTime(r.StartMs))
-	dur := "—"
+	dur := theme.Unknown
 	if r.DurMs != nil {
 		dur = theme.Duration(*r.DurMs)
 	}
@@ -624,13 +624,13 @@ func (m Model) statusBar(w int) string {
 	// view and the Devices view there is no table row, so surface a summary that
 	// actually fits the view instead of a meaningless "row N/M".
 	if m.zoom {
-		pieces = append(pieces, th.Accent.Render("zoomed")+th.Dim.Render(" — z restores the panes"))
+		pieces = append(pieces, th.Accent.Render("zoomed")+th.Dim.Render("; z restores the panes"))
 	}
 
 	switch m.view {
 	case viewStats, viewAgents:
 		// These aggregate views are self-describing (the panels/panes show their
-		// own totals), so the status bar stays minimal — just any flash/error.
+		// own totals), so the status bar stays minimal; just any flash/error.
 	case viewDevices:
 		unit := "devices"
 		if len(m.devices) == 1 {
@@ -644,7 +644,7 @@ func (m Model) statusBar(w int) string {
 		}
 		pieces = append(pieces, th.Dim.Render(fmt.Sprintf("row %d/%d", pos, m.total)))
 		pieces = append(pieces, th.Dim.Render(scopeWord(m.hosts[m.hostSel])))
-		// Name the window whenever it hides anything — and always when the tab
+		// Name the window whenever it hides anything, and always when the tab
 		// strip did not fit, so the active period is never invisible.
 		if m.period != allPeriod {
 			label := statPeriods[m.period].label
@@ -661,7 +661,7 @@ func (m Model) statusBar(w int) string {
 		if m.tagFilter != "" {
 			pieces = append(pieces, th.Accent.Render("tag: "+m.tagFilter))
 		}
-		// The sort, named only when it is not the order the table opens in — and
+		// The sort, named only when it is not the order the table opens in, and
 		// named in words, since a narrow column's header has no room for the arrow.
 		if note := m.sortNote(ctBrowse); note != "" {
 			pieces = append(pieces, th.Accent.Render(note))
@@ -678,7 +678,7 @@ func (m Model) statusBar(w int) string {
 
 		if m.remote.State == proto.RemoteOff &&
 			(m.hosts[m.hostSel].scope == proto.ScopeAll || m.hosts[m.hostSel].scope == proto.ScopeHost) {
-			pieces = append(pieces, th.Dim.Render("remote sync not configured — showing local only"))
+			pieces = append(pieces, th.Dim.Render("remote sync not configured; showing local only"))
 		}
 	}
 
@@ -904,7 +904,7 @@ type wrapRune struct {
 }
 
 // wrapHighlighted word-wraps a command to width w with syntax highlighting
-// layered under match highlighting (matches win) — the same coloring the table
+// layered under match highlighting (matches win): the same coloring the table
 // gives the same text, kept when the command grows to multiple lines. maxLines
 // > 0 caps the output the way wrapPlain does, ending the last kept line with a
 // dim ellipsis; 0 leaves it uncapped.
@@ -1004,7 +1004,7 @@ func wrapRuneWidth(ts []wrapRune) int {
 }
 
 // renderWrapped is emitRuns' wrapped sibling: adjacent same-kind runes coalesce
-// into one styled run, with no clipping — wrapHighlighted already sized the line.
+// into one styled run, with no clipping; wrapHighlighted already sized the line.
 func renderWrapped(th *theme.Theme, ts []wrapRune) string {
 	if len(ts) == 0 {
 		return ""

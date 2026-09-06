@@ -41,13 +41,12 @@ type promptsData struct {
 }
 
 // computePrompts groups agent commands by their triggering prompt over the last
-// periodDays days (0 = all). Commands with no prompt id (human commands, or
-// agent commands captured before prompt tracing) are excluded, as are commands
-// from another executor when `executor` names one (the sidebar's filter).
-//
-// prompts are the prompt records themselves. They seed the aggregate before any
-// command is counted, so a prompt that triggered no commands at all still shows
-// up — with a count of zero — instead of vanishing because nothing referenced it.
+// periodDays days (0 = all). Commands with no prompt id (human commands, or agent
+// commands captured before prompt tracing) are excluded, as are commands from
+// another executor when `executor` names one (the sidebar's filter). prompts are
+// the prompt records themselves. They seed the aggregate before any command is
+// counted, so a prompt that triggered no commands at all still shows up (with a
+// count of zero) instead of vanishing because nothing referenced it.
 func computePrompts(rows, prompts []rec.Record, now int64, periodDays int, executor string) *promptsData {
 	cutoff := periodCutoff(now, periodDays)
 	byID := map[string]*promptStat{}
@@ -127,20 +126,20 @@ func computePrompts(rows, prompts []rec.Record, now int64, periodDays int, execu
 	return out
 }
 
-// promptDur is the total execution time across a prompt's commands, or "—" when
-// no command carried a known duration.
+// promptDur is the total execution time across a prompt's commands, or "; "
+// when no command carried a known duration.
 func promptDur(p promptStat) string {
 	if p.durN == 0 {
-		return "—"
+		return theme.Unknown
 	}
 	return theme.Duration(p.durSum)
 }
 
-// shortSession trims an opaque session id to a stable, readable prefix — enough
+// shortSession trims an opaque session id to a stable, readable prefix; enough
 // to tell one agent conversation from another without eating the row.
 func shortSession(s string) string {
 	if s == "" {
-		return "—"
+		return theme.Unknown
 	}
 	if len(s) > 8 {
 		return s[:8]
@@ -148,8 +147,8 @@ func shortSession(s string) string {
 	return s
 }
 
-// drilledPrompt is the prompt currently under the prompt-pane cursor — the one
-// whose commands the command pane shows — and whether one exists.
+// drilledPrompt is the prompt currently under the prompt-pane cursor (the one
+// whose commands the command pane shows) and whether one exists.
 func (m Model) drilledPrompt() (promptStat, bool) {
 	if m.promptSel < 0 || m.promptSel >= len(m.filteredPrompts) {
 		return promptStat{}, false
@@ -164,7 +163,7 @@ func (m Model) drilledPrompt() (promptStat, bool) {
 // something they did not do.
 func (m Model) noPromptMsg() string {
 	if m.promptLen() == 0 {
-		return "no agent prompts in this window — 1..5 widens it"
+		return "no agent prompts in this window; 1..5 widens it"
 	}
 	return "no prompt selected"
 }
@@ -203,10 +202,10 @@ func (m Model) promptListInner(w, h int) string {
 
 	rows := m.filteredPrompts
 	if len(rows) == 0 {
-		// The prompts exist; this query just does not reach them. Say which — the
+		// The prompts exist; this query just does not reach them. Say which: the
 		// pane is otherwise indistinguishable from a period with no agent work.
 		lines = append(lines, "", "  "+th.Dim.Render(
-			fmt.Sprintf("no prompt matches %q — esc clears the filter", m.promptQ)))
+			fmt.Sprintf("no prompt matches %q; esc clears the filter", m.promptQ)))
 		return padLines(lines, w, h)
 	}
 
@@ -224,7 +223,7 @@ func (m Model) promptListInner(w, h int) string {
 		segs := rowSegs(th, ctPrompts, promptSpecs, l, p, now)
 		text := oneLine(p.text)
 		// The selected row scrolls horizontally to reveal a long prompt, but only
-		// when this pane holds focus — else the command pane owns ←/→.
+		// when this pane holds focus; else the command pane owns ←/→.
 		if i == sel && m.apane == apPrompts && m.hscroll > 0 {
 			segs = append(segs, plainSegs(th.Norm, hOffset(text, m.hscroll, textW), textW)...)
 		} else {
@@ -259,7 +258,7 @@ func (m Model) promptCmdInner(w, h int) string {
 		// This prompt ran commands; none of them match. Naming the query keeps the
 		// pane from reading as "this prompt did nothing".
 		lines = append(lines, "", "  "+th.Dim.Render(
-			fmt.Sprintf("none of this prompt's %d commands match %q — esc clears the filter",
+			fmt.Sprintf("none of this prompt's %d commands match %q; esc clears the filter",
 				len(p.cmds), m.cmdQ)))
 		return padLines(lines, w, h)
 	}
@@ -310,7 +309,7 @@ func modalCwd(cmds []rec.Record) string {
 		}
 	}
 	if best == "" {
-		return "—"
+		return theme.Unknown
 	}
 	return best
 }
@@ -318,7 +317,7 @@ func modalCwd(cmds []rec.Record) string {
 // promptStatus summarizes a prompt's command outcomes as a compact glyph/label
 // and the style for its status cell. The CMDS column already carries the total,
 // so a clean run is just a green ✓ (not "✓N", which read as an exit code and
-// duplicated CMDS); any failures surface as a red ✗N — the count that matters.
+// duplicated CMDS); any failures surface as a red ✗N: the count that matters.
 func promptStatus(th *theme.Theme, p promptStat) (string, lipgloss.Style) {
 	switch {
 	case p.failures > 0:

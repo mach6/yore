@@ -149,7 +149,7 @@ func TestModes(t *testing.T) {
 		{"bash", "coexist", []string{`bind -x '"\eyore"`}, []string{"unset HISTFILE", "__yore_bash_gate"}},
 		{"bash", "capture", nil, []string{"unset HISTFILE", `bind -x '"\eyore"`, "alias h="}},
 		// fish has no `!N`/`!!` expansion and no separate in-memory history list to
-		// seed or gate, so takeover needs only fish_private_mode — nothing else
+		// seed or gate, so takeover needs only fish_private_mode: nothing else
 		// changes between takeover and coexist besides that and the Up binding.
 		{"fish", "takeover", []string{"fish_private_mode", `bind \cr`}, []string{"_yore_bind_up_arrow"}},
 		{"fish", "coexist", []string{`bind \cr`, "_yore_bind_up_arrow"}, []string{"fish_private_mode"}},
@@ -236,15 +236,14 @@ func TestFishFieldsAndIdioms(t *testing.T) {
 
 // TestEnterExecutesFailsClosedInEveryShell pins the SAFETY DIRECTION of the
 // enter_executes gate, which is the one place the three hooks can disagree
-// without any of them looking wrong on its own.
-//
-// Every hook asks `yore get-config enter_executes` at call time and must run the
-// picked command only on an explicit "true". Testing the other polarity — "not
-// false" — reads identically while yore is answering, because it answers
-// "false" by default. The two diverge exactly when yore CANNOT answer: the
-// output is empty, "not false" is satisfied, and the shell runs a command out of
-// history that the user only meant to look at. A history tool's Ctrl-R picks are
-// full of sudo and rm, so the failure direction is the whole point.
+// without any of them looking wrong on its own. Every hook asks `yore get-config
+// enter_executes` at call time and must run the picked command only on an
+// explicit "true". Testing the other polarity ("not false") reads identically
+// while yore is answering, because it answers "false" by default. The two
+// diverge exactly when yore CANNOT answer: the output is empty, "not false" is
+// satisfied, and the shell runs a command out of history that the user only
+// meant to look at. A history tool's Ctrl-R picks are full of sudo and rm, so
+// the failure direction is the whole point.
 func TestEnterExecutesFailsClosedInEveryShell(t *testing.T) {
 	for _, sh := range []string{"zsh", "bash", "fish"} {
 		t.Run(sh, func(t *testing.T) {
@@ -262,10 +261,10 @@ func TestEnterExecutesFailsClosedInEveryShell(t *testing.T) {
 // TestFishNoSubstitutionInsideQuotes guards the one way a script ported from
 // zsh/bash silently does nothing in fish: `"$(cmd)"` translated to `"(cmd)"`.
 // Fish expands `(cmd)` only OUTSIDE quotes, so the quoted form is a literal
-// string — every `test "(...)" = true` is then false forever and every
-// `--query "(commandline -b)"` searches for that text. Nothing errors, so no
-// golden file and no substring assertion catches it. Substitute into a variable
-// first and quote the variable instead.
+// string: every `test "(...)" = true` is then false forever and every `--query
+// "(commandline -b)"` searches for that text. Nothing errors, so no golden file
+// and no substring assertion catches it. Substitute into a variable first and
+// quote the variable instead.
 func TestFishNoSubstitutionInsideQuotes(t *testing.T) {
 	for _, mode := range []string{"coexist", "takeover", "capture"} {
 		t.Run(mode, func(t *testing.T) {

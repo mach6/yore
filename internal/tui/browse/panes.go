@@ -21,19 +21,18 @@ const maxPanes = 5
 // stored in the view's own focus order so a focus value indexes straight into p;
 // an entry a view does not lay out is left zero, which contains() rejects, so a
 // hit test sweeps all of p rather than tracking how many entries are live. (It
-// used to carry a count, and zooming — which parks one full-frame rect at the
-// focused pane's own index — set it to 1, so the wheel stopped hit-testing every
+// used to carry a count, and zooming (which parks one full-frame rect at the
+// focused pane's own index) set it to 1, so the wheel stopped hit-testing every
 // pane but the first.) vDiv/hDiv/hDiv2 are the draggable seams; -1 means this
 // view has no such seam (or the layout is zoomed to a single pane). hDivFrom is
-// where the horizontal seam starts — the browse view splits only its right-hand
+// where the horizontal seam starts: the browse view splits only its right-hand
 // column. hDiv2 is the agent explorer's second horizontal seam, between the
-// executor sidebar and the host pane; it spans only the left column.
-//
-// Zoomed with its detail companion kept visible (zoomDetail, the Z key), a
-// pane's rect shrinks to share the frame with one more: zoomDetailGeom parks
-// both at their own indices with a real vDiv between them, so paneAt/seamAt
-// need no special case for it at all — they already sweep every index and
-// hit-test whatever vDiv holds.
+// executor sidebar and the host pane; it spans only the left column. Zoomed with
+// its detail companion kept visible (zoomDetail, the Z key), a pane's rect
+// shrinks to share the frame with one more: zoomDetailGeom parks both at their
+// own indices with a real vDiv between them, so paneAt/seamAt need no special
+// case for it at all; they already sweep every index and hit-test whatever vDiv
+// holds.
 type layout struct {
 	p        [maxPanes]rect
 	vDiv     int
@@ -45,12 +44,11 @@ type layout struct {
 // noDividers is the geometry of a single full-screen pane.
 func noDividers() layout { return layout{vDiv: -1, hDiv: -1, hDiv2: -1} }
 
-// Prefs is everything the browser remembers between runs — the seams the user
+// Prefs is everything the browser remembers between runs: the seams the user
 // dragged and the columns they reshaped. It is one struct because ui.toml is one
-// file: saving half of it would erase the other half.
-//
-// It is exported because it is what gets persisted: Options.Prefs restores it and
-// Options.SavePrefs writes it back.
+// file: saving half of it would erase the other half. It is exported because it
+// is what gets persisted: Options.Prefs restores it and Options.SavePrefs writes
+// it back.
 type Prefs struct {
 	Splits Splits
 
@@ -60,7 +58,7 @@ type Prefs struct {
 }
 
 // ColumnPrefs is one table's column choices, with columns named rather than
-// numbered — an index in a file that outlives a release would come to mean a
+// numbered: an index in a file that outlives a release would come to mean a
 // different column the moment one is added.
 type ColumnPrefs struct {
 	Hidden   []string
@@ -108,13 +106,13 @@ const (
 	defaultAgentTopRatio  = 550
 
 	// Devices default: the machine list is short and bounded (you have as many
-	// machines as you have), while tokens accumulate — so the tokens pane gets
+	// machines as you have), while tokens accumulate, so the tokens pane gets
 	// the larger share.
 	defaultDevicesTopRatio = 400
 
 	// Zoomed-with-detail default: the companion holds one record's worth of
 	// labeled fields, not a table, so it needs less width than the pane it sits
-	// beside — a third of the frame reads all of it without starving the list.
+	// beside; a third of the frame reads all of it without starving the list.
 	defaultZoomDetailRatio = 340
 )
 
@@ -231,9 +229,9 @@ func devicesGeom(w, mid, topH int) layout {
 
 // agentGeom lays out the agent explorer's five panes: the executor sidebar over
 // the host list over the details pane down the left, the prompt list over its
-// command pane on the right. hostsH is carved from the sidebar's share of the
-// top row — the host list is content-sized, so the executor list flexes above
-// it. Both seams span the full frame, so either can be grabbed anywhere along it.
+// command pane on the right. hostsH is carved from the sidebar's share of the top
+// row: the host list is content-sized, so the executor list flexes above it. Both
+// seams span the full frame, so either can be grabbed anywhere along it.
 func agentGeom(w, mid, leftW, topH, hostsH int) layout {
 	right := w - leftW
 	return layout{
@@ -255,9 +253,9 @@ func agentGeom(w, mid, leftW, topH, hostsH int) layout {
 // it instead of hiding it (the Z key): the zoomed pane on the left, the
 // companion in a narrower side pane on the right, with one draggable seam
 // between them spanning the whole frame. mainIdx/detailIdx are indices into
-// layout.p — focusTable/focusDetail for the browse view, the agent explorer's
-// focused list pane/apInfo for that view — so one function serves both
-// callers; applyGeometry picks the indices, this just places the two rects.
+// layout.p (focusTable/focusDetail for the browse view, the agent explorer's
+// focused list pane/apInfo for that view) so one function serves both callers;
+// applyGeometry picks the indices, this just places the two rects.
 func zoomDetailGeom(w, mid, detailW, mainIdx, detailIdx int) layout {
 	mainW := w - detailW
 	g := layout{vDiv: mainW, hDiv: -1, hDivFrom: -1, hDiv2: -1}

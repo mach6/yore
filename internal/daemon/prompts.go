@@ -25,8 +25,8 @@ func newPromptIndex() *promptIndex {
 }
 
 // apply folds a prompt record into the index. Anything else is ignored: only a
-// TypePrompt record carries prompt text, so a command row — which holds nothing
-// but the id — has nothing to contribute and must not seed a phantom entry.
+// TypePrompt record carries prompt text, so a command row (which holds nothing
+// but the id) has nothing to contribute and must not seed a phantom entry.
 func (p *promptIndex) apply(r rec.Record) {
 	if r.Type != rec.TypePrompt || r.ID == "" {
 		return
@@ -36,7 +36,7 @@ func (p *promptIndex) apply(r rec.Record) {
 	p.mu.Unlock()
 }
 
-// hydrate fills in the Prompt text on every command row carrying a PromptID —
+// hydrate fills in the Prompt text on every command row carrying a PromptID:
 // which is the only thing a stored command row carries. Query results are
 // copies, so this never touches the corpus; consumers (the agent explorer, the
 // MCP prompt tools) just read r.Prompt and never see the join. An id with no
@@ -55,7 +55,7 @@ func (p *promptIndex) hydrate(rows []rec.Record) {
 // since returns every prompt record started at or after cutoffMs, newest first,
 // optionally restricted to one executor. These ride alongside a query's command
 // rows so the agent explorer can show a prompt that triggered no commands at
-// all — invisible for as long as a prompt existed only as a field on the
+// all; invisible for as long as a prompt existed only as a field on the
 // commands it caused.
 func (p *promptIndex) since(cutoffMs int64, executor string) []rec.Record {
 	p.mu.RLock()

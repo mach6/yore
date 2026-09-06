@@ -13,9 +13,9 @@ func promptRec(id, text string) rec.Record {
 	return rec.Record{ID: id, Type: rec.TypePrompt, Prompt: text, Executor: "claude-code", StartMs: 1000}
 }
 
-// promptText resolves one id through hydrate — the index's only production read
-// path — so an assertion about what the index holds is an assertion about what
-// a query would actually show, not about the map behind it.
+// promptText resolves one id through hydrate (the index's only production read
+// path) so an assertion about what the index holds is an assertion about what a
+// query would actually show, not about the map behind it.
 func promptText(p *promptIndex, id string) string {
 	rows := []rec.Record{{PromptID: id}}
 	p.hydrate(rows)
@@ -96,7 +96,7 @@ func TestDropRemovesPrompts(t *testing.T) {
 
 // TestApplyIgnoresIrrelevantRecords: only a prompt record with an id makes an
 // entry. A command is never a source of prompt text, even one that somehow
-// carries some — the index would otherwise key a phantom prompt by the command's
+// carries some: the index would otherwise key a phantom prompt by the command's
 // own PromptID.
 func TestApplyIgnoresIrrelevantRecords(t *testing.T) {
 	p := newPromptIndex()

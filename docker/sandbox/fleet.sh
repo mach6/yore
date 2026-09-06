@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# fleet.sh — MANUAL 20-node, two-user stress/soak harness for yore.
+# fleet.sh; MANUAL 20-node, two-user stress/soak harness for yore.
 #
 # NOT wired into CI (never runs in Drone). It builds the CURRENT source into a
 # fleet of twenty client machines spread over eight Linux distributions, half
@@ -8,7 +8,7 @@
 # ten machines each). It enrolls every machine, drives half a million randomized
 # commands through them, syncs everything end-to-end encrypted, then measures
 # and verifies: read/write/sync throughput, database growth, convergence,
-# redaction, and — because two users share one server — tenant isolation.
+# redaction, and, because two users share one server; tenant isolation.
 #
 # It leaves the fleet UP by default: the end state is the thing you want to poke
 # at. Pass --down to tear it down.
@@ -76,7 +76,7 @@ rate() { local n="$1" ms="$2"; if [ "${ms:-0}" -le 0 ]; then echo "n/a"; else
 dc()  { docker compose -f "$COMPOSE" exec -T "$@"; }
 # dsock sends one newline-delimited-JSON request to a node's daemon socket and
 # prints the response. It is how a script does what the devices TUI does (list,
-# approve) — the daemon's protocol is the API; the TUI is one of its clients.
+# approve): the daemon's protocol is the API; the TUI is one of its clients.
 # The optional third argument is a jq filter, applied INSIDE the container: the
 # node images carry socat and jq, so the harness needs nothing on the host but
 # docker. $H is exported into the container for filters that match on hostname.
@@ -103,7 +103,7 @@ teardown() {
 trap teardown EXIT
 
 # ===========================================================================
-step "Fleet: 20 nodes / 8 distros / 2 users — $TOTAL records ($PER_NODE per node)"
+step "Fleet: 20 nodes / 8 distros / 2 users; $TOTAL records ($PER_NODE per node)"
 say "# yore fleet run $RUN"
 say ""
 say "- nodes: 20 (10 alice, 10 bob) across 8 distributions, 10 zsh / 10 bash"
@@ -115,7 +115,7 @@ if [ "$BUILD" = "1" ]; then
   docker compose -f "$COMPOSE" down -v >/dev/null 2>&1 || true
   bt0="$(now_ms)"
   docker compose -f "$COMPOSE" up -d --build >"$OUT/build.log" 2>&1 || {
-    bad "build/up failed — see $OUT/build.log"; tail -30 "$OUT/build.log"; exit 1; }
+    bad "build/up failed: see $OUT/build.log"; tail -30 "$OUT/build.log"; exit 1; }
   bt1="$(now_ms)"
   ok "built and started 22 containers in $(( (bt1-bt0)/1000 ))s"
 fi
@@ -130,7 +130,7 @@ printf '\n'
 [ "$healthy" = "1" ] && ok "server healthy (multi-tenant: alice + bob)" || { bad "server never became healthy"; exit 1; }
 
 # ===========================================================================
-step "Enroll — two tenants, ten machines each"
+step "Enroll: two tenants, ten machines each"
 # Each tenant bootstraps its first machine with its own token (accepted only
 # while that tenant has no active device), then every further machine redeems a
 # single-use token minted by an enrolled one and is approved from it.
@@ -164,10 +164,10 @@ wait "$pa" || efail=1
 wait "$pb" || efail=1
 et1="$(now_ms)"
 [ "$efail" = "0" ] && ok "all 20 machines enrolled in $(( (et1-et0)/1000 ))s (2 groups formed, 18 approvals)" \
-  || { bad "enrollment failed — see $OUT/enroll-*.log"; tail -20 "$OUT"/enroll-*.log; exit 1; }
+  || { bad "enrollment failed: see $OUT/enroll-*.log"; tail -20 "$OUT"/enroll-*.log; exit 1; }
 
 # Every device of each tenant must be active, and each tenant must see exactly
-# its own ten — the first isolation check, before any history exists.
+# its own ten: the first isolation check, before any history exists.
 for pair in "alice a01" "bob b01"; do
   set -- $pair
   active="$(dsock "$2" '{"op":"devices"}' '[.devices.devices[] | select(.status=="active")] | length' | tr -d '\r')"
@@ -193,14 +193,14 @@ wait
 ok "config seeded on 20 nodes (ignore_dirs=[$IGNORE_DIR], backups every 60s)"
 
 # ===========================================================================
-step "Shell-hook conformance — every distro/shell records through its real hook"
+step "Shell-hook conformance: every distro/shell records through its real hook"
 # The bulk load calls `yore record` directly (exactly what the hook calls). This
 # check is the other half: drive each node's ACTUAL interactive shell, hooks
 # live, under a pty, and prove the command lands in the store. Fed slowly on
-# purpose — a shell reads its terminal, and a burst races the prompt.
+# purpose: a shell reads its terminal, and a burst races the prompt.
 #
 # TERM=dumb on purpose. Every yore process started on a TTY writes a terminal
-# status query (OSC 11 + cursor-position report) and then reads the reply — and
+# status query (OSC 11 + cursor-position report) and then reads the reply, and
 # a pty with no terminal emulator behind it never answers, so that read eats the
 # script's queued input instead. TERM=dumb turns the query off, leaving exactly
 # what this check is about: the shell hook, doing its job. The cost of the query
@@ -232,7 +232,7 @@ done
 # Terminal input integrity: the same probe with a normal $TERM, fed faster than
 # a shell can answer. A yore process started on a TTY queries the terminal for
 # its colours and reads the reply, and that read will happily consume input the
-# user has already typed — so a hook that lets a per-command call inherit the
+# user has already typed, so a hook that lets a per-command call inherit the
 # terminal loses pasted lines. Every line must survive.
 ti_bad=""; ti_note=""
 for n in a02 a01; do
@@ -251,7 +251,7 @@ note "terminal input integrity (TERM=xterm, 5 lines pasted 0.8s apart):$ti_note"
   || bad "input lost to yore's terminal status query:$ti_bad"
 
 # ===========================================================================
-step "Load — $TOTAL randomized commands, 20 nodes in parallel"
+step "Load; $TOTAL randomized commands, 20 nodes in parallel"
 lt0="$(now_ms)"
 i=0
 for n in "${ALL[@]}"; do
@@ -263,7 +263,7 @@ done
 wait
 lt1="$(now_ms)"
 LOAD_MS=$(( lt1 - lt0 ))
-ok "load generated in $(( LOAD_MS/1000 ))s — fleet write rate $(rate "$TOTAL" "$LOAD_MS")"
+ok "load generated in $(( LOAD_MS/1000 ))s; fleet write rate $(rate "$TOTAL" "$LOAD_MS")"
 
 # Per-node tallies from the generators.
 declare -A G_STORED G_DROPPED G_SECRET G_SPACE G_IGNORE G_CC G_AIDER G_TAG G_LOOP G_SESS
@@ -282,7 +282,7 @@ done
 note "expected stored fleet-wide: $tot_stored   dropped: $tot_dropped   secrets(redacted): $tot_secret"
 
 # ===========================================================================
-step "Ingest — waiting for every daemon to drain its spool"
+step "Ingest; waiting for every daemon to drain its spool"
 # `yore record` appends to the spool and pokes the daemon; the daemon ingests
 # into bbolt. The gap between the two is the write pipeline's lag, and it is
 # worth a number of its own.
@@ -304,21 +304,21 @@ INGEST_MS=$(( it1 - it0 ))
   || warn "only ${done_nodes:-0}/20 daemons fully ingested after $(( INGEST_MS/1000 ))s"
 
 # ===========================================================================
-step "User tags — label whole sessions, then make them travel"
+step "User tags; label whole sessions, then make them travel"
 # Executors are attribution (which agent ran it); tags are the user's own
-# labels. A tag applied to a session covers every command in it, and — like
-# everything else — has to be readable from any other machine in the group.
+# labels. A tag applied to a session covers every command in it, and, like
+# everything else; has to be readable from any other machine in the group.
 declare -A TAGGED
 for pair in "a03 alice-review" "b04 bob-review"; do
   set -- $pair
   sess="$(mark_of "$1")-s0"   # the first session of that node's run; always present
   dc "$1" yore tag add "$2" --session "$sess" >/dev/null 2>&1 || true
   TAGGED[$1]="$(dc "$1" yore search --headless --scope local --limit $BIG --tag "$2" 2>/dev/null | grep -c "$MARKPREFIX" || true)"
-  note "$1: tagged session $sess as '$2' — ${TAGGED[$1]} commands locally"
+  note "$1: tagged session $sess as '$2'; ${TAGGED[$1]} commands locally"
 done
 
 # ===========================================================================
-step "Sync — push, pull, converge (timed per wave)"
+step "Sync; push, pull, converge (timed per wave)"
 timed() { # timed <node> <cmd...> -> ms
   local n="$1"; shift; local t0 t1
   t0="$(now_ms)"; dc "$n" "$@" >/dev/null 2>&1 || true; t1="$(now_ms)"
@@ -412,13 +412,13 @@ srv_plain=0
 for t in alice bob; do
   srv_plain=$(( srv_plain + $(hits "$MARKPREFIX" "$TMP/$t.db") ))
 done
-[ "$srv_plain" = "0" ] && ok "E2E: the run marker appears in ZERO server bytes — the server holds ciphertext only" \
+[ "$srv_plain" = "0" ] && ok "E2E: the run marker appears in ZERO server bytes; the server holds ciphertext only" \
   || bad "E2E: server db contains plaintext command text ($srv_plain hits)"
 
 # --- drops: stored == generated − (space + ignore), to the record -----------
 # Exact, not approximate. The generator says what it rolled and the earlier
 # probes are counted rather than guessed at, so the only thing a mismatch can
-# mean is that the write path gained or lost a command — which is the whole
+# mean is that the write path gained or lost a command: which is the whole
 # question. (It has: a drain used to be able to unlink a spool file a live
 # writer had created and not yet written to, and the record vanished silently.)
 drop_bad=""
@@ -482,7 +482,7 @@ for probe in a01 b01; do
     want_tg=$(( want_tg + ${G_TAG[$p]:-0} ))
   done
   # $YORE_TAG is an EXECUTOR override (the alias of $YORE_EXECUTOR), not a user
-  # tag — all three of these are agent attributions and filter with --executor.
+  # tag: all three of these are agent attributions and filter with --executor.
   cnt() { dc "$probe" yore search --headless --scope all --limit $BIG "$@" "$MARKPREFIX" 2>/dev/null | grep -c "$MARKPREFIX" || true; }
   got_cc="$(cnt --executor claude-code)"
   got_ai="$(cnt --executor aider)"
@@ -511,7 +511,7 @@ done
 # --- redaction markers are present (secrets kept, credential removed) -------
 red_seen="$(dc a01 yore search --headless --scope all --limit $BIG "redacted:" 2>/dev/null | grep -c "⟪redacted:" || true)"
 [ "${red_seen:-0}" -gt 0 ] && ok "redaction markers present: $red_seen commands kept with the credential replaced" \
-  || bad "no redaction markers found — secrets should be stored redacted, not dropped"
+  || bad "no redaction markers found; secrets should be stored redacted, not dropped"
 
 # --- health -----------------------------------------------------------------
 health_bad=""
@@ -533,7 +533,7 @@ step "Report"
 say "## Result"
 say ""
 say "- checks passed: $PASS, failed: $FAIL"
-say "- load: $TOTAL records in $(( LOAD_MS/1000 ))s — $(rate "$TOTAL" "$LOAD_MS") fleet-wide"
+say "- load: $TOTAL records in $(( LOAD_MS/1000 ))s; $(rate "$TOTAL" "$LOAD_MS") fleet-wide"
 say "- ingest drain after last write: $(( INGEST_MS/1000 ))s"
 say "- sync waves: push $(( WAVE1_MS/1000 ))s, pull $(( WAVE2_MS/1000 ))s, settle $(( WAVE3_MS/1000 ))s"
 say "- search (a01): local ${S_LOCAL}ms, deep ${S_ALL}ms, fuzzy ${S_FUZZY}ms, executor ${S_EXEC}ms, tag ${S_TAG}ms, frecency ${S_FREC}ms, whole-corpus ${S_WIDE}ms"

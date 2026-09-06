@@ -62,7 +62,7 @@ func (m Model) helpGroups() []keyhelp.Group {
 	} else {
 		run = append(run, row("esc", "cancel", "esc", "ctrl+c", "ctrl+g"))
 		if m.vim {
-			// In vim mode the first Esc is a mode change, not a cancel — say so,
+			// In vim mode the first Esc is a mode change, not a cancel; say so,
 			// because everywhere else in yore Esc backs out.
 			run[len(run)-1] = row("esc", "normal mode (again cancels)", "esc")
 			run = append(run, row("^c", "cancel", "ctrl+c", "ctrl+g"))

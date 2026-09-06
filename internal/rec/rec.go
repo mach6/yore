@@ -51,24 +51,23 @@ type Record struct {
 	// Executor is the agent/tool that ran the command ("claude-code", "cursor",
 	// …), empty when the user typed it. It is NOT a tag: it is an attribute of
 	// the record, captured once and never edited, whereas tags are labels the
-	// user puts on and takes off — which is why it has its own key rather than
+	// user puts on and takes off; which is why it has its own key rather than
 	// riding on "tag".
 	Executor string `json:"executor,omitempty"`
 
 	// Prompt tracing. A TypePrompt record carries the prompt text in Prompt and
 	// IS the prompt: its ID is what agent commands reference in PromptID. So the
 	// text is stored, sealed, and synced exactly once no matter how many commands
-	// one prompt causes — and a prompt that caused none is still recorded.
-	//
-	// On a stored command record Prompt is always empty — only PromptID is. The
-	// daemon fills the text in on query results from its prompt index, which is
-	// why consumers can read r.Prompt on a command row without knowing about the
+	// one prompt causes, and a prompt that caused none is still recorded. On a
+	// stored command record Prompt is always empty; only PromptID is. The daemon
+	// fills the text in on query results from its prompt index, which is why
+	// consumers can read r.Prompt on a command row without knowing about the
 	// join.
 	PromptID string `json:"prompt_id,omitempty"`
 	Prompt   string `json:"prompt,omitempty"`
 
 	// User tags (Type == TypeTag record carries these; TargetID names a command
-	// or Session names a session it applies to — neither = a bare definition).
+	// or Session names a session it applies to: neither = a bare definition).
 	// TagName is the freeform label, TagDesc an optional description, TagOp the
 	// add/remove op. Names are the identity, so tags remap across machines for
 	// free on sync.
@@ -78,7 +77,7 @@ type Record struct {
 
 	// Tags is the record's resolved freeform tags, filled by the daemon at query
 	// time (command tags ∪ session tags ∪ the cwd-prefix auto_tags rules). The
-	// executor is deliberately not among them. Never stored or synced — it is
+	// executor is deliberately not among them. Never stored or synced: it is
 	// derived on read.
 	Tags []string `json:"tags,omitempty"`
 

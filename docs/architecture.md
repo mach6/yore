@@ -1,7 +1,7 @@
 # yore architecture
 
-How yore is built and why it is built that way. Exact wire formats — the sync
-HTTP API, the crypto scheme, the daemon socket protocol — are in
+How yore is built and why it is built that way. Exact wire formats (the sync
+HTTP API, the crypto scheme, the daemon socket protocol) are in
 [`protocol.md`](protocol.md). Setup and usage are in the [README](../README.md).
 
 ## Overview
@@ -42,7 +42,7 @@ Everything else in the design bends to keep the shell prompt fast. On every
 command the hook runs `yore record`, which:
 
 1. reads the command text on stdin (capped at 1 MiB), dropping it if empty;
-2. runs the redact gate — a rejection returns silently with exit 0;
+2. runs the redact gate, where a rejection returns silently with exit 0;
 3. writes one JSON line to a `.tmp` spool file, fsyncs it, and renames it into
    place, so a concurrent drain can neither read a half-written record nor
    unlink a file still being written;
@@ -60,21 +60,21 @@ Leaf-contract packages import nothing else in the tree.
 
 **Leaf contracts**
 
-- **rec** — the `Record` type. Its JSON is the encoding for both the spool and,
+- **rec**: the `Record` type. Its JSON is the encoding for both the spool and,
   as the sealed plaintext, the sync payload. ULID `id`; `type` is `""` for a
   command, `"delete"` for a tombstone, `"tag"` for a user-tag operation, or
   `"prompt"` for one agent prompt.
-- **proto** — the newline-delimited JSON protocol over the daemon's unix socket.
-- **wire** — the JSON types of the server's HTTP API.
-- **config** — resolves the state directory (`$YORE_DIR`, else
+- **proto**: the newline-delimited JSON protocol over the daemon's unix socket.
+- **wire**: the JSON types of the server's HTTP API.
+- **config**: resolves the state directory (`$YORE_DIR`, else
   `~/.config/yore/`) and all settings, applying defaults through accessors.
 
 **Storage and capture**
 
-- **spool** — crash-safe fsync'd handoff files published by rename. `Drain`
+- **spool**: crash-safe fsync'd handoff files published by rename. `Drain`
   tolerates a torn line in an older file, sweeps abandoned temps, and dedupes by
   record id.
-- **store** — the local bbolt database (`data.db`), holding only this host's
+- **store**: the local bbolt database (`data.db`), holding only this host's
   stream. Single-owner via an exclusive file lock; a competing opener gets
   `ErrLocked`. Appends are idempotent by record id, assign a per-stream `seq`,
   and delete via tombstone. `BackupTo` takes a hot online snapshot. A `meta`
@@ -83,33 +83,33 @@ Leaf-contract packages import nothing else in the tree.
 
 **Runtime and search**
 
-- **daemon** — the only process that opens the store.
-- **match** — whitespace-split substring terms with smart-case and an
+- **daemon**: the only process that opens the store.
+- **match**: whitespace-split substring terms with smart-case and an
   incremental prefix-reuse filter, plus a subsequence fuzzy matcher.
-- **tui/theme**, **tui/hl** — adaptive lipgloss styles; a best-effort shell
+- **tui/theme**, **tui/hl**: adaptive lipgloss styles; a best-effort shell
   syntax classifier layered under match highlighting.
-- **tui/search** — the inline Ctrl-R panel. **tui/browse** — the full-screen
-  browser. **tui/keyhelp** — one binding table per UI, rendered two ways.
-- **risk** — a deterministic rule-based command classifier, advisory only.
-- **mcp** — the local read-only MCP server over the daemon's query layer.
+- **tui/search**: the inline Ctrl-R panel. **tui/browse** is the full-screen
+  browser. **tui/keyhelp** holds one binding table per UI, rendered two ways.
+- **risk**: a deterministic rule-based command classifier, advisory only.
+- **mcp**: the local read-only MCP server over the daemon's query layer.
 
 **Security and sync**
 
-- **cryptobox** — the encryption core: device keypairs, the History Key, epoch
+- **cryptobox**: the encryption core: device keypairs, the History Key, epoch
   data keys, per-record sealing.
-- **reqsign** — the canonical string and headers a device signs on every sync
+- **reqsign**: the canonical string and headers a device signs on every sync
   request. One implementation shared by client and server.
-- **redact** — the recording gate. Never spool, store, or sync a credential.
-- **server** — the multi-tenant sync server. Ciphertext and public keys only.
-- **syncer** — the client engine: encrypt and push local records, pull and
+- **redact**: the recording gate. Never spool, store, or sync a credential.
+- **server**: the multi-tenant sync server. Ciphertext and public keys only.
+- **syncer**: the client engine: encrypt and push local records, pull and
   decrypt remote ones, and the enroll / approve / revoke primitives.
 
 **Integration**
 
-- **shell** — the embedded zsh, bash, and fish hook scripts (plus vendored
+- **shell**: the embedded zsh, bash, and fish hook scripts (plus vendored
   bash-preexec), rendered per integration mode with `text/template`.
-- **importer** — zsh (extended history, unmetafy, multiline) and bash parsers.
-- **cli** — the cobra command tree; each subcommand is a `runXxx` returning an
+- **importer**: zsh (extended history, unmetafy, multiline) and bash parsers.
+- **cli**: the cobra command tree; each subcommand is a `runXxx` returning an
   exit code. Also ships shell completions.
 
 ## The daemon
@@ -120,14 +120,14 @@ local store and the authority for all search.
 
 Idle exit is invisible to whatever is on screen: a client treats a lost
 connection as a reconnect, spawns a daemon if none is listening, and resends.
-The one operation never resent is minting an enrollment token — a retry would
-leave a second live invitation standing on the server when only the first was
-ever shown to anyone.
+The one operation never resent is minting an enrollment token, because a retry
+would leave a second live invitation standing on the server when only the first
+was ever shown to anyone.
 
 **RAM corpus.** On start the daemon loads the live search corpus from a warm gob
 snapshot (`corpus.snap`) and folds in the store tail above the snapshot position
 via `store.Since`; a missing or corrupt snapshot falls back to a full cold load.
-The corpus is append-only under an RWMutex — readers snapshot the slice header
+The corpus is append-only under an RWMutex: readers snapshot the slice header
 under RLock and then scan lock-free. The snapshot is rewritten every 5 minutes
 and again on shutdown, so restarts paint instantly.
 
@@ -135,7 +135,7 @@ and again on shutdown, so restarts paint instantly.
 decrypted into RAM only and never written to disk. The ciphertext it was
 decrypted from *is* cached, in `remote.db` (`internal/rstore`), alongside the
 per-host pull cursor. That is byte-for-byte what the server already holds and is
-unreadable without this device's keys, so it does not weaken the invariant — and
+unreadable without this device's keys, so it does not weaken the invariant, and
 it is what makes startup incremental. With RAM-only cursors, every daemon
 lifetime re-downloaded and re-decrypted every other machine's entire archive from
 seq 0, several times a day once the idle timeout recycled the process.
@@ -144,7 +144,7 @@ seq 0, several times a day once the idle timeout recycled the process.
 the cache and in RAM alike, so neither grows without bound. The cache is derived
 data: deleting it costs one full re-pull. It is reset when the configured server
 URL changes, because the cached ciphertext then belongs to a different group.
-Nothing else in the sync config invalidates it — a certificate pin, a rotation
+Nothing else in the sync config invalidates it: a certificate pin, a rotation
 cadence, or a retention bound all describe how to reach the *same* archive, and
 dropping the cache for one of those would spend a full re-pull on a transport
 edit, which is the exact cost the cache exists to avoid.
@@ -164,8 +164,8 @@ bounds the second term; the first is unbounded, since your own history grows
 forever, at roughly 75 MB of RSS per 30,000 commands.
 
 **Prompt index.** Agent prompt text lives on its own record, so the daemon keeps
-a `promptID → text` index — fed by the startup store scan, local ingest, and
-remote pull — and rejoins each query row with its prompt text on the way out.
+a `promptID → text` index, fed by the startup store scan, local ingest, and
+remote pull, and rejoins each query row with its prompt text on the way out.
 
 **Ingest.** A spool wake starts a 75 ms straggler window, then one fsync'd
 `IngestSpool` drain folds the new rows into the corpus.
@@ -200,13 +200,13 @@ dedupe → window`. Matching is substring (smart-case) by default or fuzzy
 
 Scopes:
 
-- **local** — this host only. Always available, offline-safe.
-- **all** / **host** — merge the RAM remote cache. A deep query, or opening the
+- **local**: this host only. Always available, offline-safe.
+- **all** / **host**: merge the RAM remote cache. A deep query, or opening the
   browser, nudges a background sync so the *next* query is richer; the request
   itself never blocks on the network. Offline, a deep query degrades to whatever
   is already cached.
-- **session** / **cwd** — filter by shell session id or exact working directory.
-- **workspace** — commands run anywhere under the current git repo (walk up for
+- **session** / **cwd**: filter by shell session id or exact working directory.
+- **workspace**: commands run anywhere under the current git repo (walk up for
   `.git`; local only).
 
 Sort is recency (descending `start_ms`, ties by descending `seq`) or frecency
@@ -217,7 +217,7 @@ newest winning.
 The default window is 200 rows. `limit: 0` takes that default; `limit: -1`
 (`proto.LimitAll`) asks for every match. The corpus is already in RAM and all
 matches are sorted before windowing, so `LimitAll` costs serialization rather
-than work — it is what a browser of the whole archive should ask for, and what
+than work. It is what a browser of the whole archive should ask for, and what
 the top-N callers (Ctrl-R, MCP, headless search) deliberately do not.
 
 ## The browser (`internal/tui/browse`)
@@ -233,15 +233,15 @@ the draggable seams between them; renderers size themselves from that geometry
 and `mouse.go` hit-tests against it, so the two can never disagree about where a
 pane is. Browse tiles three panes, the agent explorer five. Zoom expands the
 focused pane to the whole frame, with a variant that keeps a companion detail
-pane beside it for the lists whose whole point is one. Seam positions are held as
-a per-mille fraction of the axis they cut, so the ratio survives a terminal
-resize, and are persisted only when a drag *settles* — one write per resize,
-always a layout the user stopped on. Per-mille rather than percent because at 140
-columns one percent is 1.4 cells, coarse enough that a dragged seam visibly snaps
-away from the pointer.
+pane beside it for the lists whose whole point is one. Seam positions are held
+as a per-mille fraction of the axis they cut, so the ratio survives a terminal
+resize, and are persisted only when a drag *settles*: one write per resize,
+always a layout the user stopped on. Per-mille rather than percent
+because at 140 columns one percent is 1.4 cells, coarse enough that a dragged
+seam visibly snaps away from the pointer.
 
-**Columns** (`columns.go`) generalize five row tables — browse results, the
-explorer's prompts and commands, and the devices view's machines and tokens —
+**Columns** (`columns.go`) generalize five row tables (browse results, the
+explorer's prompts and commands, and the devices view's machines and tokens)
 into one list of specs per table saying what a column is called, how wide it is,
 how it draws a cell, and how it orders two rows. Layout, header, row rendering,
 and the columns pane are loops over those specs. They generalize because they
@@ -251,38 +251,38 @@ arithmetic and shedding rules are written once; what stays per-table is the cell
 gap, the flexible column's floor, the order columns give up width in, and the
 table's natural order.
 
-Sorting is client-side, since every matching row is already in RAM, and **stable**
+Sorting is client-side (every matching row is already in RAM) and **stable**
 over a slice in the table's natural order, so that order stays the tiebreak
-underneath whatever was asked for on top. Unknown sorts below every known value
-for exit status and duration: a row still running has no outcome, and a command
-whose timing was never reported is not a fast command. Because a table's default
-*is* its natural order, any other order is applied to a **copy** — the unfiltered
-prompt list is the aggregate itself, and reordering it in place would rewrite
-what every other pane reads from. The cursor is carried across a re-sort by
-record id, not index.
+underneath whatever was asked for on top. Unknown sorts below every
+known value for exit status and duration: a row still running has no outcome,
+and a command whose timing was never reported is not a fast command. Because a
+table's default *is* its natural order, any other order is applied to a
+**copy**: the unfiltered prompt list is the aggregate itself, and
+reordering it in place would rewrite what every other pane reads from. The
+cursor is carried across a re-sort by record id, not index.
 
-Three different things can take a column off screen — the user hid it, the rows
-have nothing to put in it, or the pane was too narrow and it was shed — and the
+Three different things can take a column off screen (the user hid it, the rows
+have nothing to put in it, or the pane was too narrow and it was shed), and the
 pane names which, because hiding a column the data gate already closed would
 otherwise look broken. Those gates are one-way: the pane can hide a column but
 cannot force a blank one back on, and the flexible column cannot be hidden at
 all.
 
-**Persisted layout.** Column choices and seam positions go to `ui.toml`, never to
-`config.toml`: the hand-edited settings file is not something a keystroke should
-rewrite. `ui.toml` is written whole on every save, so seams and every table's
-columns travel in one struct through one callback. Columns are stored by **name**
-under a per-table key, because a file that outlives releases cannot hold indexes.
-Loading is fail-safe — an unknown name is ignored, a sort naming an unsortable
-column is dropped, a `hidden` entry for a column that must always show is refused
-— and a table still at its defaults writes nothing, so an untouched `ui.toml`
-inherits whatever the default later becomes.
+**Persisted layout.** Column choices and seam positions go to `ui.toml`, never
+to `config.toml`: the hand-edited settings file is not something a keystroke
+should rewrite. `ui.toml` is written whole on every save, so seams and every
+table's columns travel in one struct through one callback. Columns are stored by
+**name** under a per-table key, because a file that outlives releases cannot
+hold indexes. Loading is fail-safe: an unknown name is ignored, a sort naming an
+unsortable column is dropped, a `hidden` entry for a column that must always
+show is refused. A table still at its defaults writes nothing, so an untouched
+`ui.toml` inherits whatever the default later becomes.
 
 **Key help** (`internal/tui/keyhelp`) drives two renderings from one binding
 table per UI, so they cannot drift: a one-line contextual footer always on
 screen, and the full grouped panel behind `?`. A test parses the key handlers'
 case clauses out of the package's own source and fails if a key is handled but
-described nowhere, or described but no longer handled — which is what lets the
+described nowhere, or described but no longer handled. That is what lets the
 panel be trusted as the answer to "what can I press here". The footer names the
 keys for the state the UI is actually in and follows focus; the panel is
 exhaustive for one view and includes mouse gestures, since nothing else on screen
@@ -294,7 +294,7 @@ forced difference: a filter box cannot spend `?` on help, because searching for
 
 `space` marks the row under the cursor and `ctrl+a` is a master-checkbox
 tri-state, clearing the selection if everything currently showing is already
-checked and otherwise checking everything shown — where "shown" means after the
+checked and otherwise checking everything shown, where "shown" means after the
 query, period, and search have narrowed it, so a second press undoes the first
 rather than being a one-way ratchet.
 
@@ -310,8 +310,8 @@ Delete and tag are the two consumers. Both act on the checked set when one exist
 and fall back to the cursor row otherwise, and both prompts name which is about
 to happen. Neither has a batch call in the daemon protocol, so a bulk action is N
 round trips over one connection, run off the event loop so the UI keeps
-redrawing. Every call is attempted regardless of an earlier failure — a row
-already tombstoned cannot be un-tombstoned by giving up — and the result reports
+redrawing. Every call is attempted regardless of an earlier failure (a row
+already tombstoned cannot be un-tombstoned by giving up) and the result reports
 both counts. They differ afterwards because they differ in what happens to the
 rows: a deleted row leaves the table, so its id is dropped and only failures
 remain ready to retry, while a tagged row survives, so the selection carries
@@ -322,7 +322,7 @@ forward and tagging one batch twice needs one selection.
 Both interactive search UIs hide agent-run commands by default
 (`hide_agent_commands`, toggled per session). One agent prompt can produce forty
 tool invocations, which bury a morning of the user's own work in a table whose
-promise is "what happened here, newest first". That history is not lost — it
+promise is "what happened here, newest first". That history is not lost: it
 belongs in the agent explorer, grouped under the prompt that caused it.
 
 The filter is applied **server-side**, since filtering after `Limit` would spend
@@ -341,14 +341,14 @@ want the whole archive and have no status line to be told what was withheld.
 The tag and executor filters are server-side too, and each has two keys: one
 adopts the highlighted row's value, and one opens a typed box seeded with the
 filter in force, which reaches values no visible row carries. The box does not
-filter as you type, unlike the search field — every change is a round trip, and a
+filter as you type, unlike the search field: every change is a round trip, and a
 half-typed tag matches nothing, so the table would empty out under each prefix on
 the way to the name meant.
 
 One period (Today, 7d, 30d, 90d, All) drives every screen. "Today" is the
 calendar day in local time, not a rolling 24 hours, which would fold yesterday
 evening into this morning's hour-of-day buckets. The daemon's query protocol
-carries no time field, so the browse table filters the rows it got back — and it
+carries no time field, so the browse table filters the rows it got back, and it
 got back every row matching the query, so the period narrows the whole timeline
 rather than a slice of it.
 
@@ -364,8 +364,8 @@ landed on, and it *sticks* when focus lands on the details pane itself.
 Otherwise the pane's two reasons to exist work against each other: the only route
 to a command's full record is to focus the pane, and focusing it would swap the
 subject on the way. The prompt list spends a column on the host only when its
-rows can disagree about it — several machines in the sample *and* no host filter
-up — since filtered to one, that column repeats a name the pane title, the hosts
+rows can disagree about it: several machines in the sample *and* no host filter
+up. Filtered to one, that column repeats a name the pane title, the hosts
 bullet, and the header line all already carry.
 
 `/` filters the focused pane's list with the same matcher the browse view and
@@ -382,12 +382,22 @@ one visible thing at a time, and the footer names whichever is next.
 
 The activity heatmap, daily trend, and hour-of-day histogram span the full width,
 and a wider terminal buys *more history* rather than more whitespace. The heatmap
-and daily trend deliberately ignore the period — they show the shape of activity
+and daily trend deliberately ignore the period. They show the shape of activity
 around the window the other panels summarize, so narrowing to Today must not
-blank them — and both scale to the peak of what they actually draw, so a spike
+blank them, and both scale to the peak of what they actually draw, so a spike
 outside the visible window cannot flatten the bars on screen. The histogram does
 respect the period and, on Today, leaves hours that have not happened yet blank
 rather than drawing them as zero.
+
+Horizontally the ranked lists (top programs, commands, and directories, then by
+executor, by host, by tag) shed from the right until they fit, which is the
+order they earn their width in. The tag column is gated on the data as well as
+on the width: it is drawn only once something is tagged, because a permanent
+sixth column would cost the other five their width on an archive that has never
+carried a tag. (The browse table's own tags column is gated the same way.) It
+also **counts differently from every list beside it**: a row lands in one bucket
+per tag it carries, so those counts do not partition the total the way a row's
+single host or executor does.
 
 Vertically the screen fits charts whole or not at all: each is offered the rows
 it needs and declines if taking them would starve the ranked columns, so a short
@@ -401,13 +411,16 @@ and a lever spent twice is a distinction the eye cannot find:
 - **Chart ink is its own single-hue ramp**, deliberately not the UI accent, which
   would otherwise make everything with ink the color of everything selectable.
   Intensity rides on lightness as well as glyph height, and the heatmap draws a
-  solid block rather than a `░▒▓` density ramp — the least portable glyphs in the
+  solid block rather than a `░▒▓` density ramp, the least portable glyphs in the
   box-drawing set, where a font that renders `▒` and `▓` alike silently collapses
   two levels.
 - **Headings come in exactly three ranks**: accent+bold for a pane name, bold for
   a heading inside a pane, dim for the chrome below both.
 - **State is a glyph, not a color**, so it survives colorblindness and
-  screenshots. Exit status is `·` unknown, `✓` ok, `✗N` failed. Risk is a
+  screenshots. Exit status is `·` unknown, `✓` ok, `✗N` failed. `·` is the
+  same glyph everywhere a value is missing (an unreported duration, an untimed
+  imported command, an empty heatmap day), and it is one cell wide in every
+  terminal, which the em-dash it replaced was not. Risk is a
   glyph-first ramp shared verbatim with the MCP output (`⛔ ⚠ ▲ • ✓`), shown for
   **every** command including clean ones, since a row that appears only on a hit
   cannot be told from a rule that never ran. The prompt details pane has no risk
@@ -416,12 +429,12 @@ and a lever spent twice is a distinction the eye cannot find:
   palette, red and green excluded because those belong to exit status, so the
   same identity is the same color everywhere it appears. Command text is
   syntax-lit wherever it is command text, with match highlighting layered on top
-  and always winning — but never over prose, since shell coloring over English
+  and always winning, but never over prose, since shell coloring over English
   paints arbitrary words as flags.
 
 **Sample honesty.** The stats and agent screens aggregate the whole archive, so
 the header normally reads "all history". It derives that from the response itself
-— the daemon returned fewer rows than it matched — rather than from a compiled-in
+(the daemon returned fewer rows than it matched) rather than from a compiled-in
 ceiling, so the claim stays true whatever any caller asks for. If a sample ever
 does arrive short, the header says so and how far back it reaches; without that,
 every window wider than the sample shows identical numbers and the period tabs
@@ -433,12 +446,12 @@ Two stacked tables, machines over tokens, with every action asking first: approv
 a pending machine (the prompt quotes its verification code, so the out-of-band
 check is in front of the person answering), revoke one and rotate the group's
 keys, mint an enrollment token, copy the one just minted, cancel an unclaimed
-one, refetch both lists. The machine list opens on what needs attention — pending
-above active above revoked — and the token list newest-first. An open token's
+one, refetch both lists. The machine list opens on what needs attention, pending
+above active above revoked, and the token list newest-first. An open token's
 `expires` column counts *down*.
 
 **Nothing on this screen moves unless asked.** A machine running `yore setup`
-elsewhere shows up here as pending, so it is tempting to poll — but this is also
+elsewhere shows up here as pending, so it is tempting to poll. But this is also
 the screen holding a minted token's plaintext, which exists nowhere else and is
 there to be read and copied off. A list that reorders itself under a cursor, or a
 redraw during a mouse selection, costs more than the wait it saves.
@@ -449,7 +462,7 @@ screen. The guard clears when the request *lands*, not when it succeeds, so one
 failed mint cannot disable the key for the session. The copy comes from the held
 value rather than the screen, because a narrow pane clips the banner and leaves a
 secret that can be read but not selected, and there is no second chance to fetch
-it. Cancelling a token rotates nothing — it let no one in, which is what
+it. Cancelling a token rotates nothing: it let no one in, which is what
 separates it from revoking a device.
 
 Device management lives here and nowhere else. The CLI once had a second
@@ -463,14 +476,14 @@ manage.
 `yore record`, `yore import`, and the shell-history gate `yore filter` all run
 the same ordered gate before anything is persisted:
 
-1. **Leading-space opt-out** — a command starting with space or tab is skipped
+1. **Leading-space opt-out**: a command starting with space or tab is skipped
    unless `record_space_prefixed` is set.
-2. **Ignore-dirs** — a command whose cwd is at or under an `ignore_dirs` prefix
+2. **Ignore-dirs**: a command whose cwd is at or under an `ignore_dirs` prefix
    (segment-aware) is skipped.
-3. **Ignore-patterns** — a command matching one of the user's regexes is
+3. **Ignore-patterns**: a command matching one of the user's regexes is
    skipped. Like `ignore_dirs`, this is the user saying "never record this", so
    the record is dropped rather than masked.
-4. **Secret rules** (`internal/redact`) — see below.
+4. **Secret rules** (`internal/redact`); see below.
 
 Rules load from the editable, seeded `~/.config/yore/redact.yml`. Each is a name,
 a Go regexp, optional cheap literal hints (a hot-path pre-filter, so the regexp
@@ -497,35 +510,35 @@ run. The marker is deliberately not valid shell, so a redacted command recalled
 onto the prompt fails loudly rather than running wrong.
 
 Only the credential goes. Rules mark it with a `(?P<secret>…)` capture group, so
-a rule that matches a wide context still blanks only the password; a rule with no
-such group — a whole-value shape like an AWS key — has its entire match replaced.
-Spans from all rules are collected against the *original* text and overlaps
-merged, so markers never nest and never get re-matched. Redaction is idempotent,
-which matters because records cross the gate more than once (capture, then
-import).
+a rule that matches a wide context still blanks only the password; a rule with
+no such group (a whole-value shape like an AWS key) has its entire match
+replaced. Spans from all rules are collected against the *original* text and
+overlaps merged, so markers never nest and never get re-matched. Redaction is
+idempotent, which matters because records cross the gate more than once
+(capture, then import).
 
 One path is still all-or-nothing. `yore filter`, the gate for the shell's own
-history, can only accept or reject — zsh gives `zshaddhistory` no way to rewrite
-the line — so a command yore would redact is dropped from the shell's history
-entirely. yore's own redacted copy is still there to search.
+history, can only accept or reject, because zsh gives `zshaddhistory` no way to
+rewrite the line. A command yore would redact is therefore dropped from the
+shell's history entirely. yore's own redacted copy is still there to search.
 
 Redaction is **fail-safe**: a missing, unreadable, unparseable, or empty
 `redact.yml` falls back to the compiled-in built-ins, never to "redact nothing",
 and an individual invalid regexp is skipped with a warning while the rest stay
 active. `yore setup` seeds the file without clobbering edits, which means a file
-seeded before a rule shipped keeps missing it — so `yore doctor` reports any
-built-in the file lacks rather than silently re-adding it, since a rule may be
-absent because it was deliberately deleted.
+seeded before a rule shipped keeps missing it. `yore doctor` therefore reports
+any built-in the file lacks rather than silently re-adding it, since a rule may
+be absent because it was deliberately deleted.
 
 ## Executors and tags
 
-These are two different axes and yore keeps them apart everywhere. An **executor**
-is an attribute of a record — which agent ran the command — captured once from
-the environment and never edited. A **tag** is a label somebody applied, and can
-be added and removed at will. They were once one field, which meant a UI could
-not tell "an agent ran this" from "I called this a refactor", and labelling a
-command hid which agent had run it. They are separate all the way down to the
-on-disk format.
+These are two different axes and yore keeps them apart everywhere. An
+**executor** is an attribute of a record (which agent ran the command) captured
+once from the environment and never edited. A **tag** is a label somebody
+applied, and can be added and removed at will. They were once one field, which
+meant a UI could not tell "an agent ran this" from "I called this a refactor",
+and labelling a command hid which agent had run it. They are separate all the
+way down to the on-disk format.
 
 **Executor** resolution: an explicit `--executor`, else `$YORE_EXECUTOR`
 (`$YORE_TAG` is the older name and still works), else auto-detection from agent
@@ -534,7 +547,7 @@ environment markers (`CLAUDECODE` → `claude-code`, `CURSOR_TRACE_ID` → `curs
 
 **User tags** are freeform and a record can carry several. A tag record adds or
 removes a named label on a command or a session and rides the same encrypted
-stream as commands, remapped by name on sync — names are the identity, so there
+stream as commands, remapped by name on sync: names are the identity, so there
 is no id reconciliation. The daemon folds tag records into an in-RAM index
 (`command|session → {tags}`) and resolves each row's effective tags at query
 time: command tags ∪ session tags ∪ `auto_tags` (cwd-prefix rules from config,
@@ -542,11 +555,24 @@ applied at read time, so there is no cost on the record path and rules apply
 retroactively).
 
 Tagging a session is the common case: it covers every command that shell has
-already run and every one it runs afterwards. `yore tag list` counts **commands**,
-not associations — one session tag over a day's work reads as that day's work,
-not as the single `tag add` that created it — which means the listing resolves
-the corpus and so also shows `auto_tags` rules. Executors are never listed as
-tags.
+already run and every one it runs afterwards. `yore tag list` counts
+**commands**, not associations. One session tag over a day's work reads as that
+day's work, not as the single `tag add` that created it, which means the listing
+resolves the corpus and so also shows `auto_tags` rules. Executors are never
+listed as tags.
+
+**Removing a tag takes off only what the record carries.** In the browser
+`Ctrl+T` adds and `Ctrl+X` removes, each over the checked set when one exists
+and the cursor row otherwise. A removal submits one `tag_op: "remove"` record
+per target, since the protocol has no batch call, and the bulk path first
+narrows the checked set to the rows that actually carry the tag, so the count it
+reports is the number that *changed*, not the number asked about.
+
+What comes off is the **command-level** association, which is all a
+command-level record can express. A tag a row inherits from its session or from
+an `auto_tags` rule is not that command's to drop: the daemon resolves it again
+on the next query and it returns. Those come off with `yore tag rm --session`,
+or by editing the rule.
 
 ## Agent capture
 
@@ -559,7 +585,7 @@ command's start time, **PostToolUse** and **PostToolUseFailure** pipe the
 finished command to yore, and **UserPromptSubmit** pipes each prompt. Exit status
 comes from an explicit `exit_code` when the payload carries one, else from which
 event fired. Duration comes from payload timing when present, otherwise from the
-delta against the PreToolUse start-stamp — which is how agent commands get real
+delta against the PreToolUse start-stamp, which is how agent commands get real
 durations at all, since most agents' payloads carry no timing. So agent commands
 carry the same outcome data as shell ones, and success rates, `what_failed`, and
 risk-of-failures all work on them.
@@ -574,17 +600,17 @@ Per agent:
 | OpenCode | a JS plugin, not command hooks | adapts `tool.execute.after` and `message.part.updated`; carries a real exit code |
 | Codex | Claude-Code-shaped hooks in `config.toml` | no separate failure event and no documented exit field, so exit is best-effort |
 
-All hooks run through the same redaction gate as the shell path — a secret in a
+All hooks run through the same redaction gate as the shell path, so a secret in a
 *prompt* is masked exactly like one in a command. Every installer is additive and
 idempotent, preserves unrelated configuration, and is verified by `yore doctor`.
 `--project` writes to the project-local config instead of the user-global one.
 
 `yore uninit <agent>` reverses any of them, removing only yore's own hooks and
-MCP registration — matched by the exact command string the installer wrote — and
+MCP registration (matched by the exact command string the installer wrote) and
 leaving every other key in place. Emptied blocks are pruned so the file is left
 as it was found; a config hand-edited past recognition reports "nothing to
-remove" rather than guessing. Shells are not agents: the `eval "$(yore init zsh)"`
-line comes out of the rc file by hand.
+remove" rather than guessing. Shells are not agents: the `eval "$(yore init
+zsh)"` line comes out of the rc file by hand.
 
 **Prompts are records.** The prompt hook spools one `type == "prompt"` record
 holding the text and writes only that record's **id** to a per-session state
@@ -597,7 +623,7 @@ Storing the text once rather than on every command that quotes it is what keeps
 prompt tracing cheap: one prompt drives roughly sixteen commands in practice, so
 the inlined alternative pays 16× the bytes on disk, on the wire, and in the
 daemon's heap, for a field the search path never indexes. It also makes a prompt
-that triggered **no** commands representable at all — as a field on its commands,
+that triggered **no** commands representable at all: as a field on its commands,
 such a prompt would have nowhere to live. `sync_prompts = false` keeps prompt
 records on the machine that recorded them while their commands still sync.
 
@@ -605,12 +631,12 @@ records on the machine that recorded them while their commands still sync.
 
 `yore mcp-serve` is a local, read-only [Model Context
 Protocol](https://modelcontextprotocol.io) server over stdio JSON-RPC, with no
-network port. It is a thin adapter over the daemon's query layer — it dials the
-unix socket and issues queries, and never opens the store — so it inherits both
+network port. It is a thin adapter over the daemon's query layer (it dials the
+unix socket and issues queries, and never opens the store) so it inherits both
 the single-writer guarantee and, more importantly, the cross-machine RAM corpus.
 Tools take a `scope` of `local` or `all`, and `all` answers over every enrolled
 device while the server still holds only ciphertext. That is what lets an agent
-ask "have I run this migration anywhere?" — a question a single-machine tool
+ask "have I run this migration anywhere?", a question a single-machine tool
 cannot answer.
 
 It exposes twelve tools (`search_commands`, `recent_commands`, `command_status`,
@@ -627,14 +653,14 @@ enters context only when the client attaches it.
 
 A deterministic rule-based classifier for how dangerous a shell command is:
 `safe` < `low` < `medium` < `high` < `critical`, each verdict carrying a category
-and a one-line reason. No model, no network, no state — the same command always
+and a one-line reason. No model, no network, no state, so the same command always
 gets the same answer, and the answer can always be explained.
 
 **It is advisory and never blocks anything.** This is worth stating plainly,
 because a tool that rates danger invites the assumption that it prevents it. The
 classifier is not consulted anywhere in an execution path. That is a choice, not
 a missing capability: the PreToolUse hook already receives the command before it
-runs and could adjudicate. It deliberately doesn't — a recorder that can veto is
+runs and could adjudicate. It deliberately doesn't: a recorder that can veto is
 a recorder that can wedge a session, and the prompt-latency invariant makes the
 same argument for shells.
 
@@ -644,7 +670,7 @@ the `risk/summary` resource.
 
 **Reaching a verdict** takes four steps. A command that cannot execute anything
 short-circuits to safe: empty, a comment, an alias definition, or a bare
-`echo`/`printf` — the last only when it holds no `| & ; > <`, backtick, or `$(`,
+`echo`/`printf`, the last only when it holds no `| & ; > <`, backtick, or `$(`,
 so `echo $(rm -rf x)` does not slip through. Then the user's `ignore` patterns
 are tried, and a match returns safe while naming the pattern that silenced it.
 Otherwise the line is parsed and every rule is scanned, highest severity winning,
@@ -654,14 +680,14 @@ assessed the same way, recursively.
 **A command is judged by what it runs, not by what it contains** (`parse.go`).
 This is the distinction the whole classifier rests on: `grep -rn "rm -rf" docs/`
 and `sh -c 'rm -rf /'` carry the same eight characters and only one of them
-deletes anything. Before any rule runs, the line is lexed into words and cut into
-command *segments* wherever a shell would start a new command — a pipe, a `;`, a
-`&&`, a `$(…)` even inside double quotes, a `find -exec`. Each segment resolves
-the command word it would actually execute, with `sudo`-style wrappers stepped
-over so `sudo rm -rf /` is an `rm`, quoted text kept as inert data, redirection
-targets pulled out, and **its own flags kept to itself** — the `-r` in `grep -rn`
-is not available to an `rm` three words away. Rules then ask "is `kill` the
-command here?" rather than "does this string contain kill".
+deletes anything. Before any rule runs, the line is lexed into words and cut
+into command *segments* wherever a shell would start a new command: a pipe, a
+`;`, a `&&`, a `$(…)` even inside double quotes, a `find -exec`. Each segment
+resolves the command word it would actually execute, with `sudo`-style wrappers
+stepped over so `sudo rm -rf /` is an `rm`, quoted text kept as inert data,
+redirection targets pulled out, and **its own flags kept to itself**, so the
+`-r` in `grep -rn` is not available to an `rm` three words away. Rules then ask
+"is `kill` the command here?" rather than "does this string contain kill".
 
 Two consequences follow. A segment carrying `--help`, `--version`, or `--dry-run`
 is inert, so `npm install --dry-run` rates nothing. And quoted text handed to
@@ -690,15 +716,15 @@ flagged while `chmod -R 777` must, and no single pattern gets both ends of that
 right. `git push --force` carves out `--force-with-lease`, which RE2 cannot
 express without negative lookahead and which would otherwise rate the *safe* form
 as the most dangerous thing in the table. SQL is matched by content, but only
-where SQL would actually execute — handed to a database client, or typed as the
-whole line — so `git commit -m "drop table support"` is a commit message.
+where SQL would actually execute (handed to a database client, or typed as the
+whole line) so `git commit -m "drop table support"` is a commit message.
 
 **What it does not see.** The parser resolves command position, not semantics. A
 command behind an alias, a Makefile target, or a variable holding a program name
 trips nothing; neither does one carried inside `docker exec web …` or
 `ssh host …`, where the remote command is an argument this classifier does not
-follow. That is the deliberate trade — a classifier wrong in an obvious,
-inspectable direction beats one wrong subtly — and `risk.toml` is where a team
+follow. That is the deliberate trade: a classifier wrong in an obvious,
+inspectable direction beats one wrong subtly, and `risk.toml` is where a team
 closes the gaps that matter to them.
 
 **Rules are extensible.** `~/.config/yore/risk.toml` adds `[[rule]]` entries with
@@ -716,31 +742,31 @@ the same file, so the TUI and an agent always agree about the same command.
 `config.integration` (default `takeover`, overridable per `yore init --mode`)
 controls how deeply the emitted hooks take over the shell.
 
-- **takeover** — yore is the single source of truth. For zsh and bash the
+- **takeover**: yore is the single source of truth. For zsh and bash the
   shell's persistent history is disabled, its in-memory list is seeded from yore
   at startup (one `fc -R` / `history -r`), and additions are gated by yore's
   redaction, so `!N` and Up-arrow work against yore-consistent, secret-free
   history. zsh is exact; bash is coarser, since multiline collapses to one line.
-  fish has neither problem to solve — it has no `!N` expansion and no separate
-  in-memory list — so takeover there is just `fish_private_mode`, which fish
+  fish has neither problem to solve, having no `!N` expansion and no separate
+  in-memory list, so takeover there is just `fish_private_mode`, which fish
   checks on every write rather than caching at shell start, so setting it from a
   sourced init script still takes effect.
-- **coexist** — record alongside the untouched native history; rebind Ctrl-R and
+- **coexist**: record alongside the untouched native history; rebind Ctrl-R and
   add the aliases.
-- **capture** — record only; no keybinding or alias changes.
+- **capture**: record only; no keybinding or alias changes.
 
 **Mechanics.** zsh installs `zshaddhistory` (calling `yore filter`, returning
 nonzero to drop) and rebinds `^R`, and optionally Up. bash uses vendored
-bash-preexec for capture and a best-effort gate. fish needs no third-party shim —
-`--on-event fish_preexec` and `fish_postexec` are native — and gets duration free
-from `$CMD_DURATION`, where zsh and bash have to timestamp in preexec and
-subtract in precmd. fish `bind` takes literal escape sequences rather than key
-names, so one binding works unchanged across fish versions, mirroring why zsh and
-bash bind raw sequences too.
+bash-preexec for capture and a best-effort gate. fish needs no third-party shim,
+since `--on-event fish_preexec` and `fish_postexec` are native, and gets
+duration free from `$CMD_DURATION`, where zsh and bash have to timestamp in
+preexec and subtract in precmd. fish `bind` takes literal escape sequences
+rather than key names, so one binding works unchanged across fish versions,
+mirroring why zsh and bash bind raw sequences too.
 
 Two support subcommands back this: `yore filter` (reads a command on stdin, exits
 1 to drop; zsh and bash only, since fish has no native history to gate) and
-`yore export --shell` (the history seed). Neither is on the prompt fast path —
+`yore export --shell` (the history seed). Neither is on the prompt fast path:
 `filter` runs synchronously in single-digit milliseconds, and `export` runs once
 per shell start and is best-effort, printing nothing and exiting 0 if no daemon
 is running.
@@ -772,7 +798,7 @@ device X25519 + Ed25519 keypairs   per machine; private halves never leave it
   Decryption failure is fatal to a pull, never silently skipped.
 - **No shared secret.** A device authenticates with its Ed25519 key on every
   request, reads included; there is no bearer token to capture. The server's
-  configured token is only an enrollment token for an *empty* group — once any
+  configured token is only an enrollment token for an *empty* group. Once any
   device is active it enrolls nothing, and every later machine needs a single-use
   token minted by one already enrolled.
 - **Recovery.** Per-device keys mean losing every device would otherwise lose the
@@ -784,7 +810,7 @@ device X25519 + Ed25519 keypairs   per machine; private halves never leave it
   bad failure mode to diagnose blind: the pin covers the server's *key*, not its
   certificate, so an ACME renewal with a fresh key breaks sync while local
   history keeps working. A mismatch is therefore a typed error carrying both
-  digests, and `yore doctor` reports it as its own diagnosis — with both
+  digests, and `yore doctor` reports it as its own diagnosis, with both
   remedies, since re-pinning from an intercepted network would pin the
   interceptor.
 
@@ -795,7 +821,7 @@ Exact byte layouts, domain-separation strings, and the `device.key` format are i
 server separately rather than putting one deadline around the whole run. The run
 stops to ask for a token, and fetching one means walking to another machine, so a
 single deadline opened before the question expired while the user was answering
-it — and the enrollment that followed failed the instant the token was pasted in,
+it, and the enrollment that followed failed the instant the token was pasted in,
 reported as the server *refusing* it. A timeout is now named as a timeout, since
 no amount of minting fresh tokens fixes a server that never answered.
 
@@ -814,7 +840,7 @@ The daemon's sync loop, started only when a server is configured, is driven by:
   push shortly after new records are ingested, so cross-host propagation is
   seconds rather than up to `sync_interval`. Off by default because an agent
   firing bursts of commands would push about once per debounce for its whole run.
-  The nudge fires only while the server is reachable — offline, new records stay
+  The nudge fires only while the server is reachable. Offline, new records stay
   in the local store and go out in a batch when the next periodic tick
   reconnects.
 
@@ -837,7 +863,7 @@ crypto: `PullCiphertext` walks each other host's stream from its persisted
 cursor, and `OpenRecords` decrypts. Each cycle writes the new sealed records and
 the advanced cursor to `remote.db` *first*, so a process that dies mid-cycle
 resumes rather than re-downloading. On the first cycle of a daemon's life the
-cache is decrypted into RAM, which needs the server to unwrap the keys — so a
+cache is decrypted into RAM, which needs the server to unwrap the keys, so a
 cold start still has no remote history while offline.
 
 A decryption failure during a live pull is fatal, as always. One while decrypting
@@ -849,18 +875,18 @@ so it is thrown away and re-pulled rather than wedging sync on a stale cache.
 There is no upgrade path yet, so the version does exactly one thing today: a
 build that finds a version it does not know refuses to open the database rather
 than misreading the one copy of this machine's history. A store written before
-the key existed is stamped rather than refused — the layout never changed, so an
+the key existed is stamped rather than refused: the layout never changed, so an
 unversioned store *is* version 1. Recording it now is what makes a migration
 possible later. A refused open still releases the lock, and `yore record` never
 opens the store at all, so commands keep spooling meanwhile.
 
 **Being revoked** is its own state, separate from "unreachable" because retrying
 cannot fix it. On the first `device_revoked` response the daemon records the
-fact, detaches and deletes `remote.db`, drops the pull cursors, and stops syncing
-for the rest of the process; `yore sync` and `yore status` say so instead of
-reporting success. Remote history already decrypted into RAM is left for the rest
-of that session — the user is looking at it, and it is gone at the next start,
-which finds an empty cache and can obtain no key.
+fact, detaches and deletes `remote.db`, drops the pull cursors, and stops
+syncing for the rest of the process; `yore sync` and `yore status` say so
+instead of reporting success. Remote history already decrypted into RAM is left
+for the rest of that session, since the user is looking at it, and it is gone at
+the next start, which finds an empty cache and can obtain no key.
 
 The record lives in `data.db`'s meta bucket rather than a file of its own,
 because the daemon holds that database under its write lock, so the fact is not a
@@ -873,8 +899,8 @@ revoked start is therefore not latched: it gets exactly one attempt, because
 nothing in the enrollment path can reach into `data.db` while the daemon holds
 the lock, so the only evidence that can retire a revocation is the server serving
 this device again. Enroll the machine afresh and the next cycle clears it.
-Re-pointing at a different server clears it too — that revocation described the
-old group — while editing the *transport* to the same server does not.
+Re-pointing at a different server clears it too, since that revocation described
+the old group, while editing the *transport* to the same server does not.
 
 ## The sync server
 
@@ -883,7 +909,7 @@ owned solely by the server process; the identity that signed a request selects
 the tenant every handler operates on.
 
 - **Device → tenant.** The auth middleware finds the tenant holding the signing
-  device's record — ids are globally unique ULIDs, so at most one matches — and
+  device's record (ids are globally unique ULIDs, so at most one matches) and
   caches the mapping. Enrollment routes by token, recovery by the tenant that
   holds recovery material. Bootstrap tokens are compared constant-time against
   every configured token with no early break, so a match leaks nothing about
@@ -912,7 +938,7 @@ the tenant every handler operates on.
   reverse proxy.
 - **Liveness is not readiness.** Reads come out of bbolt's mmap and need no
   write, so a server whose volume has filled keeps serving every GET while every
-  push fails — the archive stays readable and quietly stops recording.
+  push fails, so the archive stays readable and quietly stops recording.
   `GET /v1/ready` commits a probe transaction and answers 503 when it cannot, and
   `yore doctor` calls it, so "server reachable" can no longer be printed for a
   server that has stopped accepting history. It is deliberately kept off the
@@ -928,8 +954,8 @@ the tenant every handler operates on.
 
 - **Local rolling backups.** The daemon writes a consistent snapshot of `data.db`
   to `~/.config/yore/backups/data-<unixMillis>.db` every `backup_interval`
-  (default 1h, `"0"` disables), keeping the newest `backup_keep` (default 3) —
-  the same temp-file, atomic-rename, and prune scheme as the server.
+  (default 1h, `"0"` disables), keeping the newest `backup_keep` (default 3),
+  using the same temp-file, atomic-rename, and prune scheme as the server.
 - **What backups cost.** Each one is a full copy, so `backup_keep` is a
   multiplier, not a margin: peak disk is roughly `(backup_keep + 1) × db size`,
   and every interval rewrites a whole database. At the default, a 300 MB store
@@ -940,7 +966,7 @@ the tenant every handler operates on.
   `log_max_size` (default 5MB, `"0"` for unbounded), keeping `log_keep` old
   segments. `log_silent` (default true) suppresses logging entirely and creates
   no file, so a fresh install writes no log; set it false for debugging. A
-  log-open failure is non-fatal — the daemon runs without logging rather than
+  log-open failure is non-fatal: the daemon runs without logging rather than
   refusing to start.
 - **Warm snapshots** (`corpus.snap`) keep restarts instant. They are derived data
   and always rebuildable, so a bad snapshot just triggers a full load.
@@ -959,13 +985,13 @@ back into the directory.
 | `ui.toml` | pane sizes and column choices the browser remembers (0600) |
 | `redact.yml` | editable, seeded secret-redaction rules (0600) |
 | `risk.toml` | optional user risk rules and ignores |
-| `data.db` | local store — this host's history only, plus the `meta` bucket |
-| `device.key` | device identity — in the OS keyring where one is usable, else this file (0600, refused if group or other readable) |
+| `data.db` | local store, this host's history only, plus the `meta` bucket |
+| `device.key` | device identity, in the OS keyring where one is usable, else this file (0600, refused if group or other readable) |
 | `spool/<pid>.jsonl` | crash-safe capture handoff, drained by the daemon |
 | `daemon.sock` | daemon control socket (0600) |
 | `corpus.snap` | warm-start corpus snapshot (derived) |
 | `remote.db` | other hosts' history as ciphertext, plus their pull cursors (derived) |
-| `agent-prompts/` | one file per agent session holding the current prompt's id — the handoff between an agent's prompt hook and its tool hooks, which are separate processes |
+| `agent-prompts/` | one file per agent session holding the current prompt's id: the handoff between an agent's prompt hook and its tool hooks, which are separate processes |
 | `agent-cmd-starts/` | per-command start stamps written by an agent's PreToolUse hook, consumed once by the hook that records the finished command |
 | `daemon.log` | bounded daemon log and rotated segments |
 | `backups/` | rolling local `data.db` snapshots |
@@ -973,16 +999,16 @@ back into the directory.
 ## Config
 
 `~/.config/yore/config.toml` is a plain [TOML](https://toml.io) file, read and
-written by hand or through `yore get-config` and `yore set-config` — the one
+written by hand or through `yore get-config` and `yore set-config`, the one
 authoritative accessor pair. Nothing else parses the file: the emitted shell
 integration, for instance, asks `yore get-config enter_executes` at call time
 rather than grepping.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `server_url` | — | sync server base URL; empty means local-only |
-| `token_file` | — | path to a file holding an enrollment token, for externally managed setups |
-| `server_pin` | — | pinned server TLS SPKI (base64 SHA-256); set by `setup --pin` |
+| `server_url` | none | sync server base URL; empty means local-only |
+| `token_file` | none | path to a file holding an enrollment token, for externally managed setups |
+| `server_pin` | none | pinned server TLS SPKI (base64 SHA-256); set by `setup --pin` |
 | `integration` | `takeover` | `takeover` \| `coexist` \| `capture` |
 | `key_epoch` | `24h` | data-key epoch width |
 | `daemon_idle` | `30m` | daemon idle timeout before exit |
@@ -995,10 +1021,10 @@ rather than grepping.
 | `bind_up_arrow` | `false` | also bind Up to the search TUI |
 | `hide_agent_commands` | `true` | keep agent-run commands out of the interactive search UIs |
 | `keymap` | `emacs` | `emacs` \| `vim` TUI key style |
-| `ignore_patterns` | — | regexes whose matching commands are **dropped**, not redacted |
-| `ignore_dirs` | — | cwd prefixes whose commands are never recorded |
+| `ignore_patterns` | none | regexes whose matching commands are **dropped**, not redacted |
+| `ignore_dirs` | none | cwd prefixes whose commands are never recorded |
 | `record_space_prefixed` | `false` | record leading-space commands too |
-| `auto_tags` | — | cwd-prefix → tag rules, applied at query time |
+| `auto_tags` | none | cwd-prefix → tag rules, applied at query time |
 | `capture_spool_only` | `false` | capture writes to the spool only, never poking or spawning the daemon |
 | `backup_interval` | `1h` | local backup cadence; `"0"` disables |
 | `backup_keep` | `3` | local backups retained |
@@ -1008,7 +1034,7 @@ rather than grepping.
 
 Defaults are applied the plain-Go way: `config.Load` starts from
 `config.Defaults()` and decodes the file over it, so an omitted key keeps its
-default and an explicit value — including `false` or `0` — overrides it. Booleans
+default and an explicit value, including `false` or `0`, overrides it. Booleans
 that default to true (`auto_deepen`, `sync_prompts`, `log_silent`,
 `hide_agent_commands`) are written without `omitempty` so an explicit `false`
 round-trips; there are no `*bool` "was it set?" fields. String-backed durations
@@ -1036,7 +1062,7 @@ Do not break these:
   without this device's keys.
 - Streams are append-only, per-host, client-sequenced; merge is a ULID set union
   and deletes are tombstones, so sync is conflict-free.
-- Every hot path — search, decrypt, enroll, revoke, and daemon startup — is
+- Every hot path (search, decrypt, enroll, revoke, and daemon startup) is
   constant in history age, bounded by `remote_keep` rather than by how much
   history the group has ever accumulated.
 - Prompt text is stored once, on its own record; the daemon rejoins it at query

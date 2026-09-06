@@ -315,7 +315,7 @@ func TestSpecsAreValidRegexp(t *testing.T) {
 
 // TestMissingBuiltins backs the `yore doctor` warning: redact.yml is
 // authoritative once written and is never overwritten, so a file seeded before
-// a detector shipped keeps missing it — silently, since an absent rule looks
+// a detector shipped keeps missing it; silently, since an absent rule looks
 // exactly like clean history.
 func TestMissingBuiltins(t *testing.T) {
 	t.Run("stale file reports what it lacks", func(t *testing.T) {
@@ -451,7 +451,7 @@ func TestRedactOverlappingRulesDoNotNest(t *testing.T) {
 }
 
 // TestRedactIsIdempotent: re-redacting already-redacted text must not stack
-// markers — records pass the gate again on import and on the daemon's ingest.
+// markers; records pass the gate again on import and on the daemon's ingest.
 func TestRedactIsIdempotent(t *testing.T) {
 	f := mustFilter(t, nil, nil)
 	once, _ := f.Redact(`export DB_PASSWORD=hunter2sixseven`)

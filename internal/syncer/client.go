@@ -6,9 +6,9 @@
 //
 // The package has two parts:
 //
-//   - HTTPClient — a thin, stateless transport over the server's REST API
+//   - HTTPClient: a thin, stateless transport over the server's REST API
 //     (one method per endpoint, wire types in and out, typed errors).
-//   - Syncer — the engine that owns all cryptobox usage. It holds unwrapped
+//   - Syncer: the engine that owns all cryptobox usage. It holds unwrapped
 //     keys (the History Key and epoch DEKs) in RAM only, never on disk.
 package syncer
 
@@ -38,7 +38,7 @@ const requestTimeout = 30 * time.Second
 
 // connectTimeout bounds only the TCP connect. A server that is simply down
 // refuses immediately, but one that is unreachable (no route, black-holed
-// network, VPN off) would otherwise hang for the full requestTimeout — and the
+// network, VPN off) would otherwise hang for the full requestTimeout, and the
 // daemon's sync cycle along with it. Failing the connect fast keeps "the
 // network is down" a brief, quiet degradation to local-only history.
 const connectTimeout = 5 * time.Second
@@ -62,15 +62,15 @@ func (e *APIError) Error() string {
 // ErrRevoked reports whether err is the server telling this device that its
 // membership was revoked. The server only says so to a caller whose signature
 // verified, so it is a trustworthy instruction to stop syncing and drop the
-// group's ciphertext — not something a network attacker can induce.
+// group's ciphertext: not something a network attacker can induce.
 func ErrRevoked(err error) bool {
 	var ae *APIError
 	return errors.As(err, &ae) && ae.Code == wire.CodeDeviceRevoked
 }
 
 // ErrNotFound reports whether err is a 404 from the server: that endpoint does
-// not exist there. A client is routinely newer than the server it syncs with —
-// upgrading every machine at once is not a thing anyone does — so "this server
+// not exist there. A client is routinely newer than the server it syncs with
+// (upgrading every machine at once is not a thing anyone does) so "this server
 // predates the endpoint" has to be distinguishable from "the server refused",
 // or every new endpoint turns into a false alarm during a rollout.
 func ErrNotFound(err error) bool {
@@ -80,20 +80,19 @@ func ErrNotFound(err error) bool {
 
 // PinError is a TLS certificate pin mismatch: the server presented a leaf key
 // that is not the pinned one. Want is the configured pin, Got what the server
-// sent — both base64 SHA-256 of the certificate's SubjectPublicKeyInfo.
-//
-// It is a distinct type because the two things that cause it need opposite
-// advice. A routine certificate rotation wants a re-pin; an interception attempt
-// is the exact case the pin exists to refuse, and re-pinning would pin the
-// interceptor. Callers report both digests and let the user decide — nothing
-// re-pins on its own.
+// sent: both base64 SHA-256 of the certificate's SubjectPublicKeyInfo. It is a
+// distinct type because the two things that cause it need opposite advice. A
+// routine certificate rotation wants a re-pin; an interception attempt is the
+// exact case the pin exists to refuse, and re-pinning would pin the interceptor.
+// Callers report both digests and let the user decide: nothing re-pins on its
+// own.
 type PinError struct {
 	Want string
 	Got  string
 }
 
 func (e *PinError) Error() string {
-	return fmt.Sprintf("syncer: server certificate pin mismatch (pinned %s, got %s) — refusing (certificate rotation or TLS interception?)", e.Want, e.Got)
+	return fmt.Sprintf("syncer: server certificate pin mismatch (pinned %s, got %s); refusing (certificate rotation or TLS interception?)", e.Want, e.Got)
 }
 
 // PinMismatch reports whether err is a pin mismatch, returning the details. It
@@ -106,10 +105,9 @@ func PinMismatch(err error) (*PinError, bool) {
 	return pe, ok
 }
 
-// HTTPClient is a thin transport over the sync server's HTTP JSON API.
-//
-// There is no bearer token: EVERY authenticated request — reads included — is
-// signed with the device's Ed25519 key (set once via SetSigner), so the only
+// HTTPClient is a thin transport over the sync server's HTTP JSON API. There
+// is no bearer token: EVERY authenticated request (reads included) is signed
+// with the device's Ed25519 key (set once via SetSigner), so the only
 // credential is a private key that never leaves the machine. Enrollment, which
 // happens before a device record exists, is authorized instead by a single-use
 // token passed to RegisterDevice.
@@ -122,11 +120,11 @@ type HTTPClient struct {
 
 // NewHTTPClient returns a client for the server at baseURL. Authentication is
 // per-device signatures, installed by SetSigner; there is no token to pass.
-// baseURL should have no trailing slash. If pin is
-// non-empty (base64 SHA-256 of the server's SubjectPublicKeyInfo), the client
-// pins the server's TLS certificate and refuses any other — defeating a
-// TLS-inspecting proxy at the cost of not syncing through one. A refusal is a
-// *PinError, distinguishable with PinMismatch.
+// baseURL should have no trailing slash. If pin is non-empty (base64 SHA-256
+// of the server's SubjectPublicKeyInfo), the client pins the server's TLS
+// certificate and refuses any other; defeating a TLS-inspecting proxy at the
+// cost of not syncing through one. A refusal is a *PinError, distinguishable
+// with PinMismatch.
 func NewHTTPClient(baseURL, pin string) *HTTPClient {
 	// Mirror http.DefaultTransport's proxy behaviour; only the dial timeout (and
 	// optionally the pin) differ from the stdlib default.
@@ -283,7 +281,7 @@ func (c *HTTPClient) Health(ctx context.Context) error {
 // that is not ready serves every read and fails every push, so this is the
 // difference between "the archive is reachable" and "the archive is recording".
 // The endpoint is open, like Health. A server older than the endpoint answers
-// 404 — see ErrNotFound; that is not a storage failure.
+// 404; see ErrNotFound; that is not a storage failure.
 func (c *HTTPClient) Ready(ctx context.Context) error {
 	return c.do(ctx, http.MethodGet, "/v1/ready", nil, nil, nil, nil)
 }
@@ -399,7 +397,7 @@ func (c *HTTPClient) RevokeDevice(ctx context.Context, id string) error {
 }
 
 // ListTokens returns every enrollment token the server still holds a record of,
-// newest first. Only hashes and outcomes — the plaintexts are gone.
+// newest first. Only hashes and outcomes: the plaintexts are gone.
 func (c *HTTPClient) ListTokens(ctx context.Context) ([]wire.EnrollToken, error) {
 	var toks []wire.EnrollToken
 	if err := c.do(ctx, http.MethodGet, "/v1/tokens", nil, nil, &toks, nil); err != nil {
@@ -409,13 +407,13 @@ func (c *HTTPClient) ListTokens(ctx context.Context) ([]wire.EnrollToken, error)
 }
 
 // RevokeToken cancels an unclaimed enrollment token. Unlike revoking a device
-// this rotates nothing — the token admitted no one.
+// this rotates nothing: the token admitted no one.
 func (c *HTTPClient) RevokeToken(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodPost, "/v1/tokens/"+url.PathEscape(id)+"/revoke", nil, nil, nil, nil)
 }
 
 // GetHKWrap fetches the HK wrap sealed to deviceID. The bool is false (with a
-// nil error) when the server has no wrap for the device (HTTP 404) — the normal
+// nil error) when the server has no wrap for the device (HTTP 404): the normal
 // state for a pending or revoked device.
 func (c *HTTPClient) GetHKWrap(ctx context.Context, deviceID string) (wire.HKWrap, bool, error) {
 	q := url.Values{}

@@ -77,7 +77,7 @@ type Model struct {
 
 	// hideAgents keeps agent-run commands out of the results (⌥a); hidden is how
 	// many the daemon dropped for the current query. The panel quotes that number
-	// rather than filtering silently — above all when it is the reason a search
+	// rather than filtering silently; above all when it is the reason a search
 	// looks like it found nothing.
 	hideAgents bool
 	hidden     int
@@ -358,8 +358,8 @@ func (m Model) toggleHideAgents() (tea.Model, tea.Cmd) {
 
 // hiddenAgentsNote describes what the agent filter is holding back, or "" when
 // it is holding nothing back. The panel has no second line to explain itself, so
-// this is the whole disclosure — and it is what keeps a search whose only
-// matches are an agent's from reporting "no matches" about history that exists.
+// this is the whole disclosure, and it is what keeps a search whose only matches
+// are an agent's from reporting "no matches" about history that exists.
 func (m Model) hiddenAgentsNote() string {
 	if !m.hideAgents || m.hidden == 0 {
 		return ""
@@ -380,7 +380,7 @@ func (m Model) openHelp() (tea.Model, tea.Cmd) {
 
 // handleHelpKey services the key list: scroll it if it is taller than the panel,
 // Esc (or the key that opened it) to dismiss. Ctrl-C still cancels the search
-// outright — it is the one key that always means "get me out of here".
+// outright: it is the one key that always means "get me out of here".
 func (m Model) handleHelpKey(s string) (tea.Model, tea.Cmd) {
 	switch s {
 	case "esc", "?", "alt+/":
@@ -405,7 +405,7 @@ func (m Model) handleHelpKey(s string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// helpMaxTop is how far the key list can scroll — zero unless it is taller than
+// helpMaxTop is how far the key list can scroll; zero unless it is taller than
 // the panel, which a short terminal can force.
 func (m Model) helpMaxTop() int {
 	_, total := keyhelp.Panel(m.th, m.helpGroups(), m.helpWidth(), m.rowsVisible, 0)

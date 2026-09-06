@@ -1,13 +1,12 @@
-// Package spool is the crash-safe handoff between the ultra-fast
-// `yore record` process and the store. Each record is one JSON line
-// (rec.Record's JSON encoding) in a file under the spool dir; the store
-// drains those files and deletes them.
-//
-// A record is published ATOMICALLY: it is written and fsynced under a ".tmp"
-// name the drainer does not look at, then renamed into place. Only complete
-// files ever carry the ".jsonl" name, so a drain running concurrently with a
-// write can neither read a half-written record nor delete a file whose writer
-// has not finished with it — a record that exists is a record that survives.
+// Package spool is the crash-safe handoff between the ultra-fast `yore
+// record` process and the store. Each record is one JSON line (rec.Record's
+// JSON encoding) in a file under the spool dir; the store drains those files
+// and deletes them. A record is published ATOMICALLY: it is written and
+// fsynced under a ".tmp" name the drainer does not look at, then renamed into
+// place. Only complete files ever carry the ".jsonl" name, so a drain running
+// concurrently with a write can neither read a half-written record nor delete
+// a file whose writer has not finished with it: a record that exists is a
+// record that survives.
 package spool
 
 import (
@@ -36,18 +35,15 @@ var seq atomic.Uint64
 
 // Append writes r as one JSON line to a fresh spool file and publishes it
 // atomically: the line goes to a ".tmp" file, is fsynced, and only then is
-// renamed to "<nanos>-<pid>-<n>.jsonl" — the name Drain collects.
-//
-// The rename is what makes concurrent draining safe. The obvious alternative,
-// appending to a per-process file, gives the drainer a file it can read (empty)
-// and delete in the window between the writer creating it and writing to it;
-// the write then lands on an unlinked inode and the record is gone, with no
-// error anywhere. Publishing under a name the drainer ignores closes that
-// window: until the rename there is nothing to collect, and after it there is
-// nothing left to write.
-//
-// Names sort chronologically (fixed-width nanoseconds first), so Drain hands
-// records to the store in roughly the order they were recorded.
+// renamed to "<nanos>-<pid>-<n>.jsonl"; the name Drain collects. The rename is
+// what makes concurrent draining safe. The obvious alternative, appending to a
+// per-process file, gives the drainer a file it can read (empty) and delete in
+// the window between the writer creating it and writing to it; the write then
+// lands on an unlinked inode and the record is gone, with no error anywhere.
+// Publishing under a name the drainer ignores closes that window: until the
+// rename there is nothing to collect, and after it there is nothing left to
+// write. Names sort chronologically (fixed-width nanoseconds first), so Drain
+// hands records to the store in roughly the order they were recorded.
 func Append(spoolDir string, r rec.Record) error {
 	if err := os.MkdirAll(spoolDir, 0o700); err != nil {
 		return err
@@ -86,17 +82,16 @@ func Append(spoolDir string, r rec.Record) error {
 }
 
 // Drain hands every spooled record to fn in file order and deletes each file
-// once its records are consumed, returning the number of records delivered.
-// It also sweeps ".tmp" files older than tmpTTL — the residue of a process that
-// died mid-write, whose record was never durable.
-//
-// A torn line — invalid JSON or a missing terminating newline — is not fatal:
-// the valid prefix is delivered and the file is still removed. Append's rename
-// means a file it wrote cannot be torn, but a file left by an older version of
-// yore, or a truncated disk, still has to be got past rather than retried
-// forever. If fn returns an error Drain stops immediately and returns it
-// WITHOUT deleting the file it was working on, so those records survive to be
-// retried. A missing spool dir yields (0, nil).
+// once its records are consumed, returning the number of records delivered. It
+// also sweeps ".tmp" files older than tmpTTL: the residue of a process that
+// died mid-write, whose record was never durable. A torn line (invalid JSON or
+// a missing terminating newline) is not fatal: the valid prefix is delivered
+// and the file is still removed. Append's rename means a file it wrote cannot
+// be torn, but a file left by an older version of yore, or a truncated disk,
+// still has to be got past rather than retried forever. If fn returns an error
+// Drain stops immediately and returns it WITHOUT deleting the file it was
+// working on, so those records survive to be retried. A missing spool dir
+// yields (0, nil).
 func Drain(spoolDir string, fn func(rec.Record) error) (int, error) {
 	matches, err := filepath.Glob(filepath.Join(spoolDir, "*.jsonl"))
 	if err != nil {

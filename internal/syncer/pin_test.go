@@ -111,7 +111,7 @@ func TestPinMismatchOnlyMatchesPinErrors(t *testing.T) {
 
 // TestPinErrorNamesBothDigests: the message is the only thing a user sees when
 // the daemon logs a failed sync cycle, so it has to carry what was pinned AND
-// what arrived — one digest alone says nothing about what changed.
+// what arrived; one digest alone says nothing about what changed.
 func TestPinErrorNamesBothDigests(t *testing.T) {
 	msg := (&PinError{Want: "AAAApinned", Got: "BBBBserved"}).Error()
 	require.Contains(t, msg, "AAAApinned")

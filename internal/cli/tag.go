@@ -35,7 +35,7 @@ func runTagList(scope string) int {
 		return 1
 	}
 	if len(info.Tags) == 0 {
-		fmt.Println("no tags yet — add one with `yore tag add <name>`")
+		fmt.Println("no tags yet: add one with `yore tag add <name>`")
 		return 0
 	}
 	for _, t := range info.Tags {
@@ -103,7 +103,7 @@ func runTagAssociate(name, command, session string, remove bool) int {
 		r.Session = os.Getenv("YORE_SESSION")
 	}
 	if r.TargetID == "" && r.Session == "" {
-		fmt.Fprintln(os.Stderr, "yore: no target — pass --command <id>, --session <id>, or run inside a shell session")
+		fmt.Fprintln(os.Stderr, "yore: no target. Pass --command <id>, --session <id>, or run inside a shell session")
 		return 1
 	}
 	if rc := submitTag(r); rc != 0 {

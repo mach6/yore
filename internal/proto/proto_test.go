@@ -84,7 +84,7 @@ func TestReadMsgErrors(t *testing.T) {
 	})
 }
 
-// FuzzReadMsg ensures the socket reader never panics on arbitrary bytes — the
+// FuzzReadMsg ensures the socket reader never panics on arbitrary bytes: the
 // daemon reads this straight off a client connection.
 func FuzzReadMsg(f *testing.F) {
 	f.Add([]byte("{\"op\":\"ping\"}\n"))

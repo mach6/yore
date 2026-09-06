@@ -11,7 +11,7 @@ import (
 // TestCommandListShowsExecutorAndTags pins the two apart in the one place an
 // agent reads history from. The executor used to be printed only when the row
 // carried no tags, so labelling a command erased the record of which agent had
-// run it — the same conflation the tag index had.
+// run it: the same conflation the tag index had.
 func TestCommandListShowsExecutorAndTags(t *testing.T) {
 	tests := []struct {
 		name   string

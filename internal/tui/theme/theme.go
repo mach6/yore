@@ -25,7 +25,7 @@ type Theme struct {
 	ExitOK  lipgloss.Style // exit status 0 (green)
 	ExitErr lipgloss.Style // non-zero exit status (red)
 	// RiskHigh is the risk ramp's one ink of its own: critical borrows ExitErr
-	// and medium borrows Match, so high sits between them — an orange that is
+	// and medium borrows Match, so high sits between them; an orange that is
 	// neither the amber of a match nor the red reserved for failure.
 	RiskHigh lipgloss.Style
 	Status   lipgloss.Style // the bottom status bar
@@ -33,7 +33,7 @@ type Theme struct {
 	Help     lipgloss.Style // the key-hints help line
 
 	// Three ranks of heading, and only three. A terminal has very few levers for
-	// hierarchy — color, weight, case, indent — so each rank gets its own and no
+	// hierarchy (color, weight, case, indent) so each rank gets its own and no
 	// rank shares. Title is the frame (a pane's name, in its border); Section is
 	// a heading inside a pane or screen; Dim is the chrome below both (column
 	// headers, field labels).
@@ -67,7 +67,7 @@ var (
 	cBorder = lipgloss.AdaptiveColor{Light: "#c6c6c6", Dark: "#3a3a3a"}
 	cStatBg = lipgloss.AdaptiveColor{Light: "#eeeeee", Dark: "#1c1c1c"}
 
-	// Syntax hues — muted so they read as texture, not decoration, and never
+	// Syntax hues; muted so they read as texture, not decoration, and never
 	// out-shout the amber match highlight. Red/green avoided (exit-status).
 	cSynCmd = lipgloss.AdaptiveColor{Light: "#0055aa", Dark: "#87afd7"} // command: soft blue
 	cSynFlg = lipgloss.AdaptiveColor{Light: "#8a6d00", Dark: "#c5b070"} // flags: muted gold
@@ -77,16 +77,14 @@ var (
 	cSynVar = lipgloss.AdaptiveColor{Light: "#0a6ea0", Dark: "#7fc7df"} // variables: soft cyan
 )
 
-// dataRamp is the chart ink: ONE hue at four intensity steps, ascending.
-//
-// It is deliberately not the UI accent. Every bar, gauge and heat cell used to
-// render in accent blue, which meant that on the stats screen everything with
-// ink was the same color as everything selectable — the accent distinguished
-// nothing, and nothing could be emphasized within the data. Violet is clear of
-// the blue accent, of red/green (exit status) and of amber (match highlight).
-//
-// Intensity rides on lightness, not only on glyph height or density, so a chart
-// survives a terminal or a font that renders shade glyphs poorly.
+// dataRamp is the chart ink: ONE hue at four intensity steps, ascending. It is
+// deliberately not the UI accent. Every bar, gauge and heat cell used to render
+// in accent blue, which meant that on the stats screen everything with ink was
+// the same color as everything selectable: the accent distinguished nothing,
+// and nothing could be emphasized within the data. Violet is clear of the blue
+// accent, of red/green (exit status) and of amber (match highlight). Intensity
+// rides on lightness, not only on glyph height or density, so a chart survives
+// a terminal or a font that renders shade glyphs poorly.
 var dataRamp = [4]lipgloss.AdaptiveColor{
 	// On light terminals intensity darkens; on dark ones it brightens.
 	{Light: "#b7a9dc", Dark: "#4e4176"},

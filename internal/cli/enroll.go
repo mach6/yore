@@ -22,19 +22,15 @@ import (
 )
 
 // resolveToken returns the single-use enrollment token, from the flag, then
-// $YORE_TOKEN, then a tty prompt.
-//
-// It is called only once a run has established that this machine actually needs
-// to enroll — an already-enrolled machine re-running `yore setup` (to pin a
-// certificate, say) must not be asked for a credential it has no use for.
-//
-// The prompt asks for the token and nothing else. It used to call itself "the
-// server token for the first machine", which is only true for the one enrollment
-// that forms the group and is wrong advice on every machine after it.
-//
-// The token is NOT persisted anywhere: it authorizes exactly one enrollment and
-// is spent by it. Whatever credential a machine needs afterwards is its own
-// device key.
+// $YORE_TOKEN, then a tty prompt. It is called only once a run has established
+// that this machine actually needs to enroll: an already-enrolled machine
+// re-running `yore setup` (to pin a certificate, say) must not be asked for a
+// credential it has no use for. The prompt asks for the token and nothing else.
+// It used to call itself "the server token for the first machine", which is only
+// true for the one enrollment that forms the group and is wrong advice on every
+// machine after it. The token is NOT persisted anywhere: it authorizes exactly
+// one enrollment and is spent by it. Whatever credential a machine needs
+// afterwards is its own device key.
 func resolveToken(tokenFlag string) (string, error) {
 	token := strings.TrimSpace(firstNonEmpty(tokenFlag, os.Getenv("YORE_TOKEN")))
 	if token == "" {
@@ -50,12 +46,11 @@ func resolveToken(tokenFlag string) (string, error) {
 // per-stretch budget, never one deadline for a whole run: a run stops to ask
 // for a token, and fetching that token means walking to another machine. A
 // deadline that started before the question was asked expired while the user
-// was answering it, and the enrollment that followed failed instantly — which
+// was answering it, and the enrollment that followed failed instantly: which
 // reads exactly like the server rejecting a token that was in fact perfectly
-// good.
-//
-// A var, not a const, only so a test can shrink it to prove that the enrollment
-// gets a fresh one (see TestRunSetupDoesNotSpendItsBudgetWaitingForTheToken).
+// good. A var, not a const, only so a test can shrink it to prove that the
+// enrollment gets a fresh one (see
+// TestRunSetupDoesNotSpendItsBudgetWaitingForTheToken).
 var serverStepTimeout = 60 * time.Second
 
 // resolveServerURL returns the server URL from the flag, then config, then a
@@ -84,12 +79,10 @@ func ensureDeviceKey(dir string) error {
 }
 
 // syncerFor builds a Syncer against an explicit server, for enrollment paths
-// that must not persist configuration until the server has accepted them.
-//
-// The store it opened comes back with it: the store is held under an exclusive
-// file lock, so the caller has to release it rather than leave it to process
-// exit — a second setup in one process would otherwise find its own lock in the
-// way.
+// that must not persist configuration until the server has accepted them. The
+// store it opened comes back with it: the store is held under an exclusive file
+// lock, so the caller has to release it rather than leave it to process exit; a
+// second setup in one process would otherwise find its own lock in the way.
 func syncerFor(dir, url, pin string) (*syncer.Syncer, *store.Store, error) {
 	cfg, _ := config.Load(dir)
 	key, err := secret.Open(dir).LoadDeviceKey()
@@ -103,7 +96,7 @@ func syncerFor(dir, url, pin string) (*syncer.Syncer, *store.Store, error) {
 	return syncer.New(st, syncer.NewHTTPClient(url, pin), key, cfg.KeyEpochD()), st, nil
 }
 
-// isActiveMember reports whether id is an ACTIVE device in devs — the test for
+// isActiveMember reports whether id is an ACTIVE device in devs: the test for
 // "this machine is already enrolled", which only an enrolled machine can make in
 // the first place (a newcomer cannot read the device list at all).
 func isActiveMember(devs []wire.Device, id string) bool {
@@ -117,8 +110,8 @@ func isActiveMember(devs []wire.Device, id string) bool {
 
 // setupChanged reports whether a setup run altered any of the three fields it
 // can touch. Nothing else in config.toml belongs to setup, and an enrolled
-// machine re-running plain `yore setup` should leave the file — including
-// anything hand-written in it — alone.
+// machine re-running plain `yore setup` should leave the file (including
+// anything hand-written in it) alone.
 func setupChanged(prev, cur config.Config) bool {
 	return prev.ServerURL != cur.ServerURL ||
 		prev.ServerPin != cur.ServerPin ||
@@ -156,7 +149,7 @@ func runSetup(server, token, name, integration string, pin, clearPin bool) int {
 	u.title("yore setup")
 
 	// Assemble the config in memory; it is written only after enrollment
-	// succeeds. The token is never written anywhere — it is spent by this run.
+	// succeeds. The token is never written anywhere: it is spent by this run.
 	cfg, _ := config.Load(dir)
 	prev := cfg
 	cfg.ServerURL = url
@@ -165,7 +158,7 @@ func runSetup(server, token, name, integration string, pin, clearPin bool) int {
 	// neither the flag nor an existing config already answers it.
 	if integration == "" && cfg.Integration == "" {
 		integration = strings.TrimSpace(prompt(
-			"History integration — takeover (yore is the only history), coexist, or capture [takeover]: "))
+			"History integration: takeover (yore is the only history), coexist, or capture [takeover]: "))
 	}
 	if integration == "" {
 		integration = cfg.Integration
@@ -187,7 +180,7 @@ func runSetup(server, token, name, integration string, pin, clearPin bool) int {
 			return 1
 		}
 		cfg.ServerPin = p
-		u.step("pinned server certificate", "SPKI "+pinLabel(p)+" — sync will refuse any other cert")
+		u.step("pinned server certificate", "SPKI "+pinLabel(p)+": sync will refuse any other cert")
 	case clearPin:
 		// Cleared BEFORE the reachability check below, which uses cfg.ServerPin:
 		// the reason to clear a pin is usually that the pinned certificate is gone
@@ -196,7 +189,7 @@ func runSetup(server, token, name, integration string, pin, clearPin bool) int {
 		if cfg.ServerPin == "" {
 			u.step("no certificate pin set", "nothing to clear")
 		} else {
-			u.step("cleared certificate pin", "SPKI "+pinLabel(cfg.ServerPin)+" — sync accepts any valid cert")
+			u.step("cleared certificate pin", "SPKI "+pinLabel(cfg.ServerPin)+": sync accepts any valid cert")
 		}
 		cfg.ServerPin = ""
 	}
@@ -241,7 +234,7 @@ func runSetup(server, token, name, integration string, pin, clearPin bool) int {
 	// a newcomer cannot. That distinguishes "already enrolled" from a genuine
 	// failure, which would otherwise surface as a bare 401.
 	if devs, derr := sy.Devices(ctx); derr == nil && isActiveMember(devs, sy.DeviceID()) {
-		// Nothing to ENROLL — but this run's flags (--pin/--clear-pin, --server,
+		// Nothing to ENROLL, but this run's flags (--pin/--clear-pin, --server,
 		// --integration) still have to be persisted. Returning without saving made
 		// `setup --pin` and `--clear-pin` print success and change nothing, which is
 		// the worst way for a security control to behave: it is the already-enrolled
@@ -284,7 +277,7 @@ func runSetup(server, token, name, integration string, pin, clearPin bool) int {
 			// people off to mint another token for a problem no token can fix.
 			u.fail("the server did not answer in time")
 			u.note(err.Error())
-			u.note("If the request did arrive, that token is spent — mint another to retry.")
+			u.note("If the request did arrive, that token is spent: mint another to retry.")
 		default:
 			u.fail("enrollment failed")
 			u.note(err.Error())
@@ -302,7 +295,7 @@ func runSetup(server, token, name, integration string, pin, clearPin bool) int {
 		u.panel("Verification code", code,
 			"",
 			"Confirm this matches on the approving machine before",
-			"you approve — it proves no key was substituted.")
+			"you approve: it proves no key was substituted.")
 		u.next("on a machine that is already enrolled:",
 			"yore devices    (select this machine, press a)")
 		return 0
@@ -335,7 +328,7 @@ func runSetup(server, token, name, integration string, pin, clearPin bool) int {
 		return 1
 	}
 
-	u.step("enrolled "+strconv.Quote(name), "first device — history group created")
+	u.step("enrolled "+strconv.Quote(name), "first device: history group created")
 	u.panel("Recovery phrase", phrase,
 		"",
 		"Write this down and keep it somewhere safe.",
@@ -355,7 +348,7 @@ func isUnauthorized(err error) bool {
 }
 
 // seedRedact installs the editable secret-redaction rules on first setup. It
-// never clobbers an existing redact.yml, and a failure must not fail setup —
+// never clobbers an existing redact.yml, and a failure must not fail setup:
 // the built-in rules still apply as the fail-safe.
 func seedRedact(dir string) {
 	u := newUI()
@@ -426,7 +419,7 @@ func runDevicesToken() int {
 
 // runRecover rebuilds access from the recovery phrase when no enrolled machine
 // survives. It derives the recovery key, proves possession of it to fetch the
-// wrapped History Key, then enrolls this machine and admits it directly — there
+// wrapped History Key, then enrolls this machine and admits it directly: there
 // is no other device left to approve it.
 func runRecover(server string) int {
 	dir := stateDir()
@@ -461,7 +454,7 @@ func runRecover(server string) int {
 	if err != nil {
 		u.fail("could not recover with that phrase")
 		if isUnauthorized(err) {
-			// A 401 here means the derived key did not match the stored one —
+			// A 401 here means the derived key did not match the stored one;
 			// i.e. the phrase is wrong. The raw error would add nothing.
 			u.note("Check for typos: 8 groups of 4 characters.")
 			u.note("Dashes, spaces, and letter case are all ignored.")

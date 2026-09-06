@@ -1,5 +1,5 @@
 // Package hl is a lightweight, best-effort syntax classifier for shell command
-// lines. It is not a shell parser — it exists only to color command rows in the
+// lines. It is not a shell parser: it exists only to color command rows in the
 // TUIs, so it favors being fast and visually helpful over being exhaustively
 // correct. Classify returns one Kind per byte of the input, which the caller
 // layers UNDER its own match highlighting (matches always win).

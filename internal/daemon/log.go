@@ -8,7 +8,7 @@ import (
 
 // rotatingWriter is a size-capped io.WriteCloser over a single log file. It
 // keeps daemon.log bounded: once a write would push the file past maxSize it
-// rotates — daemon.log.(keep-1) shifts up to .keep (the oldest is dropped),
+// rotates; daemon.log.(keep-1) shifts up to .keep (the oldest is dropped),
 // daemon.log becomes daemon.log.1, and a fresh daemon.log is opened. The size
 // check is done at write time (the daemon's log volume is low, so a per-write
 // stat-free size accumulator is plenty) and the writer is mutex-guarded so the

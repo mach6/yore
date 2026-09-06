@@ -18,8 +18,8 @@ const agentCodex = "codex"
 // tool_input.command, tool_response, and UserPromptSubmit's prompt), so the
 // same claudeHookInput struct decodes them. Differences honored below: Codex
 // has no separate failure event (PostToolUse fires on success AND failure), so
-// exit status is taken only from tool_response.exit_code when present — never
-// defaulted — and there is no start/end timestamp, so no duration.
+// exit status is taken only from tool_response.exit_code when present (never
+// defaulted) and there is no start/end timestamp, so no duration.
 
 func codexSession(id string) string {
 	if id == "" {
@@ -65,7 +65,7 @@ func runHookCodex() {
 
 // runHookCodexPrompt records the session's current prompt from a Codex
 // UserPromptSubmit hook, for the command hook to attach. It never blocks
-// (exit 0, no output — Codex only blocks on exit 2) and never prints.
+// (exit 0, no output; Codex only blocks on exit 2) and never prints.
 func runHookCodexPrompt() {
 	raw, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
 	if err != nil {
@@ -97,10 +97,10 @@ func codexConfigPath(project bool) (string, error) {
 }
 
 // codexHooksBlock renders the TOML capture-hook block for the given binary. The
-// array-of-tables form is appended to config.toml — additive and order-
+// array-of-tables form is appended to config.toml; additive and order-
 // independent, so it never disturbs existing config.
 func codexHooksBlock(bin string) string {
-	return "\n# yore — Codex capture hooks (added by `yore init codex`)\n" +
+	return "\n# yore: Codex capture hooks (added by `yore init codex`)\n" +
 		"[[hooks.PostToolUse]]\n" +
 		"matcher = \"^Bash$\"\n\n" +
 		"[[hooks.PostToolUse.hooks]]\n" +
@@ -148,7 +148,7 @@ const codexMcpMarker = "[mcp_servers.yore]"
 
 // codexMcpBlock renders the TOML to register yore's MCP server with Codex.
 func codexMcpBlock(bin string) string {
-	return "\n# yore — MCP server (added by `yore init codex`)\n" +
+	return "\n# yore: MCP server (added by `yore init codex`)\n" +
 		codexMcpMarker + "\n" +
 		"command = \"" + bin + "\"\n" +
 		"args = [\"mcp-serve\"]\n"

@@ -20,7 +20,7 @@ import (
 //     captured bearer token can't be used to push or revoke; its public half is
 //     registered so the server can verify signatures.
 //
-// The zero value is unusable — obtain one via GenerateDeviceKey or LoadDeviceKey.
+// The zero value is unusable: obtain one via GenerateDeviceKey or LoadDeviceKey.
 type DeviceKey struct {
 	priv     [32]byte           // X25519 scalar; clamped on use
 	pub      [32]byte           // curve25519.X25519(priv, basepoint)
@@ -105,7 +105,7 @@ func (k DeviceKey) Marshal() string {
 
 // ParseDeviceKey validates and decodes a key from its Marshal form. It checks
 // the format and that the stored X25519 public key matches its private key
-// (rejecting silent corruption). It performs NO file or permission handling —
+// (rejecting silent corruption). It performs NO file or permission handling:
 // that belongs to the caller (internal/secret enforces 0600 on the fallback
 // file; the keyring needs no such check).
 func ParseDeviceKey(s string) (DeviceKey, error) {

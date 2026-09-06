@@ -114,7 +114,7 @@ func TestErrorRespRoundTrip(t *testing.T) {
 }
 
 // FuzzDecodeWireTypes ensures decoding arbitrary bytes into the request types
-// the server accepts never panics — these decode straight off the network.
+// the server accepts never panics: these decode straight off the network.
 func FuzzDecodeWireTypes(f *testing.F) {
 	f.Add([]byte(`{"host_id":"h","records":[{"seq":1,"blob":"AA=="}]}`))
 	f.Add([]byte(`{"id":"x","pub_key":"AA==","sign_key":"AA=="}`))

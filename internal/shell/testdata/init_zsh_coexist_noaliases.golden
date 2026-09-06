@@ -1,4 +1,4 @@
-# yore — zsh shell integration (coexist mode).
+# yore; zsh shell integration (coexist mode).
 # Emitted by `yore init zsh`; load with:  eval "$(yore init zsh)"
 # Sourcing repeatedly is safe and produces no output during normal operation.
 
@@ -28,7 +28,7 @@ _yore_preexec() {
 
 # precmd runs after the command finishes, before the next prompt is drawn.
 _yore_precmd() {
-	local exit=$?   # the user's exit status — must be captured first
+	local exit=$?   # the user's exit status; must be captured first
 	if [[ -n ${__yore_cmd-} ]]; then
 		integer dur
 		(( dur = (EPOCHREALTIME - __yore_start) * 1000 ))   # float secs -> int ms
@@ -50,7 +50,7 @@ add-zsh-hook precmd _yore_precmd
 # Whether accepting a Ctrl-R result should run it immediately (Atuin parity).
 # Default: put the picked command on the prompt for review; opt in with
 # `yore set-config enter_executes true` to have Enter run it. Asked of yore at
-# call time — NOT cached at source time — so the setting takes effect without
+# call time: NOT cached at source time, so the setting takes effect without
 # re-sourcing. Falls back to the default (review) if yore is unavailable, which
 # is the safe direction: nothing runs that the user did not look at.
 _yore_enter_executes() {
