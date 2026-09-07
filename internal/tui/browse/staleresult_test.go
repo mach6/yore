@@ -2,6 +2,7 @@ package browse
 
 import (
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/require"
@@ -303,4 +304,106 @@ func TestFooterOffersTheStopWhileABatchRuns(t *testing.T) {
 		m, _ = step(t, m, msg)
 	}
 	require.NotContains(t, footerText(m), "esc stop", "the footer goes back to the table's own keys")
+}
+
+// --- the same hazard in the other sequence -------------------------------
+// The stats sample is a second query, numbered in its own sequence, and it
+// feeds both the stats screen and every list in the agent explorer. One of
+// those in flight when a delete lands carries the deleted commands into the
+// aggregates, where nothing else would take them out again until the view is
+// next re-entered.
+
+func TestTheStatsSampleIgnoresAnAnswerThatPredatesADelete(t *testing.T) {
+	f := &fakeBackend{resp: mkResp(mkRows("alpha", "beta", "gamma"))}
+	m := midFlight(t, f)
+
+	// Opening the agent explorer puts a sample in flight; come back to the table
+	// without answering it.
+	m, _ = step(t, m, press("a"))
+	inFlight := m.statsSeq
+	require.NotZero(t, inFlight, "opening the explorer has to have asked for a sample")
+	m, _ = step(t, m, press("a"))
+
+	m, _ = step(t, m, press("d"))
+	m, _ = step(t, m, press("y"))
+	require.Len(t, f.deleted, 1)
+
+	// The sample answers with what the daemon held before the delete.
+	m, _ = step(t, m, statsResultMsg{seq: inFlight, resp: f.resp})
+
+	require.Len(t, m.statsRows, 2, "the deleted command must not reach the stats screen or the explorer")
+	require.Equal(t, 2, m.statsTotal, "nor be counted in the total")
+	for _, r := range m.statsRows {
+		require.NotEqual(t, f.deleted[0], r.ID, "a deleted command is in the sample")
+	}
+}
+
+// A delete leaves a mark in both sequences and the ids live until both have
+// answered past their own: a fresh answer to the table says nothing about what
+// a sample still in flight is carrying.
+func TestTheIdsLiveUntilBothSequencesHaveAnswered(t *testing.T) {
+	f := &fakeBackend{resp: mkResp(mkRows("alpha", "beta", "gamma"))}
+	m := midFlight(t, f)
+
+	m, _ = step(t, m, press("a")) // a sample goes out
+	staleStats := m.statsSeq
+	m, _ = step(t, m, press("a"))
+	m, _ = step(t, m, hostsTickMsg{}) // and a table query
+	m, _ = step(t, m, press("ctrl+a"))
+	m = runBulkDelete(t, m)
+	require.NotEmpty(t, m.gone)
+
+	// The table settles first. The sample is still out, so the ids stay.
+	m, _ = step(t, m, hostsTickMsg{})
+	m, _ = step(t, m, queryResultMsg{seq: m.seq, resp: mkResp(nil)})
+	require.NotEmpty(t, m.gone, "a fresh table answer must not release ids the sample still needs")
+
+	// The stale sample is filtered on the strength of that second mark...
+	m, _ = step(t, m, statsResultMsg{seq: staleStats, resp: f.resp})
+	require.Empty(t, m.statsRows, "every command in the stale sample had been deleted")
+
+	// ...and a sample newer than the delete settles the last of them.
+	m, _ = step(t, m, statsResultMsg{seq: staleStats + 1, resp: mkResp(nil)})
+	require.Empty(t, m.gone, "with both sequences answered, the ids are no longer worth holding")
+}
+
+// TestABatchAndTheLoopCrossGoroutinesCleanly runs the worker where bubbletea
+// runs it. Everywhere else a command is drained by calling it on the test
+// goroutine, which is convenient and proves nothing about the handoff: the
+// counter and the stop are the whole contract between the two, and only running
+// them apart puts either under the race detector.
+func TestABatchAndTheLoopCrossGoroutinesCleanly(t *testing.T) {
+	release := make(chan struct{})
+	f := &fakeBackend{}
+	f.onDelete = func(string) { <-release } // hold the worker inside each call
+
+	m := ready(t, f, 120, 30)
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("a", "b", "c", "d"))})
+	m, _ = step(t, m, press("ctrl+a"))
+	m, _ = step(t, m, press("d"))
+	m, batch := step(t, m, press("y"))
+	run := m.bulk
+	require.NotNil(t, run)
+
+	cmds, ok := batch().(tea.BatchMsg) // tea.Batch keeps the order: worker, tick
+	require.True(t, ok)
+	out := make(chan tea.Msg, 1)
+	go func() { out <- cmds[0]() }()
+
+	// One call through, and the loop watches the count move while the worker is
+	// still going.
+	release <- struct{}{}
+	require.Eventually(t, func() bool { return run.done.Load() == 1 }, 2*time.Second, time.Millisecond,
+		"the loop must see the worker's progress while the run is in flight")
+	m, _ = step(t, m, bulkTickMsg{})
+	require.Contains(t, strip(m.View()), "deleting 1/4…")
+
+	// Stopped from the loop while the worker sits inside a call.
+	m, _ = step(t, m, press("esc"))
+	close(release) // that call finishes; the two after it are never sent
+
+	m, _ = step(t, m, <-out)
+	require.Nil(t, m.bulk)
+	require.Len(t, f.deleted, 2, "the call in flight lands, and the run stops there")
+	require.Contains(t, strip(m.View()), "stopped: deleted 2 of 4 records")
 }

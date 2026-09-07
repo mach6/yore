@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -198,21 +199,26 @@ const bulkTickInterval = 100 * time.Millisecond
 
 // bulkRun is what a running batch and the event loop share. The worker bumps
 // done as each call returns and asks canceled before starting the next; the loop
-// reads done on a tick to draw progress, and closes stop when the user presses
-// esc. done is atomic because it crosses the goroutine boundary. stop is closed
-// exactly once (stopping guards it) and only ever from the loop, which is also
-// the only reader and writer of stopping, so it needs nothing of its own.
+// reads done on a tick to draw progress, and calls stop when the user presses
+// esc. Both crossings are explicit: done is atomic, and the cancel is a closed
+// channel, guarded by a sync.Once so asking twice is a no-op rather than a
+// panic. A context would be the other way to say this, but Backend takes none,
+// so it could never reach the round trip it claimed to cancel.
 type bulkRun struct {
-	done     atomic.Int64
-	total    int
-	verb     string // "deleting", "tagging", "untagging": what the flash says
-	stop     chan struct{}
-	stopping bool
+	done   atomic.Int64
+	total  int
+	verb   string // "deleting", "tagging", "untagging": what the flash says
+	stopCh chan struct{}
+	once   sync.Once
 }
 
 func newBulkRun(verb string, total int) *bulkRun {
-	return &bulkRun{total: total, verb: verb, stop: make(chan struct{})}
+	return &bulkRun{total: total, verb: verb, stopCh: make(chan struct{})}
 }
+
+// stop asks the run to give up before its next call, from any goroutine and any
+// number of times.
+func (r *bulkRun) stop() { r.once.Do(func() { close(r.stopCh) }) }
 
 // canceled reports whether the user has asked the run to stop. The worker calls
 // it between calls, never during one: a round trip already sent is always seen
@@ -220,7 +226,7 @@ func newBulkRun(verb string, total int) *bulkRun {
 // cannot come apart.
 func (r *bulkRun) canceled() bool {
 	select {
-	case <-r.stop:
+	case <-r.stopCh:
 		return true
 	default:
 		return false
@@ -428,18 +434,21 @@ type Model struct {
 	appliedSeq uint64
 
 	// gone is every record this session has deleted whose removal a query
-	// already in flight may not have seen, and goneSeq is the newest query
-	// issued at the moment of that delete. appliedSeq alone cannot protect the
-	// table here: it orders DELIVERIES, and says nothing about which daemon
-	// state each query observed. A query issued before the delete, answered
-	// after it, carries a higher seq than the last applied one and is accepted
-	// on that basis, putting the deleted rows back on screen (unchecked, since
-	// pruneChecked only removes) until something else re-queries. So an applied
-	// result no newer than goneSeq has these ids filtered out of it, and the
-	// first result from a query issued AFTER the delete clears the set: that one
-	// reflects the tombstones, because Delete had returned before it was asked.
-	gone    map[string]struct{}
-	goneSeq uint64
+	// already in flight may not have seen. appliedSeq alone cannot protect the
+	// table from those: it orders DELIVERIES, and says nothing about which
+	// daemon state each query observed. A query issued before the delete,
+	// answered after it, carries a higher seq than the last applied one and is
+	// accepted on that basis, putting the deleted rows back on screen
+	// (unchecked, since pruneChecked only removes) until something else
+	// re-queries. So a result that could predate the delete has these ids
+	// filtered out of it.
+	//
+	// The table and the stats sample are numbered in separate sequences, and
+	// both can be in flight, so a delete leaves a mark in each; the set lives
+	// until both have answered past their own.
+	gone      map[string]struct{}
+	goneSeq   goneMark // against Model.seq: the browse table
+	goneStats goneMark // against Model.statsSeq: the stats/agents sample
 
 	// bulk is the batch (delete or tag) currently running off the event loop,
 	// nil when none is. The loop keeps processing keys for the whole run, so
@@ -723,7 +732,12 @@ func (m Model) applyResult(msg queryResultMsg) (tea.Model, tea.Cmd) {
 	}
 	rows := append([]rec.Record(nil), msg.resp.Rows...)
 	total := msg.resp.Total
-	rows, total = m.dropGone(msg.seq, rows, total)
+	if len(m.gone) > 0 {
+		if m.goneSeq.predates(msg.seq) {
+			rows, total = m.withoutGone(rows, total)
+		}
+		m.settleGone()
+	}
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].StartMs > rows[j].StartMs })
 	m.allRows = rows
 	m.srvTotal = total
@@ -794,8 +808,18 @@ func (m Model) applyStats(msg statsResultMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.statsErr = nil
-	m.statsRows = msg.resp.Rows
-	m.statsTotal = msg.resp.Total
+	rows, total := msg.resp.Rows, msg.resp.Total
+	// The sample is a query like any other, in its own sequence: one in flight
+	// when a delete lands carries the deleted commands into the aggregates and
+	// into the agent explorer's lists, which read this and nothing else.
+	if len(m.gone) > 0 {
+		if m.goneStats.predates(msg.seq) {
+			rows, total = m.withoutGone(append([]rec.Record(nil), rows...), total)
+		}
+		m.settleGone()
+	}
+	m.statsRows = rows
+	m.statsTotal = total
 	m.promptRows = msg.resp.Prompts
 	m.recomputeStats()
 	return m, nil
@@ -2416,7 +2440,7 @@ func (m Model) applyBulkTag(msg bulkTagDoneMsg) (tea.Model, tea.Cmd) {
 	m.flashID++
 	switch {
 	case msg.stopped:
-		m.flash = fmt.Sprintf("stopped: %s %d of %d", v.ed, len(msg.applied), msg.asked)
+		m.flash = fmt.Sprintf("stopped: %s %d of %s", v.ed, len(msg.applied), plural(msg.asked, "record"))
 		if msg.failed > 0 {
 			m.flash += fmt.Sprintf(", %d failed", msg.failed)
 			m.lastErr = msg.err
@@ -2599,7 +2623,7 @@ func (m Model) onBulkTick() (tea.Model, tea.Cmd) {
 	if m.bulk == nil {
 		return m, nil
 	}
-	if !m.bulk.stopping {
+	if !m.bulk.canceled() {
 		m.flash = m.bulk.progress() // "stopping…" is not overwritten by a count
 	}
 	return m, bulkTick()
@@ -2612,10 +2636,7 @@ func (m Model) onBulkTick() (tea.Model, tea.Cmd) {
 // and still checked, which is what makes a stopped run resumable with the same
 // keypress that started it.
 func (m Model) cancelBulk() (tea.Model, tea.Cmd) {
-	if !m.bulk.stopping {
-		m.bulk.stopping = true
-		close(m.bulk.stop)
-	}
+	m.bulk.stop()
 	m.flash = "stopping…" // the call in flight still has to come back
 	return m, nil
 }
@@ -2640,7 +2661,7 @@ func (m Model) applyBulkDelete(msg bulkDeleteDoneMsg) (tea.Model, tea.Cmd) {
 		// Both numbers, and the one that is not there: the ids past the break
 		// were never sent, so they are neither deleted nor failed, and they are
 		// still checked for a second press of d.
-		m.flash = fmt.Sprintf("stopped: deleted %d of %d", len(msg.removed), msg.asked)
+		m.flash = fmt.Sprintf("stopped: deleted %d of %s", len(msg.removed), plural(msg.asked, "record"))
 		if msg.failed > 0 {
 			m.flash += fmt.Sprintf(", %d failed", msg.failed)
 			m.lastErr = msg.err
@@ -2674,14 +2695,17 @@ func (m *Model) removeRows(ids map[string]struct{}) {
 		return
 	}
 	// Remember them for as long as a query that predates the delete could still
-	// answer, or that answer puts them straight back (see the gone field).
+	// answer, or that answer puts them straight back (see the gone field). A
+	// mark of 0 means nothing of that kind has ever been asked, so nothing of
+	// that kind can be carrying these rows.
 	if m.gone == nil {
 		m.gone = make(map[string]struct{}, len(ids))
 	}
 	for id := range ids {
 		m.gone[id] = struct{}{}
 	}
-	m.goneSeq = m.seq
+	m.goneSeq, m.goneStats = goneMark(m.seq), goneMark(m.statsSeq)
+	m.settleGone()
 
 	all := make([]rec.Record, 0, len(m.allRows))
 	for _, r := range m.allRows {
@@ -2702,21 +2726,38 @@ func (m *Model) removeRows(ids map[string]struct{}) {
 	m.rows = rows
 }
 
-// dropGone filters records this session has deleted out of a query result that
-// may predate the delete, and reports the total the table should show with them
-// gone. A result from a query issued after the delete needs no filtering (the
-// daemon had already tombstoned them when it was asked), and clears the set:
-// holding the ids any longer would hide a record the user deleted and then
-// re-created by running the command again.
-func (m *Model) dropGone(seq uint64, rows []rec.Record, total int) (kept []rec.Record, keptTotal int) {
-	if len(m.gone) == 0 {
-		return rows, total
+// goneMark is one query sequence's high-water mark for a delete: the newest
+// query issued in that sequence at the moment the records went, or 0 once an
+// answer newer than that has arrived and there is nothing left to guard against.
+type goneMark uint64
+
+// predates reports whether an answer numbered seq could have been computed
+// before the delete, and settles the mark when it could not: that answer was
+// asked for after the call returned, so it has already seen the tombstones.
+func (g *goneMark) predates(seq uint64) bool {
+	if *g == 0 {
+		return false
 	}
-	if seq > m.goneSeq {
+	if seq > uint64(*g) {
+		*g = 0
+		return false
+	}
+	return true
+}
+
+// settleGone drops the ids once every sequence has answered past its mark.
+// Holding them any longer would hide a record the user deleted and then made
+// again by running the command a second time.
+func (m *Model) settleGone() {
+	if m.goneSeq == 0 && m.goneStats == 0 {
 		m.gone = nil
-		return rows, total
 	}
-	kept = rows[:0] // rows is already this call's own copy
+}
+
+// withoutGone filters the deleted records out of rows, which the caller must
+// own (it is filtered in place), and adjusts total by however many went.
+func (m *Model) withoutGone(rows []rec.Record, total int) (kept []rec.Record, keptTotal int) {
+	kept = rows[:0]
 	for _, r := range rows {
 		if _, dead := m.gone[r.ID]; !dead {
 			kept = append(kept, r)

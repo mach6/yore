@@ -333,9 +333,12 @@ the harder half. The sequence counter orders *deliveries*, not the daemon state
 each query observed, so an answer computed before a delete and delivered after it
 carries a higher number than anything applied so far and would be accepted, rows
 and all. A delete therefore remembers what it removed and filters those ids out
-of any answer no newer than the query that was in flight when it ran. The first
-answer from a query issued after the delete reflects the tombstones, because the
-call had returned before it was asked, and releases them.
+of any answer no newer than the query that was in flight when it ran. The table
+and the stats sample are numbered in separate sequences, and the sample feeds
+both the stats screen and every list in the agent explorer, so a delete leaves a
+mark in each and the ids live until both have answered past their own. An answer
+newer than its mark reflects the tombstones, because the call had returned before
+it was asked, and settles that mark.
 
 ### A UI may filter only if it can disclose
 
