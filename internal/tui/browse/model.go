@@ -733,9 +733,10 @@ func (m Model) applyResult(msg queryResultMsg) (tea.Model, tea.Cmd) {
 	rows := append([]rec.Record(nil), msg.resp.Rows...)
 	total := msg.resp.Total
 	if len(m.gone) > 0 {
-		if m.goneSeq.predates(msg.seq) {
+		if m.goneSeq.covers(msg.seq) {
 			rows, total = m.withoutGone(rows, total)
 		}
+		m.goneSeq.settle(msg.seq)
 		m.settleGone()
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].StartMs > rows[j].StartMs })
@@ -813,9 +814,10 @@ func (m Model) applyStats(msg statsResultMsg) (tea.Model, tea.Cmd) {
 	// when a delete lands carries the deleted commands into the aggregates and
 	// into the agent explorer's lists, which read this and nothing else.
 	if len(m.gone) > 0 {
-		if m.goneStats.predates(msg.seq) {
+		if m.goneStats.covers(msg.seq) {
 			rows, total = m.withoutGone(append([]rec.Record(nil), rows...), total)
 		}
+		m.goneStats.settle(msg.seq)
 		m.settleGone()
 	}
 	m.statsRows = rows
@@ -2704,6 +2706,9 @@ func (m *Model) removeRows(ids map[string]struct{}) {
 	for id := range ids {
 		m.gone[id] = struct{}{}
 	}
+	// A delete while an older one is still guarded moves both marks up, never
+	// down (the sequences only grow), so the ids already held stay held: longer
+	// than they strictly need to be, over answers that cannot carry them anyway.
 	m.goneSeq, m.goneStats = goneMark(m.seq), goneMark(m.statsSeq)
 	m.settleGone()
 
@@ -2731,18 +2736,18 @@ func (m *Model) removeRows(ids map[string]struct{}) {
 // answer newer than that has arrived and there is nothing left to guard against.
 type goneMark uint64
 
-// predates reports whether an answer numbered seq could have been computed
-// before the delete, and settles the mark when it could not: that answer was
-// asked for after the call returned, so it has already seen the tombstones.
-func (g *goneMark) predates(seq uint64) bool {
-	if *g == 0 {
-		return false
-	}
+// covers reports whether an answer numbered seq could have been computed before
+// the delete this mark was left by.
+func (g goneMark) covers(seq uint64) bool { return g != 0 && seq <= uint64(g) }
+
+// settle drops the mark once an answer newer than it has arrived. That answer
+// was asked for after the delete returned, so it has seen the tombstones, and
+// no older answer can still be applied behind it: anything the mark still
+// covered is below it, and so below appliedSeq, which drops it as stale.
+func (g *goneMark) settle(seq uint64) {
 	if seq > uint64(*g) {
 		*g = 0
-		return false
 	}
-	return true
 }
 
 // settleGone drops the ids once every sequence has answered past its mark.

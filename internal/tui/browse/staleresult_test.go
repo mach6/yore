@@ -385,10 +385,23 @@ func TestABatchAndTheLoopCrossGoroutinesCleanly(t *testing.T) {
 	run := m.bulk
 	require.NotNil(t, run)
 
-	cmds, ok := batch().(tea.BatchMsg) // tea.Batch keeps the order: worker, tick
+	// Every cmd in the batch runs on its own goroutine, and the worker is picked
+	// out by what it answers rather than by its place in the batch: the order
+	// bubbletea keeps them in is not this test's to depend on.
+	cmds, ok := batch().(tea.BatchMsg)
 	require.True(t, ok)
-	out := make(chan tea.Msg, 1)
-	go func() { out <- cmds[0]() }()
+	out := make(chan tea.Msg, len(cmds))
+	for _, c := range cmds {
+		go func() { out <- c() }()
+	}
+	done := func() tea.Msg {
+		for msg := range out {
+			if d, isDone := msg.(bulkDeleteDoneMsg); isDone {
+				return d
+			}
+		}
+		return nil
+	}
 
 	// One call through, and the loop watches the count move while the worker is
 	// still going.
@@ -402,7 +415,7 @@ func TestABatchAndTheLoopCrossGoroutinesCleanly(t *testing.T) {
 	m, _ = step(t, m, press("esc"))
 	close(release) // that call finishes; the two after it are never sent
 
-	m, _ = step(t, m, <-out)
+	m, _ = step(t, m, done())
 	require.Nil(t, m.bulk)
 	require.Len(t, f.deleted, 2, "the call in flight lands, and the run stops there")
 	require.Contains(t, strip(m.View()), "stopped: deleted 2 of 4 records")
