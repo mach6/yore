@@ -30,7 +30,7 @@ freebsd/amd64.
                           │ drop (silent, exit 0)
 shell hook ─(append,<1ms)─┴▶ spool file ─▶ ┌─ yore daemon (unix socket) ─────────┐
                                            │  owns local bbolt (this host only)  │
-Ctrl-R / hb / hs ◀──── unix socket ──────▶ │  RAM corpus (warm snapshot + tail)  │◀─HTTPS─▶ yore server
+search / browse  ◀──── unix socket ──────▶ │  RAM corpus (warm snapshot + tail)  │◀─HTTPS─▶ yore server
    (thin TUI clients)                      │  remote plaintext: RAM only         │  (ciphertext,
                                            │  background sync loop (push/pull)   │   wrapped keys,
                                            └─────────────────────────────────────┘   public keys)
@@ -794,9 +794,10 @@ Two support subcommands back this: `yore filter` (reads a command on stdin, exit
 per shell start and is best-effort, printing nothing and exiting 0 if no daemon
 is running.
 
-Scoped aliases (unless `--no-aliases`): `hb` for the browser and `hs` for
-searching this host, with `hsa` (all hosts), `hss` (session), `hsc` (cwd), and
-`hsw` (workspace). yore never rebinds `h`.
+The alias block (unless `--no-aliases`) wraps two commands and adds nothing of
+its own: `hb` runs `yore browse`, and `hs` runs `yore search` on this host, with
+`hsa` (all hosts), `hss` (session), `hsc` (cwd), and `hsw` (workspace) passing
+the matching `--scope`. yore never rebinds `h`.
 
 ## Key hierarchy and encryption
 

@@ -1,0 +1,102 @@
+# Docker Compose deployment of the yore sync server, for a single host running
+# plain Docker. For Docker Swarm use docker/swarm/stack.yml instead; for a
+# throwaway multi-client playground use docker/sandbox/.
+#
+#   cd docker/compose
+#   printf 'YORE_TOKEN=%s\n' "$(openssl rand -base64 32)" > .env && chmod 600 .env
+#   docker compose up -d --build
+#
+# `--build` builds the image from docker/Dockerfile; after the first time,
+# `docker compose up -d` is enough, and `--build` is how you take an upgrade.
+#
+# The server stores only ciphertext and device public keys. It speaks plain
+# HTTP and is published on the loopback address only, so put your existing
+# reverse proxy in front of it to terminate TLS; your machines then run
+# `yore setup --server https://<your-host>` rather than pointing at this port.
+#
+# On the token: the Swarm stack keeps it in a Docker secret, which Compose has
+# no equivalent for. Compose bind-mounts a secret file with the host file's own
+# ownership, so YORE_TOKEN_FILE would need that file chowned to uid 65532 (the
+# image's user) to be readable at all. Reading it from the environment instead
+# keeps this file to one setup step. Put it in .env rather than inline here, so
+# the token is not the thing you paste into a chat window or commit by
+# accident, and keep .env at mode 600.
+#
+# The server runs in ONE of two modes: pick one, they are mutually exclusive
+# and setting both is a startup error:
+#
+# 1. Single tenant (what is uncommented below). Its db is /data/yore.db and its
+#    backups /data/backups/default/.
+#
+# 2. Named tenants. Each is an isolated db at /data/tenants/<name>.db,
+#    unreachable by any other tenant's token, with backups in
+#    /data/backups/<name>/. Nothing is stored at /data/yore.db in this mode.
+#    Write a JSON object of {"name":"token", …} to a file the container can
+#    read, mount it, and point YORE_TOKENS_FILE at it instead of setting
+#    YORE_TOKEN:
+#      printf '{"alice":"%s","bob":"%s"}' "$(openssl rand -base64 32)" \
+#        "$(openssl rand -base64 32)" > tenants.json
+#      chmod 644 tenants.json   # uid 65532 has to be able to read it
+#
+# In both modes the client and wire protocol are unchanged; the server routes
+# purely by the identity that signed the request.
+name: yore
+
+services:
+  yore:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile
+    image: yore:latest
+    restart: unless-stopped
+    # bbolt is single-owner, so exactly one container may hold /data. Never
+    # `docker compose up --scale yore=2`: a second writer corrupts the database.
+    environment:
+      # Mode 1: one tenant, its token taken from .env (see the note above).
+      YORE_TOKEN: ${YORE_TOKEN:?set YORE_TOKEN in docker/compose/.env}
+      # Mode 2; named tenants. Never set both: uncomment this and the volume
+      # line below, and delete YORE_TOKEN above.
+      # YORE_TOKENS_FILE: /run/yore/tenants.json
+      #
+      # Rolling per-tenant backups to /data/backups/<tenant>/ (defaults shown;
+      # set the interval to 0 to disable):
+      # YORE_BACKUP_INTERVAL: 1h
+      # YORE_BACKUP_KEEP: "3"
+    volumes:
+      - yore-data:/data
+      # - ./tenants.json:/run/yore/tenants.json:ro
+    # Loopback only: reach it through your reverse proxy, not off the network.
+    # Dropping the "127.0.0.1:" exposes it directly, with nothing encrypting
+    # the connection.
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      yore-data-owner:
+        condition: service_completed_successfully
+    # Liveness only. /v1/health touches no database on purpose: a restart is the
+    # only thing this can do, and the failure it must NOT trigger on is a full or
+    # read-only /data: the server still serves reads there, and restarting it
+    # into a volume it cannot write turns that into a crash loop. For "is it
+    # still accepting history?" point monitoring at GET /v1/ready, which commits
+    # a probe transaction and answers 503 when storage is gone (`yore doctor`
+    # asks it too).
+    healthcheck:
+      test: ["CMD", "/yore", "healthcheck", "--url", "http://localhost:8080/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # The image runs as nonroot (uid 65532) and a fresh named volume arrives
+  # root-owned, so without this the server cannot create its database on the
+  # very first start. This claims the volume for that uid once and exits; it is
+  # a no-op on every later start, and it is what lets the server itself stay
+  # nonroot. Nothing else in the deployment ever runs as root.
+  yore-data-owner:
+    image: busybox:stable
+    user: "0:0"
+    command: ["chown", "65532:65532", "/data"]
+    volumes:
+      - yore-data:/data
+
+volumes:
+  yore-data:

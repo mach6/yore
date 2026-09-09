@@ -1,12 +1,12 @@
 // Package risk is a deterministic, rule-based classifier for how dangerous a
 // shell command is: no model, no network. It answers "is this safe to run?"
-// for the MCP assess_risk tool, the browse views, and `yore agent report
-// --fail-on`. Highest-severity match wins; a command that only reads or prints
-// is never flagged. It is intentionally conservative and explainable: every
-// verdict names a category and a short reason, so an agent (or a human) can
-// see WHY. Rules are written against a parsed command (see parse.go), not
-// against the raw string, so they can ask what a line *runs* rather than what
-// it contains.
+// for the MCP assess_risk tool and the browse views, always after the fact:
+// nothing in yore consults it before a command runs. Highest-severity match
+// wins; a command that only reads or prints is never flagged. It is
+// intentionally conservative and explainable: every verdict names a category
+// and a short reason, so an agent (or a human) can see WHY. Rules are written
+// against a parsed command (see parse.go), not against the raw string, so they
+// can ask what a line *runs* rather than what it contains.
 package risk
 
 import (
@@ -58,7 +58,8 @@ func (l Level) Glyph() string {
 	}
 }
 
-// ParseLevel maps a label back to a Level (for --fail-on). Unknown => None.
+// ParseLevel maps a label back to a Level, for reading the level a user wrote
+// on a rule in risk.toml. Unknown => None.
 func ParseLevel(s string) Level {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "low":

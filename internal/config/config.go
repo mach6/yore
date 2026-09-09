@@ -120,7 +120,7 @@ type Config struct {
 	// UIs, where one prompt's forty tool invocations otherwise bury a morning of
 	// the user's own work. The agent explorer (`a`) is where that history
 	// belongs; grouped under the prompt that caused it rather than interleaved.
-	// Default true; `A` in the browser and `⌥a` in the Ctrl-R panel toggle it for
+	// Default true; `A` in the browser and `alt+a` in the Ctrl-R panel toggle it for
 	// the session, and both always say how many rows the filter is holding back.
 	// It governs only the interactive UIs. `--headless` never hides anything: it
 	// feeds scripts, which want the whole archive and have no status line to be

@@ -70,7 +70,7 @@ func (m Model) browseGroups() []keyhelp.Group {
 		row("←/→", "scroll the long command", "left", "right"),
 	)
 
-	panes := []keyhelp.Row{row("tab/⇧tab", "switch pane", "tab", "shift+tab")}
+	panes := []keyhelp.Row{row("tab/shift+tab", "switch pane", "tab", "shift+tab")}
 	if m.vim {
 		panes = append(panes, row("h/l", "switch pane", "h", "l"))
 	}
@@ -142,7 +142,7 @@ func (m Model) agentsGroups() []keyhelp.Group {
 			row("←/→", "scroll the long command", "left", "right"),
 		}},
 		{Title: "PANES", Rows: []keyhelp.Row{
-			row("tab/⇧tab", "switch pane", "tab", "shift+tab"),
+			row("tab/shift+tab", "switch pane", "tab", "shift+tab"),
 			row("z", "zoom the pane", "z"),
 			row("Z", "zoom, keeping the detail pane beside it", "Z"),
 			mouseRow("click", "focus a pane"),

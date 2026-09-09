@@ -90,7 +90,8 @@ grep -a hello-from-zsh-box /tmp/srv.db && echo "LEAK" || echo "ciphertext only â
 
 ## Interactive shells
 
-To poke at the real TUI (Ctrl-R search, `h`/`hs`, up-arrow), attach a terminal:
+To poke at the real TUI (Ctrl-R search, `yore browse`, `yore search`, up-arrow),
+attach a terminal:
 
 ```sh
 docker compose -f docker/sandbox/compose.yml exec zsh zsh      # zsh-box

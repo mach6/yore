@@ -33,7 +33,7 @@ type Options struct {
 	Keymap       string // "vim" enables an insert/normal sub-mode; "" / "emacs" = default
 
 	// HideAgents starts the panel with agent-run commands filtered out (config
-	// hide_agent_commands). ⌥a is the session toggle; this is only the state it
+	// hide_agent_commands). alt+a is the session toggle; this is only the state it
 	// opens in. An explicit --executor overrides it: asking for one executor is
 	// asking for agent commands.
 	HideAgents bool
@@ -75,7 +75,7 @@ type Model struct {
 	frecency bool // alt+f: rank by frequency×recency instead of recency
 	fuzzy    bool // alt+z: subsequence matching instead of substring
 
-	// hideAgents keeps agent-run commands out of the results (⌥a); hidden is how
+	// hideAgents keeps agent-run commands out of the results (alt+a); hidden is how
 	// many the daemon dropped for the current query. The panel quotes that number
 	// rather than filtering silently; above all when it is the reason a search
 	// looks like it found nothing.

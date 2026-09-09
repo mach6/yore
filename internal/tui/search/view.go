@@ -98,7 +98,7 @@ func (m Model) View() string {
 		// never do is tell you a command you ran does not exist.
 		msg := "no matches"
 		if note := m.hiddenAgentsNote(); note != "" {
-			msg = note + "; ⌥a shows them"
+			msg = note + "; alt+a shows them"
 		}
 		b.WriteString(m.th.Dim.Render("  " + msg))
 		b.WriteByte('\n')
@@ -240,14 +240,13 @@ func (m Model) composeLine(segs []styledSeg, selected bool, w int) string {
 
 // commandSegments turns a command into highlighted, single-line, width-limited
 // runs. Newlines collapse to a dim ⏎ marker with following whitespace
-// squeezed out; match spans (byte offsets from q.Ranges over the original
-// command) are colored with theme.Match. It returns the runs and their total
-// display width.
+// squeezed out; match spans (byte offsets over the original command) are
+// colored with theme.Match. It returns the runs and their total display width.
 func (m Model) commandSegments(cmd string, q match.Query, maxCols int) (segs []styledSeg, width int) {
 	if maxCols <= 0 || cmd == "" {
 		return nil, 0
 	}
-	ranges := q.Ranges(cmd)
+	ranges := m.matchRanges(cmd, q)
 	syn := hl.Classify(cmd)
 
 	type rk struct {
@@ -343,6 +342,21 @@ func (m Model) commandSegments(cmd string, q match.Query, maxCols int) (segs []s
 	return segs, used
 }
 
+// matchRanges is the spans to mark in a command, from whichever matcher
+// actually selected the row: the substring terms normally, and the subsequence
+// runes under alt+z. The two disagree completely (nothing the fuzzy matcher found
+// need contain the query as a substring), so highlighting with the wrong one
+// marks nothing at all.
+func (m Model) matchRanges(cmd string, q match.Query) [][2]int {
+	if m.fuzzy {
+		// The raw input, not q's parsed terms: the daemon fuzzy-matches on the
+		// whole query string, spaces and all, and the highlight has to be made
+		// of the same runes the row was chosen for.
+		return match.FuzzyRanges(m.ti.Value(), cmd)
+	}
+	return q.Ranges(cmd)
+}
+
 func (m Model) styleForKind(k int) lipgloss.Style {
 	switch k {
 	case kindMatch:
@@ -374,6 +388,16 @@ func (m Model) statusLine(w int) string {
 	}
 	if !m.dedupe {
 		pieces = append(pieces, statusPiece{"duplicates shown", th.Dim})
+	}
+	// What the list is made of, when it is not the default. The scope says
+	// itself in the prompt; these two had nothing anywhere, so a panel sorted
+	// by frequency or matched by subsequence was indistinguishable from one
+	// that was neither, and there was no way to tell what you were looking at.
+	if m.fuzzy {
+		pieces = append(pieces, statusPiece{"fuzzy", th.Dim})
+	}
+	if m.frecency {
+		pieces = append(pieces, statusPiece{"by frequency", th.Dim})
 	}
 	// Ahead of the sync hint and the key hints: a filter withholding results the
 	// user is actively searching for outranks both. With no rows at all the empty

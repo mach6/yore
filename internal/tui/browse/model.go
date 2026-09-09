@@ -1188,7 +1188,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.scrollLeft()
 		case "enter":
 			// Hand the picked command back to the shell (recall-to-prompt);
-			// Run returns it and the `h` function drops it on the next prompt.
+			// Run returns it and the `hb` function drops it on the next prompt.
 			return m.acceptSelected()
 		case "y":
 			return m.copySelected()

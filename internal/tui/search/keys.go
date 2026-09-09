@@ -12,12 +12,18 @@ import (
 // browser does: there, "?" means the literal character, and a history search for
 // "?" has to work. alt+/ is the nearest thing to "?" that a filter box can
 // afford, and it sits with the panel's other alt-modified toggles.
+//
+// Keys are named the way the keyboard in front of the user names them, so the
+// alt keys read "alt+z" and not the Mac "⌥z": yore's platforms are Linux,
+// FreeBSD and WSL as much as macOS, and on all but one of them that glyph is
+// on no key at all. "^r" stays, being the terminal's own notation for control
+// rather than any one vendor's.
 
 func row(keys, desc string, keyed ...string) keyhelp.Row {
 	return keyhelp.Row{Keys: keys, Desc: desc, Keyed: keyed}
 }
 
-// agentToggleDesc says what ⌥a will do next, not what it is for, so the key list
+// agentToggleDesc says what alt+a will do next, not what it is for, so the key list
 // carries both the filter's current state and the outcome of pressing it.
 func (m Model) agentToggleDesc() string {
 	if m.hideAgents {
@@ -33,10 +39,10 @@ func (m Model) helpGroups() []keyhelp.Group {
 		row("↓/^n", "down", "down", "ctrl+n"),
 	}
 	filter := []keyhelp.Row{
-		row("⌥a", m.agentToggleDesc(), "alt+a"),
-		row("⌥d", "show duplicates", "alt+d"),
-		row("⌥z", "fuzzy matching", "alt+z"),
-		row("⌥f", "rank by frequency, not time", "alt+f"),
+		row("alt+a", m.agentToggleDesc(), "alt+a"),
+		row("alt+d", "show duplicates", "alt+d"),
+		row("alt+z", "fuzzy matching", "alt+z"),
+		row("alt+f", "rank by frequency, not time", "alt+f"),
 		row("^r", "cycle scope", "ctrl+r"),
 	}
 	run := []keyhelp.Row{
@@ -57,7 +63,7 @@ func (m Model) helpGroups() []keyhelp.Group {
 		// toggles are insert-mode only.
 		filter = []keyhelp.Row{
 			row("^r", "cycle scope", "ctrl+r"),
-			row("⌥a", m.agentToggleDesc(), "alt+a"),
+			row("alt+a", m.agentToggleDesc(), "alt+a"),
 		}
 	} else {
 		run = append(run, row("esc", "cancel", "esc", "ctrl+c", "ctrl+g"))
@@ -68,7 +74,7 @@ func (m Model) helpGroups() []keyhelp.Group {
 			run = append(run, row("^c", "cancel", "ctrl+c", "ctrl+g"))
 		}
 		filter = append([]keyhelp.Row{{Keys: "type", Desc: "to filter"}}, filter...)
-		run = append(run, row("⌥/", "these keys", "alt+/"))
+		run = append(run, row("alt+/", "these keys", "alt+/"))
 	}
 
 	return []keyhelp.Group{
@@ -104,7 +110,7 @@ func (m Model) hintRows() []keyhelp.Row {
 	// a narrow terminal, and this is the one a user staring at a short result list
 	// actually needs.
 	if m.hiddenAgentsNote() != "" {
-		rows[2] = row("⌥a", "show agents", "alt+a")
+		rows[2] = row("alt+a", "show agents", "alt+a")
 	}
-	return append(rows, row("⌥/", "keys", "alt+/"))
+	return append(rows, row("alt+/", "keys", "alt+/"))
 }

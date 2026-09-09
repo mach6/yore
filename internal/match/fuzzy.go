@@ -1,6 +1,9 @@
 package match
 
-import "unicode"
+import (
+	"unicode"
+	"unicode/utf8"
+)
 
 // Fuzzy reports whether every rune of pattern appears in s in order (a
 // subsequence match, fzf-style), and returns a score where LOWER is a tighter
@@ -41,6 +44,46 @@ func Fuzzy(pattern, s string) (ok bool, score int) {
 	}
 	// Lower is better: penalize scattered matches and a late start.
 	return true, gaps*4 + firstAt
+}
+
+// FuzzyRanges returns the byte-offset [start,end) spans of the runes a fuzzy
+// match of pattern consumes in s, with a contiguous run coalesced into one
+// span, or nil when pattern does not match. It is Ranges' counterpart for the
+// subsequence matcher: substring highlighting has nothing to mark when the
+// match is scattered, which left the one mode where "why is this row here?"
+// is not obvious as the one that answered it least.
+//
+// It walks s exactly as Fuzzy does and takes the leftmost rune for each
+// pattern rune, so the marked characters are the ones the match was actually
+// made of, and the highlight cannot disagree with the score.
+func FuzzyRanges(pattern, s string) [][2]int {
+	if pattern == "" {
+		return nil
+	}
+	fold := !hasUpper(pattern)
+	pr := []rune(pattern)
+
+	var out [][2]int
+	pi := 0
+	for i := 0; i < len(s) && pi < len(pr); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if size == 0 {
+			size = 1
+		}
+		if runeEq(r, pr[pi], fold) {
+			if n := len(out); n > 0 && out[n-1][1] == i {
+				out[n-1][1] = i + size // extends the run before it
+			} else {
+				out = append(out, [2]int{i, i + size})
+			}
+			pi++
+		}
+		i += size
+	}
+	if pi < len(pr) {
+		return nil
+	}
+	return out
 }
 
 func runeEq(a, b rune, fold bool) bool {

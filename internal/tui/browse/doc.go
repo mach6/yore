@@ -1,7 +1,8 @@
 // Package browse implements yore's full-screen history browser: the deliberate
-// "go look at my history" experience bound to the `h` alias (yore browse), as
-// opposed to the inline Ctrl-R search panel. It is a full alt-screen Bubble Tea
-// program with three browse panes (a host sidebar, a virtualized results list,
+// "go look at my history" experience of `yore browse` (which the `hb` shell
+// function wraps), as opposed to the inline Ctrl-R search panel. It is a full
+// alt-screen Bubble Tea program with three browse panes (a host sidebar, a
+// virtualized results list,
 // and a detail pane) plus a four-pane agent explorer (executor sidebar,
 // prompts, that prompt's commands, details) and single-screen stats and devices
 // views. Any pane can be zoomed to the whole frame, and the seams between panes

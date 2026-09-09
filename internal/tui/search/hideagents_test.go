@@ -84,7 +84,7 @@ func TestPanelOpensWithoutAgentCommands(t *testing.T) {
 	}
 }
 
-// TestAltAToggles: ⌥a sits with the panel's other alt-modified toggles, because
+// TestAltAToggles: alt+a sits with the panel's other alt-modified toggles, because
 // in a filter box a plain letter is text.
 func TestAltAToggles(t *testing.T) {
 	q := &agentQuerier{}
@@ -101,7 +101,7 @@ func TestAltAToggles(t *testing.T) {
 
 	tm, _ = m.Update(altA())
 	m = refresh(t, tm.(Model), q, 3)
-	require.True(t, q.lastReq.HumanOnly, "⌥a toggles both ways")
+	require.True(t, q.lastReq.HumanOnly, "alt+a toggles both ways")
 	require.Len(t, m.rows, 2)
 }
 
@@ -117,7 +117,7 @@ func TestAltAWorksInVimNormalMode(t *testing.T) {
 	require.True(t, m.normal)
 
 	tm, _ = m.Update(altA())
-	require.False(t, tm.(Model).hideAgents, "⌥a should reach normal mode too")
+	require.False(t, tm.(Model).hideAgents, "alt+a should reach normal mode too")
 }
 
 // TestPanelSaysWhatItIsHolding: the panel has one status line and no footer, so
@@ -128,7 +128,7 @@ func TestPanelSaysWhatItIsHolding(t *testing.T) {
 
 	out := strip(m.View())
 	require.Contains(t, out, "2 agent commands hidden")
-	require.Contains(t, out, "⌥a show agents", "and names the key that brings them back")
+	require.Contains(t, out, "alt+a show agents", "and names the key that brings them back")
 
 	tm, _ := m.Update(altA())
 	m = refresh(t, tm.(Model), q, 2)
@@ -149,12 +149,12 @@ func TestNoMatchesNeverLies(t *testing.T) {
 	out := strip(m.View())
 	require.NotContains(t, out, "no matches", "the matches exist; they are filtered")
 	require.Contains(t, out, "2 agent commands hidden")
-	require.Contains(t, out, "⌥a shows them")
+	require.Contains(t, out, "alt+a shows them")
 }
 
 // TestExplicitExecutorOverridesTheFilter: `yore search --executor claude-code`
 // is a request for agent commands, so the panel must not open with them hidden,
-// nor let ⌥a hide the very rows that were asked for.
+// nor let alt+a hide the very rows that were asked for.
 func TestExplicitExecutorOverridesTheFilter(t *testing.T) {
 	q := &agentQuerier{}
 	m := panelWith(t, q, Options{HideAgents: true, Executor: "claude-code"})
@@ -164,7 +164,7 @@ func TestExplicitExecutorOverridesTheFilter(t *testing.T) {
 	require.Equal(t, "claude-code", q.lastReq.Executor)
 
 	tm, _ := m.Update(altA())
-	require.False(t, tm.(Model).hideAgents, "⌥a must not fight an explicit --executor")
+	require.False(t, tm.(Model).hideAgents, "alt+a must not fight an explicit --executor")
 }
 
 // TestHiddenCountOutranksTheHints: a filter withholding results the user is
@@ -176,5 +176,5 @@ func TestHiddenCountOutranksTheHints(t *testing.T) {
 
 	narrow := strip(m.statusLine(34))
 	require.Contains(t, narrow, "agent commands hidden")
-	require.NotContains(t, narrow, "⌥/ keys", "the hints shed first")
+	require.NotContains(t, narrow, "alt+/ keys", "the hints shed first")
 }

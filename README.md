@@ -28,6 +28,25 @@ on your prompt to edit.
 
 ![Ctrl-R search, filtered to git commands](docs/images/search.png)
 
+Press `Ctrl-R` again and the same panel searches every machine you own, saying
+which one ran what.
+
+![Ctrl-R search across three machines](docs/images/search-all.png)
+
+Again for this shell's session, again for this directory, and again for this
+git repo, which finds what you ran anywhere under it.
+
+![Ctrl-R search scoped to the current git repo](docs/images/search-repo.png)
+
+`Alt-Z` matches a subsequence instead of a substring, so `gpo` is enough to
+find `git push origin main`, and each row marks the letters it matched on.
+
+![Ctrl-R search with fuzzy matching on](docs/images/search-fuzzy.png)
+
+`Alt-/` names the rest of them.
+
+![The Ctrl-R key list](docs/images/search-keys.png)
+
 `yore stats`: what you run, where you run it, and when.
 
 ![The stats screen, with an activity calendar](docs/images/stats.png)
@@ -98,8 +117,18 @@ future commands.
 Sync is optional. You host the server yourself; it never sees anything but
 ciphertext.
 
+On a server your machines can reach, with Docker Compose:
+
 ```bash
-# on a server your machines can reach
+cd docker/compose
+printf 'YORE_TOKEN=%s\n' "$(openssl rand -base64 32)" > .env && chmod 600 .env
+docker compose up -d --build
+```
+
+That listens on `127.0.0.1:8080`; put your reverse proxy in front of it to
+terminate TLS. On Docker Swarm instead:
+
+```bash
 openssl rand -base64 32 | docker secret create yore_token -
 docker build -f docker/Dockerfile -t yore:latest .
 docker stack deploy -c docker/swarm/stack.yml yore
@@ -134,19 +163,24 @@ Lost every machine? `yore recover` asks for the recovery phrase and re-enrolls.
 Your device key is kept in your OS keyring where one is available, and in a
 `0600` file otherwise (headless servers, containers).
 
-Multi-tenant hosting, backups, and the full server configuration are in
-[`docker/swarm/stack.yml`](docker/swarm/stack.yml) and
+Multi-tenant hosting, backups, and the full server configuration are commented
+in [`docker/compose/compose.yml`](docker/compose/compose.yml) and
+[`docker/swarm/stack.yml`](docker/swarm/stack.yml), and specified in
 [`docs/protocol.md`](docs/protocol.md). There is a local container playground in
 [`docker/sandbox/`](docker/sandbox/).
 
 ## What you get
 
-**`Ctrl-R` search.** Type to filter. Press `Ctrl-R` again to cycle scope: this
-machine, every machine, one machine, this session, this directory, this git
-repo. Frecency ranking and fuzzy matching are toggles. Enter puts the command on
-your prompt to review; set `enter_executes` if you would rather it just run.
+**`Ctrl-R` search.** Type to filter. Press `Ctrl-R` again to cycle the scope:
+this machine, every machine, this session, this directory, this git repo.
+`Alt-Z` matches a subsequence instead of a substring, `Alt-F` ranks by how
+often you run something rather than how recently, `Alt-A` brings in the
+commands your agents ran, `Alt-D` stops folding repeats together, and `Alt-/`
+lists every key. Enter puts the command on your prompt to review; set
+`enter_executes` if you would rather it just run.
 
-**`hb`, the browser.** A full-screen view of your history with four screens:
+**`yore browse`, the browser.** A full-screen view of your history with four
+screens:
 
 - the **command table**, with a host sidebar and a details pane;
 - **stats** (`s`): totals, top commands and directories, an activity heatmap, a
@@ -167,9 +201,16 @@ whole selection at once. A bulk untag only asks about the checked rows that
 actually carry the tag, so the count it reports is the number that changed.
 `yore stats` and `yore agents` open straight onto those screens.
 
-**Search from scripts.** `hs <query>` searches this machine; `hsa`, `hss`,
-`hsc`, `hsw` search all machines, this session, this directory, this repo.
-`yore search --headless` prints plain lines for pipes.
+**Search from scripts.** `yore search --headless <query>` prints matching
+commands as plain lines for pipes, and `--scope all|session|cwd|workspace`
+picks what it searches.
+
+**Short names for all of it.** `yore init` also installs a handful of aliases,
+so the things you reach for most are two keystrokes: `hb` for `yore browse`,
+`hs` for `yore search`, and `hsa`, `hss`, `hsc`, `hsw` for that search over
+all machines, this session, this directory, and this git repo. They are
+wrappers and nothing more; every one of them has a `yore` command behind it,
+and `yore init --no-aliases` leaves them out. yore never touches `h`.
 
 **Secrets stay out of your history.** A default-on filter catches credentials
 (API keys, tokens, passwords on command lines, and the same things stated in an
@@ -266,8 +307,8 @@ that.
 | Search and recall a command | `Ctrl-R` (or Up-arrow), type, `Enter` |
 | Re-run a command by number | `!N`, `!!`, `!$` |
 | Change search scope | `Ctrl-R` again inside the search |
-| Browse, get stats, watch agents, manage devices | `hb`, then `s`, `a`, `D` |
-| See every key on the screen you're on | `?` in `hb`, `⌥/` in `Ctrl-R` |
+| Browse, get stats, follow agents, manage devices | `yore browse` (alias `hb`), then `s`, `a`, `D` |
+| See every key on the screen you're on | `?` in `yore browse`, `Alt-/` in `Ctrl-R` |
 | Read your history without agent noise | nothing; agent commands are hidden by default (`A` shows them) |
 | Jump to stats or the agent explorer | `yore stats`, `yore agents` |
 | See an agent's prompt and what it ran | `yore agents`; `Tab` cycles panes |
@@ -276,12 +317,13 @@ that.
 | Give one pane the whole screen | `z` |
 | Resize panes | drag the border with the mouse |
 | Delete, tag, or untag several commands | `space` to check rows (`ctrl+a` for all), then `d`, `Ctrl+T`, or `Ctrl+X` |
-| Search from a script | `hs <query>`, or `yore search --headless <query>` |
+| Search from a script | `yore search --headless <query>` (alias `hs`) |
+| Type less | the aliases `hb`, `hs`, `hsa`, `hss`, `hsc`, `hsw` wrap the commands above |
 | See only what an agent ran | `yore search --executor claude-code` |
 | Tag and filter by tag | `yore tag add refactor`, `yore search --tag refactor` |
 | Take a tag back off | `yore tag rm refactor --command <id>` (or `--session <id>`), or `Ctrl+X` in the browser |
 | See what your tags cover | `yore tag list` (`--scope all` for every machine), or the **By tag** column in `yore stats` |
-| Force a sync now | `yore sync`, or `S` in `hb` |
+| Force a sync now | `yore sync`, or `S` in the browser |
 | Add a machine | `n` in `yore devices`, then `yore setup --token …` there, then `a` to approve |
 | Approve or revoke a machine | `yore devices`; `a` or `x`, both ask first |
 | Get back in after losing every machine | `yore recover` |

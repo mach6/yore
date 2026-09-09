@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/require"
 
+	"yore/internal/match"
 	"yore/internal/proto"
 	"yore/internal/rec"
 )
@@ -72,9 +73,10 @@ func key(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyEnter}
 	case "esc":
 		return tea.KeyMsg{Type: tea.KeyEsc}
-	case "alt+d":
-		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d"), Alt: true}
 	default:
+		if r, ok := strings.CutPrefix(s, "alt+"); ok {
+			return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(r), Alt: true}
+		}
 		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 	}
 }
@@ -437,4 +439,57 @@ func TestConcurrentQueryCommands(t *testing.T) {
 	}
 	wg.Wait()
 	require.Equal(t, len(cmds), f.calls)
+}
+
+// TestFuzzyHighlightsTheRunesItMatched guards the pairing of matcher and
+// highlighter. Under alt+z the daemon selects rows by subsequence, and a row
+// returns need not contain the query as a substring anywhere: highlighting one
+// with the substring spans marks nothing at all, which is how the panel used to
+// answer "why is this row here?" in the one mode where the answer is not
+// obvious by eye. It asserts the spans rather than the rendered line because
+// strip() throws styling away, so a line-level check passes either way.
+func TestFuzzyHighlightsTheRunesItMatched(t *testing.T) {
+	const cmd = "git push origin main"
+	f := &fakeQuerier{resp: mkResp(mkRows(cmd))}
+	m := NewModel(f, Options{Version: "v1"})
+	m = typeStr(t, m, "gpo")
+	q := match.Parse("gpo")
+
+	require.Empty(t, m.matchRanges(cmd, q),
+		"substring matching has nothing to mark for a subsequence-only query")
+
+	m, _ = step(t, m, key("alt+z"))
+	require.True(t, m.fuzzy, "alt+z should turn fuzzy matching on")
+	require.Equal(t, [][2]int{{0, 1}, {4, 5}, {9, 10}}, m.matchRanges(cmd, q),
+		"alt+z should mark the g, p and o the match was made of")
+
+	m, _ = step(t, m, key("alt+z"))
+	require.False(t, m.fuzzy)
+	require.Empty(t, m.matchRanges(cmd, q), "alt+z off goes back to substring spans")
+}
+
+// TestStatusNamesTheActiveToggles: alt+z and alt+f change what the list is
+// and used to leave no mark anywhere, so a panel matched by subsequence or
+// ranked by frequency looked exactly like one that was neither. The scope has
+// its word in the prompt; these two need the status line to have one.
+func TestStatusNamesTheActiveToggles(t *testing.T) {
+	f := &fakeQuerier{resp: mkResp(mkRows("git push origin main"))}
+	m := NewModel(f, Options{Version: "v1"})
+	m, _ = step(t, m, tea.WindowSizeMsg{Width: 132, Height: 12})
+	m, _ = step(t, m, queryResultMsg{seq: 1, resp: mkResp(mkRows("git push origin main"))})
+
+	require.NotContains(t, strip(m.View()), "fuzzy", "nothing to say when both are off")
+	require.NotContains(t, strip(m.View()), "by frequency")
+
+	m, _ = step(t, m, key("alt+z"))
+	require.Contains(t, strip(m.View()), "fuzzy", "alt+z should say so on the status line")
+
+	m, _ = step(t, m, key("alt+f"))
+	require.Contains(t, strip(m.View()), "by frequency", "alt+f should say so too")
+
+	m, _ = step(t, m, key("alt+z"))
+	m, _ = step(t, m, key("alt+f"))
+	out := strip(m.View())
+	require.NotContains(t, out, "fuzzy", "toggling back off should take the label away")
+	require.NotContains(t, out, "by frequency")
 }

@@ -24,7 +24,7 @@ const DefaultBin = "yore"
 
 // Options configures the emitted shell-integration script.
 type Options struct {
-	// Aliases controls whether the h/hs convenience aliases are emitted.
+	// Aliases controls whether the hb/hs convenience aliases are emitted.
 	// The caller passes this explicitly; the CLI's default is true.
 	Aliases bool
 	// Bin is the command name or path used to invoke yore from the hooks

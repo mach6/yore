@@ -197,7 +197,7 @@ func TestStatusHintsYieldToWarnings(t *testing.T) {
 	}
 
 	wide := readyPanel(t, 120)
-	require.Contains(t, strip(wide.statusLine(120)), "⌥/ keys", "a wide line should point at the key list")
+	require.Contains(t, strip(wide.statusLine(120)), "alt+/ keys", "a wide line should point at the key list")
 
 	// With an error to report, the warning wins the room.
 	errd := readyPanel(t, 60)

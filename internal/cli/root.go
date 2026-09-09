@@ -242,7 +242,7 @@ func newBrowseCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&acceptFile, "accept-file", "",
-		"write the accepted command to this file instead of stdout (used by the `h` shell function)")
+		"write the accepted command to this file instead of stdout (used by the `hb` shell function)")
 	return cmd
 }
 
@@ -411,7 +411,7 @@ func newInitCmd() *cobra.Command {
 			return code(runInit(args[0], bin, mode, noAliases))
 		},
 	}
-	cmd.Flags().BoolVar(&noAliases, "no-aliases", false, "omit the h/hs convenience aliases (shells)")
+	cmd.Flags().BoolVar(&noAliases, "no-aliases", false, "omit the hb/hs convenience aliases (shells)")
 	cmd.Flags().StringVar(&bin, "bin", shell.DefaultBin, "binary name or path the hooks should invoke")
 	cmd.Flags().StringVar(&mode, "mode", "", "integration mode: takeover|coexist|capture (shells; default: config)")
 	cmd.Flags().BoolVar(&project, "project", false, "claude-code/devin: write the project-scoped config instead of the user file")

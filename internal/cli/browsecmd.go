@@ -63,10 +63,11 @@ func uiFromPrefs(p browse.Prefs) config.UIState {
 	return ui
 }
 
-// runBrowse opens the full-screen history browser (the `h` alias target) on the
-// given start view; `yore stats` and `yore agents` are the same program landed
-// on a different screen. The command the user accepts with Enter is delivered
-// out-of-band: to acceptFile when the `h` shell function passes --accept-file
+// runBrowse opens the full-screen history browser (`yore browse`, which the
+// `hb` shell function wraps) on the given start view; `yore stats` and
+// `yore agents` are the same program landed on a different screen. The
+// command the user accepts with Enter is delivered
+// out-of-band: to acceptFile when the `hb` shell function passes --accept-file
 // (so it can drop it on the next prompt), otherwise printed to stdout so a bare
 // `yore browse` still surfaces the pick. Nothing is emitted when the user quits
 // without accepting.
