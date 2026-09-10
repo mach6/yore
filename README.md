@@ -63,7 +63,7 @@ The history in these is invented, not anyone's.
 Requires Go 1.26+ to build:
 
 ```bash
-git clone <repo-url> && cd yore
+git clone https://github.com/mach6/yore.git && cd yore
 make build && sudo install -m755 bin/yore /usr/local/bin/yore
 ```
 
