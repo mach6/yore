@@ -9,9 +9,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"yore/internal/config"
-	"yore/internal/rec"
-	"yore/internal/store"
+	"github.com/mach6/yore/internal/config"
+	"github.com/mach6/yore/internal/rec"
+	"github.com/mach6/yore/internal/store"
 )
 
 func TestBackupsToPrune(t *testing.T) {

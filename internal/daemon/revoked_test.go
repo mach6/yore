@@ -10,15 +10,15 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"yore/internal/config"
-	"yore/internal/cryptobox"
-	"yore/internal/proto"
-	"yore/internal/rec"
-	"yore/internal/rstore"
-	"yore/internal/secret"
-	"yore/internal/store"
-	"yore/internal/syncer"
-	"yore/internal/wire"
+	"github.com/mach6/yore/internal/config"
+	"github.com/mach6/yore/internal/cryptobox"
+	"github.com/mach6/yore/internal/proto"
+	"github.com/mach6/yore/internal/rec"
+	"github.com/mach6/yore/internal/rstore"
+	"github.com/mach6/yore/internal/secret"
+	"github.com/mach6/yore/internal/store"
+	"github.com/mach6/yore/internal/syncer"
+	"github.com/mach6/yore/internal/wire"
 )
 
 // seedCache writes one host's ciphertext into the on-disk cache so a test can

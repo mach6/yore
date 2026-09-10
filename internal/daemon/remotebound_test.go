@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"yore/internal/rec"
+	"github.com/mach6/yore/internal/rec"
 )
 
 // remoteRecords builds n commands for a host with ascending seq, as a pull

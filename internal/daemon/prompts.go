@@ -4,7 +4,7 @@ import (
 	"sort"
 	"sync"
 
-	"yore/internal/rec"
+	"github.com/mach6/yore/internal/rec"
 )
 
 // promptIndex holds every known user prompt by id, so a command row that

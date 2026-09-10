@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 
-	"yore/internal/daemon"
-	"yore/internal/mcp"
-	"yore/internal/risk"
+	"github.com/mach6/yore/internal/daemon"
+	"github.com/mach6/yore/internal/mcp"
+	"github.com/mach6/yore/internal/risk"
 )
 
 // runMcpServe runs the Model Context Protocol server on stdio: it ensures the

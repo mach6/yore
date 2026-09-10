@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"os"
 
-	"yore/internal/config"
-	"yore/internal/daemon"
-	"yore/internal/proto"
-	"yore/internal/rec"
-	"yore/internal/tui/search"
+	"github.com/mach6/yore/internal/config"
+	"github.com/mach6/yore/internal/daemon"
+	"github.com/mach6/yore/internal/proto"
+	"github.com/mach6/yore/internal/rec"
+	"github.com/mach6/yore/internal/tui/search"
 )
 
 // interactiveSearch runs the inline TUI. Contract with the shell widgets:

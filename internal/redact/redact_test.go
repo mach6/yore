@@ -5,7 +5,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-	"yore/internal/config"
+
+	"github.com/mach6/yore/internal/config"
 
 	"github.com/stretchr/testify/require"
 )

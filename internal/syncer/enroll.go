@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"yore/internal/cryptobox"
-	"yore/internal/wire"
+	"github.com/mach6/yore/internal/cryptobox"
+	"github.com/mach6/yore/internal/wire"
 )
 
 // bootstrapHKVersion is the HK generation created when the first device forms
@@ -330,7 +330,7 @@ func (s *Syncer) findDevice(ctx context.Context, deviceID string) (wire.Device, 
 // approver can confirm the pending device is the intended one and not a
 // substituted key.
 func VerificationCode(pub [32]byte) string {
-	sum := sha256.Sum256(append([]byte("yore/verify/v1|"), pub[:]...))
+	sum := sha256.Sum256(append([]byte("github.com/mach6/yore/verify/v1|"), pub[:]...))
 	const groups, per = 6, 4
 	var b strings.Builder
 	for g := 0; g < groups; g++ {

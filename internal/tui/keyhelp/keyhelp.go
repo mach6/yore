@@ -14,7 +14,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 
-	"yore/internal/tui/theme"
+	"github.com/mach6/yore/internal/tui/theme"
 )
 
 // Row is one binding: the keys as the user should press them, and what they do.

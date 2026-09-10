@@ -9,7 +9,7 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
-	"yore/internal/config"
+	"github.com/mach6/yore/internal/config"
 )
 
 // Ruleset is a compiled set of risk rules: the built-ins plus whatever the

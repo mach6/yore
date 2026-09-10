@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"yore/internal/shell"
+	"github.com/mach6/yore/internal/shell"
 )
 
 var update = flag.Bool("update", false, "regenerate golden files under testdata/")

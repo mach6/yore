@@ -3,7 +3,7 @@ package cli
 import (
 	"fmt"
 
-	"yore/internal/rec"
+	"github.com/mach6/yore/internal/rec"
 )
 
 // runGenID prints one fresh ULID; the shell hook uses it for session ids.

@@ -13,7 +13,7 @@ import (
 
 	"go.etcd.io/bbolt"
 
-	"yore/internal/wire"
+	"github.com/mach6/yore/internal/wire"
 )
 
 // multiTenant builds a Server with two named tenants ("alice", "bob") and no

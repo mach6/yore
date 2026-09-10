@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"yore/internal/cryptobox"
-	"yore/internal/rec"
-	"yore/internal/store"
-	"yore/internal/wire"
+	"github.com/mach6/yore/internal/cryptobox"
+	"github.com/mach6/yore/internal/rec"
+	"github.com/mach6/yore/internal/store"
+	"github.com/mach6/yore/internal/wire"
 )
 
 // metaLastUploadedSeq is the store meta key holding the push watermark: the

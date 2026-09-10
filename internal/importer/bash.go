@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"yore/internal/rec"
+	"github.com/mach6/yore/internal/rec"
 )
 
 // Bash parses a bash history stream into records. When HISTTIMEFORMAT was set,

@@ -11,10 +11,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"yore/internal/cryptobox"
-	"yore/internal/rec"
-	"yore/internal/server"
-	"yore/internal/wire"
+	"github.com/mach6/yore/internal/cryptobox"
+	"github.com/mach6/yore/internal/rec"
+	"github.com/mach6/yore/internal/server"
+	"github.com/mach6/yore/internal/wire"
 )
 
 const testToken = "test-token"

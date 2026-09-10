@@ -12,8 +12,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/require"
 
-	"yore/internal/proto"
-	"yore/internal/tui/keyhelp"
+	"github.com/mach6/yore/internal/proto"
+	"github.com/mach6/yore/internal/tui/keyhelp"
 )
 
 // handlerFuncs are the functions that decide what a key does. Every one of them

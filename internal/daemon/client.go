@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"yore/internal/config"
-	"yore/internal/proto"
-	"yore/internal/rec"
+	"github.com/mach6/yore/internal/config"
+	"github.com/mach6/yore/internal/proto"
+	"github.com/mach6/yore/internal/rec"
 )
 
 const (

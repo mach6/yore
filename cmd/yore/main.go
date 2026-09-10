@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"yore/internal/cli"
+	"github.com/mach6/yore/internal/cli"
 )
 
 func main() {

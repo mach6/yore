@@ -7,7 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/require"
 
-	"yore/internal/rec"
+	"github.com/mach6/yore/internal/rec"
 )
 
 // mkTaggedRows is mkRows with a tag list per row, for the untag paths: every

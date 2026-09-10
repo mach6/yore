@@ -5,8 +5,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"yore/internal/config"
-	"yore/internal/tui/browse"
+	"github.com/mach6/yore/internal/config"
+	"github.com/mach6/yore/internal/tui/browse"
 )
 
 // TestPrefsRoundTripThroughUIState: ui.toml is rewritten whole on every save, so

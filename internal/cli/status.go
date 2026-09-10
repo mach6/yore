@@ -7,9 +7,9 @@ import (
 	"os"
 	"time"
 
-	"yore/internal/config"
-	"yore/internal/daemon"
-	"yore/internal/proto"
+	"github.com/mach6/yore/internal/config"
+	"github.com/mach6/yore/internal/daemon"
+	"github.com/mach6/yore/internal/proto"
 )
 
 // runSync forces an immediate push/pull cycle and prints the result.

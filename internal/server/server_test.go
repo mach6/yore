@@ -18,8 +18,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/bbolt"
 
-	"yore/internal/reqsign"
-	"yore/internal/wire"
+	"github.com/mach6/yore/internal/reqsign"
+	"github.com/mach6/yore/internal/wire"
 )
 
 // ---- harness ----

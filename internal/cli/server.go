@@ -10,8 +10,8 @@ import (
 	"syscall"
 	"time"
 
-	"yore/internal/config"
-	"yore/internal/server"
+	"github.com/mach6/yore/internal/config"
+	"github.com/mach6/yore/internal/server"
 )
 
 // runServer runs the sync server in the foreground:

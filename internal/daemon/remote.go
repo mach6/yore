@@ -6,16 +6,16 @@ import (
 	"sync"
 	"time"
 
-	"yore/internal/config"
-	"yore/internal/cryptobox"
-	"yore/internal/match"
-	"yore/internal/proto"
-	"yore/internal/rec"
-	"yore/internal/rstore"
-	"yore/internal/secret"
-	"yore/internal/store"
-	"yore/internal/syncer"
-	"yore/internal/wire"
+	"github.com/mach6/yore/internal/config"
+	"github.com/mach6/yore/internal/cryptobox"
+	"github.com/mach6/yore/internal/match"
+	"github.com/mach6/yore/internal/proto"
+	"github.com/mach6/yore/internal/rec"
+	"github.com/mach6/yore/internal/rstore"
+	"github.com/mach6/yore/internal/secret"
+	"github.com/mach6/yore/internal/store"
+	"github.com/mach6/yore/internal/syncer"
+	"github.com/mach6/yore/internal/wire"
 )
 
 // errSyncOff is returned by device operations when sync isn't configured.

@@ -10,9 +10,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/bbolt"
 
-	"yore/internal/config"
-	"yore/internal/rec"
-	"yore/internal/spool"
+	"github.com/mach6/yore/internal/config"
+	"github.com/mach6/yore/internal/rec"
+	"github.com/mach6/yore/internal/spool"
 )
 
 func openTemp(t *testing.T) *Store {

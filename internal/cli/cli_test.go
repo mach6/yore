@@ -7,9 +7,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"yore/internal/config"
-	"yore/internal/proto"
-	"yore/internal/rec"
+	"github.com/mach6/yore/internal/config"
+	"github.com/mach6/yore/internal/proto"
+	"github.com/mach6/yore/internal/rec"
 )
 
 // TestFilterDecision covers the keep/drop gate mirrored from runRecord.

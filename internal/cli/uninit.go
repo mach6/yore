@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"yore/internal/shell"
+	"github.com/mach6/yore/internal/shell"
 )
 
 // newUninitCmd reverses `yore init <agent>`: it removes only yore's capture hooks

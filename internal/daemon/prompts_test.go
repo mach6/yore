@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"yore/internal/rec"
+	"github.com/mach6/yore/internal/rec"
 )
 
 func promptRec(id, text string) rec.Record {

@@ -8,7 +8,7 @@ import (
 	"github.com/mattn/go-runewidth"
 	"github.com/stretchr/testify/require"
 
-	"yore/internal/tui/theme"
+	"github.com/mach6/yore/internal/tui/theme"
 )
 
 var ansiRE = regexp.MustCompile("\x1b\\[[0-9;]*m")

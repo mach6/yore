@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"io"
 
-	"yore/internal/rec"
+	"github.com/mach6/yore/internal/rec"
 )
 
 // Ops.

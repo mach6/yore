@@ -32,8 +32,8 @@ import (
 
 	"go.etcd.io/bbolt"
 
-	"yore/internal/reqsign"
-	"yore/internal/wire"
+	"github.com/mach6/yore/internal/reqsign"
+	"github.com/mach6/yore/internal/wire"
 )
 
 // Bucket names.
@@ -156,7 +156,7 @@ func (st storedToken) usable(now time.Time) bool { return st.state(now) == wire.
 
 // hashToken maps a token to its storage key.
 func hashToken(token string) []byte {
-	sum := sha256.Sum256([]byte("yore/token/v1|" + token))
+	sum := sha256.Sum256([]byte("github.com/mach6/yore/token/v1|" + token))
 	return sum[:]
 }
 

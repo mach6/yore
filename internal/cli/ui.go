@@ -8,7 +8,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"yore/internal/tui/theme"
+	"github.com/mach6/yore/internal/tui/theme"
 )
 
 // ui renders the styled output of the interactive commands (setup, recover,

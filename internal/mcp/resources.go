@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	"yore/internal/proto"
-	"yore/internal/rec"
-	"yore/internal/risk"
+	"github.com/mach6/yore/internal/proto"
+	"github.com/mach6/yore/internal/rec"
+	"github.com/mach6/yore/internal/risk"
 )
 
 // sessionURIPrefix is the read-template for a single session's history.

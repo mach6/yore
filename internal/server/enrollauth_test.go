@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"yore/internal/wire"
+	"github.com/mach6/yore/internal/wire"
 )
 
 // TestBootstrapTokenOnlyFormsAnEmptyGroup is the core of the new enrollment

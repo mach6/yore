@@ -25,12 +25,12 @@ import (
 	"syscall"
 	"time"
 
-	"yore/internal/config"
-	"yore/internal/match"
-	"yore/internal/proto"
-	"yore/internal/rec"
-	"yore/internal/spool"
-	"yore/internal/store"
+	"github.com/mach6/yore/internal/config"
+	"github.com/mach6/yore/internal/match"
+	"github.com/mach6/yore/internal/proto"
+	"github.com/mach6/yore/internal/rec"
+	"github.com/mach6/yore/internal/spool"
+	"github.com/mach6/yore/internal/store"
 )
 
 const (

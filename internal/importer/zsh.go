@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"yore/internal/rec"
+	"github.com/mach6/yore/internal/rec"
 )
 
 // metaChar is zsh's Meta escape byte. In the history file a byte X that zsh

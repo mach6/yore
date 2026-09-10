@@ -8,8 +8,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/require"
 
-	"yore/internal/proto"
-	"yore/internal/rec"
+	"github.com/mach6/yore/internal/proto"
+	"github.com/mach6/yore/internal/rec"
 )
 
 // agentBackend answers like the daemon does: it applies HumanOnly itself and

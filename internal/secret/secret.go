@@ -20,7 +20,7 @@ import (
 
 	"github.com/zalando/go-keyring"
 
-	"yore/internal/cryptobox"
+	"github.com/mach6/yore/internal/cryptobox"
 )
 
 // service is the keyring service name every yore entry is filed under.

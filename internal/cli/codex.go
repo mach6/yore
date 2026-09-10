@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"yore/internal/rec"
+	"github.com/mach6/yore/internal/rec"
 )
 
 // agentCodex is the executor tag stamped on commands captured from OpenAI's

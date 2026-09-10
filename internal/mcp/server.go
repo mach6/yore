@@ -18,8 +18,8 @@ import (
 	"io"
 	"strings"
 
-	"yore/internal/proto"
-	"yore/internal/risk"
+	"github.com/mach6/yore/internal/proto"
+	"github.com/mach6/yore/internal/risk"
 )
 
 // protocolVersion is the MCP revision we implement. We echo the client's

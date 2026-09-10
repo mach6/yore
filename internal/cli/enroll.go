@@ -11,14 +11,14 @@ import (
 	"strings"
 	"time"
 
-	"yore/internal/config"
-	"yore/internal/cryptobox"
-	"yore/internal/daemon"
-	"yore/internal/redact"
-	"yore/internal/secret"
-	"yore/internal/store"
-	"yore/internal/syncer"
-	"yore/internal/wire"
+	"github.com/mach6/yore/internal/config"
+	"github.com/mach6/yore/internal/cryptobox"
+	"github.com/mach6/yore/internal/daemon"
+	"github.com/mach6/yore/internal/redact"
+	"github.com/mach6/yore/internal/secret"
+	"github.com/mach6/yore/internal/store"
+	"github.com/mach6/yore/internal/syncer"
+	"github.com/mach6/yore/internal/wire"
 )
 
 // resolveToken returns the single-use enrollment token, from the flag, then

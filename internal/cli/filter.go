@@ -7,8 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"yore/internal/config"
-	"yore/internal/redact"
+	"github.com/mach6/yore/internal/config"
+	"github.com/mach6/yore/internal/redact"
 )
 
 // newFilterCmd builds `yore filter`: the redaction gate for the shell's own

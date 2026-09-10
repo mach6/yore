@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"yore/internal/rec"
+	"github.com/mach6/yore/internal/rec"
 )
 
 // agentClaudeCode is the executor tag stamped on commands captured from Claude

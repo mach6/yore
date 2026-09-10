@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"yore/internal/config"
+	"github.com/mach6/yore/internal/config"
 )
 
 // TestDefaultRulesetMatchesAssess: the package-level Assess and the default

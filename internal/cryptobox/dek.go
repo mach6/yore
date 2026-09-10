@@ -4,7 +4,7 @@ import (
 	"crypto/rand"
 	"strconv"
 
-	"yore/internal/rec"
+	"github.com/mach6/yore/internal/rec"
 )
 
 // NewDEK generates a fresh epoch Data Encryption Key and its keyID (a ULID, so

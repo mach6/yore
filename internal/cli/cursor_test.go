@@ -10,9 +10,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"yore/internal/config"
-	"yore/internal/rec"
-	"yore/internal/redact"
+	"github.com/mach6/yore/internal/config"
+	"github.com/mach6/yore/internal/rec"
+	"github.com/mach6/yore/internal/redact"
 )
 
 // captureStdout runs fn with os.Stdout redirected to a pipe and returns what it

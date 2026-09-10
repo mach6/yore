@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"yore/internal/match"
-	"yore/internal/proto"
-	"yore/internal/rec"
+	"github.com/mach6/yore/internal/match"
+	"github.com/mach6/yore/internal/proto"
+	"github.com/mach6/yore/internal/rec"
 )
 
 // runQuery answers one search over the RAM corpus: match, then scope, then

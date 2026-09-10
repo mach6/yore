@@ -5,7 +5,7 @@ BIN        := bin/yore
 COVERFILE  := coverage.out
 TESTREPORT := unit-test-report.json
 PKGS       := ./...
-LDFLAGS    := -s -w -X yore/internal/cli.Version=$(shell git describe --tags --always --dirty 2>/dev/null || echo 0.1.0-dev)
+LDFLAGS    := -s -w -X github.com/mach6/yore/internal/cli.Version=$(shell git describe --tags --always --dirty 2>/dev/null || echo 0.1.0-dev)
 
 # Run recipes under bash with pipefail so a failure inside the `go test | gotestfmt`
 # pipe fails the recipe instead of being masked by gotestfmt's exit status.

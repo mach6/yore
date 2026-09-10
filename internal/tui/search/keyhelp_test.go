@@ -14,7 +14,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/require"
 
-	"yore/internal/tui/keyhelp"
+	"github.com/mach6/yore/internal/tui/keyhelp"
 )
 
 // The panel's key handlers. As in the browser, their case clauses are the whole

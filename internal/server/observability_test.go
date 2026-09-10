@@ -13,7 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"yore/internal/wire"
+	"github.com/mach6/yore/internal/wire"
 )
 
 // nowFixed is an arbitrary fixed instant: the probe cache is driven by the time

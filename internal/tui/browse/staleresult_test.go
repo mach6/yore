@@ -7,7 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/require"
 
-	"yore/internal/proto"
+	"github.com/mach6/yore/internal/proto"
 )
 
 // A delete has to survive a query that was already in flight when it ran.

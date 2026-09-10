@@ -16,9 +16,9 @@ import (
 	"go.etcd.io/bbolt"
 	bolterrors "go.etcd.io/bbolt/errors"
 
-	"yore/internal/config"
-	"yore/internal/rec"
-	"yore/internal/spool"
+	"github.com/mach6/yore/internal/config"
+	"github.com/mach6/yore/internal/rec"
+	"github.com/mach6/yore/internal/spool"
 )
 
 // ErrLocked is returned by Open when another process already holds the store.

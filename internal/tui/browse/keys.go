@@ -1,7 +1,7 @@
 package browse
 
 import (
-	"yore/internal/tui/keyhelp"
+	"github.com/mach6/yore/internal/tui/keyhelp"
 )
 
 // The browser's bindings, described once. Behavior is dispatched from handleKey

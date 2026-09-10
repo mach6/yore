@@ -5,8 +5,8 @@ import (
 	"strings"
 	"sync"
 
-	"yore/internal/proto"
-	"yore/internal/rec"
+	"github.com/mach6/yore/internal/proto"
+	"github.com/mach6/yore/internal/rec"
 )
 
 // tagIndex resolves user-tag associations from TypeTag records: which freeform

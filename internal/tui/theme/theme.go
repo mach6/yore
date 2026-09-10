@@ -9,7 +9,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"yore/internal/tui/hl"
+	"github.com/mach6/yore/internal/tui/hl"
 )
 
 // Theme is the immutable set of styles shared across the TUI. Build it once

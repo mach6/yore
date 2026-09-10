@@ -11,11 +11,11 @@ import (
 	"github.com/muesli/termenv"
 	"github.com/stretchr/testify/require"
 
-	"yore/internal/match"
-	"yore/internal/proto"
-	"yore/internal/rec"
-	"yore/internal/risk"
-	"yore/internal/tui/theme"
+	"github.com/mach6/yore/internal/match"
+	"github.com/mach6/yore/internal/proto"
+	"github.com/mach6/yore/internal/rec"
+	"github.com/mach6/yore/internal/risk"
+	"github.com/mach6/yore/internal/tui/theme"
 )
 
 // truecolorTheme is a theme whose styles actually emit ANSI, so tests can see

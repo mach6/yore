@@ -7,13 +7,13 @@ import (
 	"strings"
 	"time"
 
-	"yore/internal/config"
-	"yore/internal/daemon"
-	"yore/internal/redact"
-	"yore/internal/risk"
-	"yore/internal/secret"
-	"yore/internal/shell"
-	"yore/internal/syncer"
+	"github.com/mach6/yore/internal/config"
+	"github.com/mach6/yore/internal/daemon"
+	"github.com/mach6/yore/internal/redact"
+	"github.com/mach6/yore/internal/risk"
+	"github.com/mach6/yore/internal/secret"
+	"github.com/mach6/yore/internal/shell"
+	"github.com/mach6/yore/internal/syncer"
 )
 
 // runDoctor prints a health checklist: state dir, hooks, daemon, secrets

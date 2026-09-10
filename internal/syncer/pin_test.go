@@ -12,7 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"yore/internal/server"
+	"github.com/mach6/yore/internal/server"
 )
 
 // tlsServer starts the sync API behind an httptest TLS server.

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"yore/internal/rec"
+	"github.com/mach6/yore/internal/rec"
 )
 
 // snapshotFile names the warm-start corpus cache inside the state dir.

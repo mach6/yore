@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"yore/internal/config"
+	"github.com/mach6/yore/internal/config"
 )
 
 // backupLoop periodically writes a consistent snapshot of the local db into the

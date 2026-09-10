@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"yore/internal/config"
+	"github.com/mach6/yore/internal/config"
 )
 
 // runGetConfig prints the effective value of a config key. It reads config.toml

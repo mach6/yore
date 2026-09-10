@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"yore/internal/config"
-	"yore/internal/rec"
-	"yore/internal/redact"
+	"github.com/mach6/yore/internal/config"
+	"github.com/mach6/yore/internal/rec"
+	"github.com/mach6/yore/internal/redact"
 )
 
 // Prompt tracing, shared by every agent integration (Claude Code, Codex,

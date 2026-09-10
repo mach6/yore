@@ -7,12 +7,12 @@ import (
 	"os"
 	"time"
 
-	"yore/internal/config"
-	"yore/internal/importer"
-	"yore/internal/proto"
-	"yore/internal/rec"
-	"yore/internal/redact"
-	"yore/internal/store"
+	"github.com/mach6/yore/internal/config"
+	"github.com/mach6/yore/internal/importer"
+	"github.com/mach6/yore/internal/proto"
+	"github.com/mach6/yore/internal/rec"
+	"github.com/mach6/yore/internal/redact"
+	"github.com/mach6/yore/internal/store"
 )
 
 // runImport ingests existing shell history files. Usage:

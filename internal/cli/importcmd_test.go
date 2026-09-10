@@ -7,8 +7,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"yore/internal/importer"
-	"yore/internal/rec"
+	"github.com/mach6/yore/internal/importer"
+	"github.com/mach6/yore/internal/rec"
 )
 
 // captureStderr runs fn with os.Stderr redirected to a pipe and returns what it

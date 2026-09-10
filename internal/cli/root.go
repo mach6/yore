@@ -9,9 +9,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"yore/internal/proto"
-	"yore/internal/shell"
-	"yore/internal/tui/browse"
+	"github.com/mach6/yore/internal/proto"
+	"github.com/mach6/yore/internal/shell"
+	"github.com/mach6/yore/internal/tui/browse"
 )
 
 // exitErr carries a precise process exit code out through cobra's RunE. Each

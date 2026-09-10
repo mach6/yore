@@ -46,7 +46,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"yore/internal/config"
+	"github.com/mach6/yore/internal/config"
 )
 
 // rule is one built-in (or user) detector. re is the authority; hints is a

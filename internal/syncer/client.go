@@ -29,8 +29,8 @@ import (
 	"strconv"
 	"time"
 
-	"yore/internal/reqsign"
-	"yore/internal/wire"
+	"github.com/mach6/yore/internal/reqsign"
+	"github.com/mach6/yore/internal/wire"
 )
 
 // requestTimeout bounds every HTTP call the client makes.

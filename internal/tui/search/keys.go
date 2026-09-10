@@ -1,7 +1,7 @@
 package search
 
 import (
-	"yore/internal/tui/keyhelp"
+	"github.com/mach6/yore/internal/tui/keyhelp"
 )
 
 // The Ctrl-R panel's bindings, described once and shown two ways: a terse tail

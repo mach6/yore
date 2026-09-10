@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"yore/internal/rec"
+	"github.com/mach6/yore/internal/rec"
 )
 
 // agentDevin is the executor tag stamped on commands captured from the Devin

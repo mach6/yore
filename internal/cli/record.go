@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"yore/internal/config"
-	"yore/internal/proto"
-	"yore/internal/rec"
-	"yore/internal/redact"
-	"yore/internal/spool"
+	"github.com/mach6/yore/internal/config"
+	"github.com/mach6/yore/internal/proto"
+	"github.com/mach6/yore/internal/rec"
+	"github.com/mach6/yore/internal/redact"
+	"github.com/mach6/yore/internal/spool"
 )
 
 // stateDir resolves the single-footprint state directory once per process.

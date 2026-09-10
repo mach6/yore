@@ -5,9 +5,9 @@ import (
 	"os"
 	"strings"
 
-	"yore/internal/daemon"
-	"yore/internal/proto"
-	"yore/internal/rec"
+	"github.com/mach6/yore/internal/daemon"
+	"github.com/mach6/yore/internal/proto"
+	"github.com/mach6/yore/internal/rec"
 )
 
 // runTagList prints every known user tag with how many commands carry it. scope

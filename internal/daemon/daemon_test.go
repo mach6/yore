@@ -11,11 +11,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"yore/internal/config"
-	"yore/internal/proto"
-	"yore/internal/rec"
-	"yore/internal/spool"
-	"yore/internal/store"
+	"github.com/mach6/yore/internal/config"
+	"github.com/mach6/yore/internal/proto"
+	"github.com/mach6/yore/internal/rec"
+	"github.com/mach6/yore/internal/spool"
+	"github.com/mach6/yore/internal/store"
 )
 
 // daemonHandle observes a Run goroutine's completion. done is closed once Run

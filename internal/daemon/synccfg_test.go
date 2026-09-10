@@ -7,12 +7,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"yore/internal/config"
-	"yore/internal/cryptobox"
-	"yore/internal/proto"
-	"yore/internal/rec"
-	"yore/internal/store"
-	"yore/internal/syncer"
+	"github.com/mach6/yore/internal/config"
+	"github.com/mach6/yore/internal/cryptobox"
+	"github.com/mach6/yore/internal/proto"
+	"github.com/mach6/yore/internal/rec"
+	"github.com/mach6/yore/internal/store"
+	"github.com/mach6/yore/internal/syncer"
 )
 
 // newTestSyncer builds a syncer pointed at an unroutable host. Nothing in these

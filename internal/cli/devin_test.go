@@ -6,8 +6,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"yore/internal/config"
-	"yore/internal/rec"
+	"github.com/mach6/yore/internal/config"
+	"github.com/mach6/yore/internal/rec"
 )
 
 // TestRunHookDevinCaptures covers Devin's exec capture: the command is tagged

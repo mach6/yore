@@ -40,9 +40,9 @@ import (
 // vN constant rather than editing one of these: existing blobs stay openable
 // only under the exact string they were sealed with.
 const (
-	hkWrapDomain  = "yore/hk-wrap/v1"  // History Key sealed to a device
-	dekWrapDomain = "yore/dek-wrap/v1" // DEK wrapped under HK
-	recSealDomain = "yore/rec/v1"      // history record sealed under a DEK
+	hkWrapDomain  = "github.com/mach6/yore/hk-wrap/v1"  // History Key sealed to a device
+	dekWrapDomain = "github.com/mach6/yore/dek-wrap/v1" // DEK wrapped under HK
+	recSealDomain = "github.com/mach6/yore/rec/v1"      // history record sealed under a DEK
 
 	devicePrefix = "yore-device2." // device.key line prefix (format v2: adds Ed25519 signing seed)
 )

@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"yore/internal/proto"
+	"github.com/mach6/yore/internal/proto"
 )
 
 // TestPushArm covers the experimental push-on-record debounce decision: a push

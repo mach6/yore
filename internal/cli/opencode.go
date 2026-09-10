@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"yore/internal/rec"
+	"github.com/mach6/yore/internal/rec"
 )
 
 // agentOpenCode is the executor tag stamped on commands captured from OpenCode.

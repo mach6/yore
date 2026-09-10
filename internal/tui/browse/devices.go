@@ -8,8 +8,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 
-	"yore/internal/proto"
-	"yore/internal/tui/theme"
+	"github.com/mach6/yore/internal/proto"
+	"github.com/mach6/yore/internal/tui/theme"
 )
 
 // devPane identifies one of the devices view's two panes. The values are also

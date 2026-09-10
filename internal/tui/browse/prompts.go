@@ -8,9 +8,9 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"yore/internal/match"
-	"yore/internal/rec"
-	"yore/internal/tui/theme"
+	"github.com/mach6/yore/internal/match"
+	"github.com/mach6/yore/internal/rec"
+	"github.com/mach6/yore/internal/tui/theme"
 )
 
 // promptStat is one user prompt and the aggregate of the agent commands it

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"yore/internal/rec"
+	"github.com/mach6/yore/internal/rec"
 )
 
 // agentCursor is the executor tag stamped on commands captured from Cursor's

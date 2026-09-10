@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"yore/internal/config"
-	"yore/internal/rec"
+	"github.com/mach6/yore/internal/config"
+	"github.com/mach6/yore/internal/rec"
 )
 
 func TestRunHookCodexCaptures(t *testing.T) {

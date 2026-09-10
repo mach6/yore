@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"os"
 
-	"yore/internal/config"
-	"yore/internal/daemon"
-	"yore/internal/risk"
-	"yore/internal/tui/browse"
+	"github.com/mach6/yore/internal/config"
+	"github.com/mach6/yore/internal/daemon"
+	"github.com/mach6/yore/internal/risk"
+	"github.com/mach6/yore/internal/tui/browse"
 )
 
 // riskRules loads risk.toml for the browser, dropping warnings on purpose: the

@@ -9,9 +9,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"yore/internal/proto"
-	"yore/internal/rec"
-	"yore/internal/risk"
+	"github.com/mach6/yore/internal/proto"
+	"github.com/mach6/yore/internal/rec"
+	"github.com/mach6/yore/internal/risk"
 )
 
 // fakeQ is a minimal in-memory Querier: it honors Q (substring), Tag, ScopeCwd

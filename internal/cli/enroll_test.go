@@ -11,8 +11,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"yore/internal/config"
-	"yore/internal/server"
+	"github.com/mach6/yore/internal/config"
+	"github.com/mach6/yore/internal/server"
 )
 
 // setupTestToken is the bearer token the in-process test server accepts.

@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
-	"yore/internal/config"
+	"github.com/mach6/yore/internal/config"
 )
 
 // writeRedact writes raw bytes as dir's redact.yml.

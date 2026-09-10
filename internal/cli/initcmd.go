@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"yore/internal/config"
-	"yore/internal/shell"
+	"github.com/mach6/yore/internal/config"
+	"github.com/mach6/yore/internal/shell"
 )
 
 // runInit prints the shell integration script for eval'ing (zsh/bash) or

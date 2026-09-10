@@ -1,4 +1,4 @@
-module yore
+module github.com/mach6/yore
 
 go 1.26.0
 

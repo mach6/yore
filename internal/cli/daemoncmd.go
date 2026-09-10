@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"yore/internal/daemon"
+	"github.com/mach6/yore/internal/daemon"
 )
 
 // runDaemon runs the background daemon in the foreground (normally

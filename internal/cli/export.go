@@ -9,8 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"yore/internal/daemon"
-	"yore/internal/proto"
+	"github.com/mach6/yore/internal/daemon"
+	"github.com/mach6/yore/internal/proto"
 )
 
 // newExportCmd builds `yore export`: it dumps this host's recent history in a

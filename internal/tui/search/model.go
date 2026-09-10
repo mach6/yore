@@ -9,10 +9,10 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 
-	"yore/internal/proto"
-	"yore/internal/rec"
-	"yore/internal/tui/keyhelp"
-	"yore/internal/tui/theme"
+	"github.com/mach6/yore/internal/proto"
+	"github.com/mach6/yore/internal/rec"
+	"github.com/mach6/yore/internal/tui/keyhelp"
+	"github.com/mach6/yore/internal/tui/theme"
 )
 
 // Querier is how the TUI talks to the daemon. It is an interface so tests can

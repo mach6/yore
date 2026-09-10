@@ -9,13 +9,13 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 
-	"yore/internal/match"
-	"yore/internal/proto"
-	"yore/internal/rec"
-	"yore/internal/risk"
-	"yore/internal/tui/hl"
-	"yore/internal/tui/keyhelp"
-	"yore/internal/tui/theme"
+	"github.com/mach6/yore/internal/match"
+	"github.com/mach6/yore/internal/proto"
+	"github.com/mach6/yore/internal/rec"
+	"github.com/mach6/yore/internal/risk"
+	"github.com/mach6/yore/internal/tui/hl"
+	"github.com/mach6/yore/internal/tui/keyhelp"
+	"github.com/mach6/yore/internal/tui/theme"
 )
 
 // renderHelp draws the "?" panel: every binding that does something in the view

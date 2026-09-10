@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"yore/internal/config"
+	"github.com/mach6/yore/internal/config"
 )
 
 // listenSocket binds a unix listener at dir's socket path (closed on cleanup)

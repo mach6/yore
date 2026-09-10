@@ -21,7 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"yore/internal/rec"
+	"github.com/mach6/yore/internal/rec"
 )
 
 // tmpTTL bounds how long an abandoned ".tmp" file (a process that died between

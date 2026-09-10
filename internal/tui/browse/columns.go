@@ -19,9 +19,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 
-	"yore/internal/proto"
-	"yore/internal/rec"
-	"yore/internal/tui/theme"
+	"github.com/mach6/yore/internal/proto"
+	"github.com/mach6/yore/internal/rec"
+	"github.com/mach6/yore/internal/tui/theme"
 )
 
 // colTable names a table whose columns the user can reshape. Each keeps its own

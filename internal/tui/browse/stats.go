@@ -10,9 +10,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 
-	"yore/internal/match"
-	"yore/internal/rec"
-	"yore/internal/tui/theme"
+	"github.com/mach6/yore/internal/match"
+	"github.com/mach6/yore/internal/rec"
+	"github.com/mach6/yore/internal/tui/theme"
 )
 
 // The two long-arc graphs (the contribution heatmap and the daily trend) are

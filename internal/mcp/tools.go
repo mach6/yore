@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"yore/internal/proto"
-	"yore/internal/rec"
+	"github.com/mach6/yore/internal/proto"
+	"github.com/mach6/yore/internal/rec"
 )
 
 // sampleCap bounds how many rows an aggregating tool pulls from the daemon in
