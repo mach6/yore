@@ -5,14 +5,16 @@ a change so it passes CI on the first try.
 
 ## Prerequisites
 
-- **Go 1.26+** (yore is CGO-free, so no C toolchain is needed). - For the full
-local CI dry-run: **Docker** and the **`drone`** CLI. - Tooling the `make`
-targets expect on your `PATH`: - [`golangci-lint`](https://golangci-lint.run/):
-the lint gate. - [`gotestfmt`](https://github.com/GoTestTools/gotestfmt):
-human-readable test output (`go install
-github.com/gotesttools/gotestfmt/v2/cmd/gotestfmt@latest`). -
-[`go-covercheck`](https://github.com/mach6/go-covercheck): the coverage-floor
-gate. - `goimports`: import grouping (also run by the lint gate).
+- **Go 1.26+** (yore is CGO-free, so no C toolchain is needed).
+- For the full local CI dry-run: **Docker** and the **`drone`** CLI.
+- Tooling the `make` targets expect on your `PATH`:
+  - [`golangci-lint`](https://golangci-lint.run/): the lint gate.
+  - [`gotestfmt`](https://github.com/GoTestTools/gotestfmt): human-readable
+    test output (`go install
+    github.com/gotesttools/gotestfmt/v2/cmd/gotestfmt@latest`).
+  - [`go-covercheck`](https://github.com/mach6/go-covercheck): the
+    coverage-floor gate.
+  - `goimports`: import grouping (also run by the lint gate).
 
 ## Build & run
 
