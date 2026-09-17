@@ -5,14 +5,30 @@ BIN        := bin/yore
 COVERFILE  := coverage.out
 TESTREPORT := unit-test-report.json
 PKGS       := ./...
-LDFLAGS    := -s -w -X github.com/mach6/yore/internal/cli.Version=$(shell git describe --tags --always --dirty 2>/dev/null || echo 0.1.0-dev)
+VERSION    ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.1.0-dev)
+LDFLAGS    := -s -w -X github.com/mach6/yore/internal/cli.Version=$(VERSION)
+
+# Server image. IMAGE_TAG names the local build; push-docker retags it as
+# $(REGISTRY)/$(IMAGE):<tag> for every tag in PUSH_TAGS. REGISTRY includes any
+# owner or namespace (for example ghcr.io/<owner>).
+IMAGE      ?= yore
+IMAGE_TAG  ?= dev
+REGISTRY   ?=
+PUSH_TAGS  ?= latest-build
+
+# Pinned tool versions, installed by `make tools`. CI installs exactly these.
+GOLANGCI_LINT_VERSION ?= v2.12.2
+GOTESTFMT_VERSION     ?= v2.5.0
+GO_COVERCHECK_VERSION ?= v0.6.1
+GOIMPORTS_VERSION     ?= v0.50.0
 
 # Run recipes under bash with pipefail so a failure inside the `go test | gotestfmt`
 # pipe fails the recipe instead of being masked by gotestfmt's exit status.
 SHELL       := /bin/bash
 .SHELLFLAGS := -o pipefail -c
 
-.PHONY: build test vet fmt lint coverage coverage-check bench clean docker release drone stress fleet
+.PHONY: build test vet fmt lint yamllint coverage coverage-check ci tools bench clean \
+	build-docker test-docker push-docker release stress fleet
 
 build:
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/yore
@@ -20,9 +36,9 @@ build:
 # Unit tests, formatted for humans by gotestfmt (github.com/GoTestTools/gotestfmt)
 # from `go test -json`. Two passes on purpose: a coverage pass (also writes the
 # profile `coverage-check` enforces, teeing the raw JSON to $(TESTREPORT) for
-# inspection) then a -race pass. pipefail (set above) makes a `go test` failure
-# fail the recipe even though gotestfmt exits 0. Needs gotestfmt on PATH (install:
-# go install github.com/gotesttools/gotestfmt/v2/cmd/gotestfmt@latest).
+# inspection) then a -race pass, which needs cgo and a C compiler. pipefail (set
+# above) makes a `go test` failure fail the recipe even though gotestfmt exits 0.
+# Needs gotestfmt on PATH (`make tools`).
 test:
 	$(GO) test -shuffle=on -count=1 -coverprofile=$(COVERFILE) -covermode=atomic -json $(PKGS) \
 		| tee $(TESTREPORT) | gotestfmt
@@ -34,6 +50,20 @@ vet:
 fmt:
 	gofmt -w .
 	goimports -w .
+
+# Every gate CI runs before it builds the image, in CI's order.
+ci: yamllint lint test coverage-check
+
+# Installs the Go tools the gates need into $(go env GOPATH)/bin. yamllint is a
+# Python tool and is not installed here (pip install yamllint).
+tools:
+	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	$(GO) install github.com/gotesttools/gotestfmt/v2/cmd/gotestfmt@$(GOTESTFMT_VERSION)
+	$(GO) install github.com/mach6/go-covercheck/cmd/go-covercheck@$(GO_COVERCHECK_VERSION)
+	$(GO) install golang.org/x/tools/cmd/goimports@$(GOIMPORTS_VERSION)
+
+yamllint:
+	yamllint -c .yamllint.yml .
 
 # golangci-lint's gofmt/goimports formatters and govet linter cover the fmt/vet gate.
 lint:
@@ -56,10 +86,24 @@ bench:
 clean:
 	rm -rf bin dist $(COVERFILE) coverage.html $(TESTREPORT)
 
-docker:
-	docker build -f docker/Dockerfile -t yore:latest .
+build-docker:
+	docker build -f docker/Dockerfile --build-arg VERSION=$(VERSION) -t $(IMAGE):$(IMAGE_TAG) .
 
-# MANUAL stress/soak harness: NOT part of CI (never runs in Drone). Rebuilds the
+# Smoke the image: the entrypoint is `yore server`, so override it to run a
+# trivial subcommand that must exit 0.
+test-docker:
+	docker run --rm --entrypoint /yore $(IMAGE):$(IMAGE_TAG) version
+
+# Needs a prior `docker login` to the registry.
+push-docker:
+	@test -n "$(REGISTRY)" || { echo "push-docker: set REGISTRY" >&2; exit 1; }
+	@for t in $(PUSH_TAGS); do \
+		echo "  $(REGISTRY)/$(IMAGE):$$t"; \
+		docker tag $(IMAGE):$(IMAGE_TAG) $(REGISTRY)/$(IMAGE):$$t || exit 1; \
+		docker push $(REGISTRY)/$(IMAGE):$$t || exit 1; \
+	done
+
+# MANUAL stress/soak harness: NOT part of CI. Rebuilds the
 # current binary into a fresh 3-container sandbox, hammers it with N records per
 # host (normal + secrets + tags + drop-cases), syncs, then verifies correctness
 # and prints timings. Needs docker + docker compose. Tears the sandbox down at
@@ -94,10 +138,3 @@ release:
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch \
 			$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $$out ./cmd/yore || exit 1; \
 	done
-
-# Run the Drone pipeline locally (needs the `drone` CLI + docker). Pass a
-# comma-separated steps= to run only those:  make drone steps=lint,test
-drone:
-	@steps="$(steps)"; include=""; \
-	for s in $$(echo "$$steps" | tr ',' ' '); do include="$$include --include=$$s"; done; \
-	drone exec $$include .drone.yml

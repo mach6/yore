@@ -138,10 +138,9 @@ docker compose -f docker/sandbox/compose.yml down -v
 ## Stress test (`stress.sh`); MANUAL, not CI
 
 `stress.sh` is a self-contained stress/soak harness that automates the whole
-walkthrough at scale and then *verifies* it. It is **manual only**: it is never
-run by CI (it is not referenced in `.drone.yml`). Run it when you want to confirm
-yore stays correct and fast under a real load, or after touching recording,
-redaction, sync, or the daemon.
+walkthrough at scale and then *verifies* it. It is **manual only**: CI never runs
+it. Run it when you want to confirm yore stays correct and fast under a real
+load, or after touching recording, redaction, sync, or the daemon.
 
 ```sh
 make stress               # N=5000 records per host (a real run)

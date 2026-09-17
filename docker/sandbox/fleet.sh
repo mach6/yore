@@ -2,13 +2,13 @@
 #
 # fleet.sh; MANUAL 20-node, two-user stress/soak harness for yore.
 #
-# NOT wired into CI (never runs in Drone). It builds the CURRENT source into a
-# fleet of twenty client machines spread over eight Linux distributions, half
-# zsh and half bash, split between TWO users (server tenants "alice" and "bob",
-# ten machines each). It enrolls every machine, drives half a million randomized
-# commands through them, syncs everything end-to-end encrypted, then measures
-# and verifies: read/write/sync throughput, database growth, convergence,
-# redaction, and, because two users share one server; tenant isolation.
+# NOT wired into CI. It builds the CURRENT source into a fleet of twenty client
+# machines spread over eight Linux distributions, half zsh and half bash, split
+# between TWO users (server tenants "alice" and "bob", ten machines each). It
+# enrolls every machine, drives half a million randomized commands through them,
+# syncs everything end-to-end encrypted, then measures and verifies:
+# read/write/sync throughput, database growth, convergence, redaction, and,
+# because two users share one server; tenant isolation.
 #
 # It leaves the fleet UP by default: the end state is the thing you want to poke
 # at. Pass --down to tear it down.

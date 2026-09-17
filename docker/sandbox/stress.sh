@@ -2,13 +2,13 @@
 #
 # stress.sh; MANUAL stress/soak harness for yore's 3-container sandbox.
 #
-# NOT wired into CI (never runs in Drone). It rebuilds the CURRENT binary into a
-# fresh sandbox, hammers two clients with lots of history: normal commands,
-# secrets that MUST be redacted, leading-space and ignore-dir commands that MUST
-# be dropped, and agent-tagged batches; syncs everything end-to-end encrypted,
-# then verifies correctness and reports timings. Every check prints ✓/✗ and the
-# script exits non-zero if any check fails. It always tears the sandbox down
-# (even on failure) unless --keep / KEEP=1 is given.
+# NOT wired into CI. It rebuilds the CURRENT binary into a fresh sandbox,
+# hammers two clients with lots of history: normal commands, secrets that MUST
+# be redacted, leading-space and ignore-dir commands that MUST be dropped, and
+# agent-tagged batches; syncs everything end-to-end encrypted, then verifies
+# correctness and reports timings. Every check prints ✓/✗ and the script exits
+# non-zero if any check fails. It always tears the sandbox down (even on
+# failure) unless --keep / KEEP=1 is given.
 #
 # Usage:
 #   docker/sandbox/stress.sh                # N=5000 per host (a real run)
