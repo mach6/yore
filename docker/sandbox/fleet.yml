@@ -40,10 +40,6 @@ services:
     build:
       context: ../..
       dockerfile: docker/Dockerfile
-    # The distroless image runs as nonroot; a fresh named volume is root-owned,
-    # so the sandbox server runs as root to write /data. In production, give the
-    # volume nonroot ownership instead.
-    user: "0:0"
     environment:
       # Named tenants: one server process, one isolated database per user under
       # /data/tenants/<name>.db. Each token bootstraps only its own tenant, and

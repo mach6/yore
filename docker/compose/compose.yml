@@ -70,9 +70,6 @@ services:
     # the connection.
     ports:
       - "127.0.0.1:8080:8080"
-    depends_on:
-      yore-data-owner:
-        condition: service_completed_successfully
     # Liveness only. /v1/health touches no database on purpose: a restart is the
     # only thing this can do, and the failure it must NOT trigger on is a full or
     # read-only /data: the server still serves reads there, and restarting it
@@ -85,18 +82,6 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-
-  # The image runs as nonroot (uid 65532) and a fresh named volume arrives
-  # root-owned, so without this the server cannot create its database on the
-  # very first start. This claims the volume for that uid once and exits; it is
-  # a no-op on every later start, and it is what lets the server itself stay
-  # nonroot. Nothing else in the deployment ever runs as root.
-  yore-data-owner:
-    image: busybox:stable
-    user: "0:0"
-    command: ["chown", "65532:65532", "/data"]
-    volumes:
-      - yore-data:/data
 
 volumes:
   yore-data:

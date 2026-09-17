@@ -31,15 +31,6 @@
 #
 # In both modes the client and wire protocol are unchanged; the server routes
 # purely by the identity that signed the request.
-#
-# One thing to do before the first deploy: the image runs as nonroot (uid
-# 65532) and a fresh volume arrives owned by root, so the server cannot create
-# its database until something claims it. On the node that will hold the
-# volume:
-#   docker volume create yore_yore-data
-#   docker run --rm -v yore_yore-data:/data busybox chown 65532:65532 /data
-# It is a one-time step; docker/compose/compose.yml does the same thing with a
-# one-shot service, which Swarm has no equivalent of.
 version: "3.8"
 
 services:
