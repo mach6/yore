@@ -60,7 +60,13 @@ The history in these is invented, not anyone's.
 
 ## Install
 
-Requires Go 1.26+ to build:
+With [Homebrew](https://brew.sh), on macOS or Linux:
+
+```bash
+brew install mach6/tap/yore
+```
+
+Or from source, which needs Go 1.26+:
 
 ```bash
 git clone https://github.com/mach6/yore.git && cd yore
@@ -69,6 +75,10 @@ make build && sudo install -m755 bin/yore /usr/local/bin/yore
 
 `make release` cross-compiles Linux and macOS (amd64 and arm64) plus FreeBSD
 (amd64). WSL runs the Linux build; native Windows is not supported.
+
+The sync server is published as a container image,
+`ghcr.io/mach6/yore`, tagged `latest` and by release version (`0.1.0`,
+and so on). [Sync across machines](#sync-across-machines) shows how to run it.
 
 ## Set up your shell
 
@@ -117,22 +127,35 @@ future commands.
 Sync is optional. You host the server yourself; it never sees anything but
 ciphertext.
 
-On a server your machines can reach, with Docker Compose:
+The server is the `ghcr.io/mach6/yore` image. On a host your machines can
+reach, with plain Docker:
+
+```bash
+printf 'YORE_TOKEN=%s\n' "$(openssl rand -base64 32)" > yore.env && chmod 600 yore.env
+docker run -d --name yore --restart unless-stopped --env-file yore.env \
+  -v yore-data:/data -p 127.0.0.1:8080:8080 ghcr.io/mach6/yore:latest
+```
+
+Keep that token: the first machine you set up asks for it.
+
+Or with Docker Compose, using the file in this repository:
 
 ```bash
 cd docker/compose
 printf 'YORE_TOKEN=%s\n' "$(openssl rand -base64 32)" > .env && chmod 600 .env
-docker compose up -d --build
+docker compose up -d
 ```
 
-That listens on `127.0.0.1:8080`; put your reverse proxy in front of it to
-terminate TLS. On Docker Swarm instead:
+Either way it listens on `127.0.0.1:8080`; put your reverse proxy in front of
+it to terminate TLS. On Docker Swarm instead:
 
 ```bash
 openssl rand -base64 32 | docker secret create yore_token -
-docker build -f docker/Dockerfile -t yore:latest .
 docker stack deploy -c docker/swarm/stack.yml yore
 ```
+
+To upgrade, pull the new image and recreate the container (`docker compose
+pull && docker compose up -d`, or rerun `docker stack deploy`).
 
 Then on your first machine:
 
@@ -337,7 +360,7 @@ Remove the `eval "$(yore init …)"` line from your shell config (or the
 
 ```bash
 yore uninit claude-code       # and cursor / opencode / codex / devin
-rm -f /usr/local/bin/yore
+rm -f /usr/local/bin/yore       # or: brew uninstall yore
 rm -rf ~/.config/yore
 ```
 

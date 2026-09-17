@@ -1,7 +1,9 @@
 # Docker Swarm stack for the yore sync server.
 #
-#   docker build -f docker/Dockerfile -t yore:latest .
 #   docker stack deploy -c docker/swarm/stack.yml yore
+#
+# That runs the published image; running the same command again takes an
+# upgrade.
 #
 # This is a Swarm stack, not a compose file: deploy it with `docker stack
 # deploy`, not `docker compose up` (compose ignores `deploy:` and can't read the
@@ -35,7 +37,7 @@ version: "3.8"
 
 services:
   yore:
-    image: yore:latest
+    image: ghcr.io/mach6/yore:latest
     environment:
       # Mode 1: one tenant. For mode 2, delete this line and uncomment the next.
       YORE_TOKEN_FILE: /run/secrets/yore_token
