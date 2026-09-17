@@ -6,12 +6,15 @@ a change so it passes CI on the first try.
 ## Prerequisites
 
 - **Go 1.26+** (yore is CGO-free, so no C toolchain is needed).
-- For the full local CI dry-run: **Docker** and the **`drone`** CLI.
-- Tooling the `make` targets expect on your `PATH`:
+- A C compiler for the `-race` test pass (the race detector needs cgo).
+- **Docker** for the image targets and the end-to-end harnesses.
+- [`yamllint`](https://yamllint.readthedocs.io/) (`pip install yamllint`): the
+  YAML gate.
+- The Go tools the `make` targets expect on your `PATH`. `make tools` installs
+  the pinned versions CI uses:
   - [`golangci-lint`](https://golangci-lint.run/): the lint gate.
   - [`gotestfmt`](https://github.com/GoTestTools/gotestfmt): human-readable
-    test output (`go install
-    github.com/gotesttools/gotestfmt/v2/cmd/gotestfmt@latest`).
+    test output.
   - [`go-covercheck`](https://github.com/mach6/go-covercheck): the
     coverage-floor gate.
   - `goimports`: import grouping (also run by the lint gate).
@@ -31,25 +34,31 @@ freebsd/amd64. WSL runs the linux binaries; native Windows is not yet supported.
 | Target | What it does |
 |---|---|
 | `make build` | Build the CGO-free binary to `./bin/yore`. |
+| `make tools` | Install the pinned Go tools the gates use. |
+| `make ci` | Every CI gate, in CI's order: `yamllint`, `lint`, `test`, `coverage-check`. |
+| `make yamllint` | Lint the repository's YAML with `.yamllint.yml`. |
 | `make test` | `go test` via gotestfmt: a coverage pass (writes `coverage.out`) then a `-race` pass. |
 | `make lint` | `golangci-lint run` (covers gofmt, goimports, and vet). |
 | `make coverage-check` | Enforce the repo-wide coverage floor with go-covercheck (run **after** `make test`). |
 | `make release` | Cross-compile the tier-1 platform matrix into `dist/`. |
-| `make drone` | Run the Drone pipeline locally (needs the `drone` CLI + Docker). Scope it with `make drone steps=lint,test`. |
-| `make docker` | Build the server image from `docker/Dockerfile`. |
+| `make build-docker` | Build the server image from `docker/Dockerfile` as `yore:dev` (override with `IMAGE_TAG=`). |
+| `make test-docker` | Smoke-test that image by running `yore version` in it. |
+| `make push-docker` | Tag and push that image as `$REGISTRY/yore:<tag>` for each tag in `PUSH_TAGS`. Log in to the registry first. |
 | `make bench` | Store / matcher / crypto benchmarks. |
 | `make stress` | End-to-end harness against the 3-container sandbox: records, redacts, syncs, and verifies. `N=150` is a ~20 s smoke once the images are cached (a couple of minutes the first time, when it compiles yore into the client image); the default `N=5000` is a real run. |
 | `make fleet` | The same at scale: 20 machines, 8 distributions, 2 users on one multi-tenant server. Minutes, and it pulls ~2 GB of base images the first time. |
 
-Before pushing, the quick loop is:
+Before pushing, run every gate CI runs:
 
 ```bash
-make lint && make test && make coverage-check
+make ci
 ```
 
 ## CI gates
 
-CI (`.drone.yml`) runs, in order, and every gate must be green:
+CI is GitHub Actions (`.github/workflows/ci.yml`). The workflow only sets up a
+runner and calls the `make` targets, so `make ci` locally is the same check.
+Every gate must be green:
 
 1. **yamllint**: YAML is linted with `.yamllint.yml` (120-col lines, no trailing
    whitespace, newline at EOF). Keep any YAML you add clean.
@@ -60,8 +69,10 @@ CI (`.drone.yml`) runs, in order, and every gate must be green:
 4. **go-covercheck**: the repo-wide coverage floor in `.go-covercheck.yml`. Don't
    lower the floor to pass; add tests. Ratchet it up when coverage rises.
 
-After the gates, CI builds the server image and smoke-tests it. On `main` and on
-tags it also pushes that image to the registry. Nothing you need to run, but it
+The YAML, lint, and test gates run side by side. After all of them pass, a
+push builds the server image and smoke-tests it (`make build-docker
+test-docker`). A push to `main` publishes it as `latest-build`; a `v*` tag
+publishes it as the version and as `latest`. Nothing you need to run, but it
 is why a change that breaks `docker/Dockerfile` fails CI after the tests pass.
 
 ## Testing conventions
@@ -121,7 +132,7 @@ seconds, tears itself down afterwards, and it is the only thing that exercises
 the CLI the way a user does. Unit tests do not: the harness has twice been the
 thing that noticed a subcommand had been removed from under it, and both times
 only because someone ran it. Nothing runs it for you: neither harness is in CI
-(they need Docker and minutes, and `.drone.yml` deliberately stays fast).
+(they need Docker and minutes, and CI deliberately stays fast).
 
 For a change to sync, multi-user isolation, or anything whose behavior depends
 on scale, `make fleet TOTAL=20000` covers ground the 3-container sandbox cannot:
@@ -132,8 +143,7 @@ multi-tenant server, with cross-user isolation and per-record accounting.
 
 1. Branch off `main`.
 2. Make the change with tests and doc updates.
-3. Run `make lint && make test && make coverage-check` (or `make drone` for the
-   full pipeline) until green.
+3. Run `make ci` until green.
 4. If you touched recording, redaction, the daemon, sync, or the shell
    integration, run `make stress N=150` as well.
 5. Open a PR with a clear description of the behavior change and its rationale.
