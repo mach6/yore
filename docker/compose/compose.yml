@@ -4,10 +4,12 @@
 #
 #   cd docker/compose
 #   printf 'YORE_TOKEN=%s\n' "$(openssl rand -base64 32)" > .env && chmod 600 .env
-#   docker compose up -d --build
+#   docker compose up -d
 #
-# `--build` builds the image from docker/Dockerfile; after the first time,
-# `docker compose up -d` is enough, and `--build` is how you take an upgrade.
+# That pulls the published image. To take an upgrade, `docker compose pull`
+# and then `docker compose up -d` again. To run an image built from this
+# checkout instead, uncomment the `build:` block below and use
+# `docker compose up -d --build`.
 #
 # The server stores only ciphertext and device public keys. It speaks plain
 # HTTP and is published on the loopback address only, so put your existing
@@ -44,10 +46,10 @@ name: yore
 
 services:
   yore:
-    build:
-      context: ../..
-      dockerfile: docker/Dockerfile
-    image: yore:latest
+    image: ghcr.io/mach6/yore:latest
+    # build:
+    #   context: ../..
+    #   dockerfile: docker/Dockerfile
     restart: unless-stopped
     # bbolt is single-owner, so exactly one container may hold /data. Never
     # `docker compose up --scale yore=2`: a second writer corrupts the database.
