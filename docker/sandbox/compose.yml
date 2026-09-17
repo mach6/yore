@@ -24,10 +24,6 @@ services:
     build:
       context: ../..
       dockerfile: docker/Dockerfile
-    # The distroless image runs as nonroot; a fresh named volume is root-owned,
-    # so run the sandbox server as root to write /data. (In production, give the
-    # volume nonroot ownership instead of running as root.)
-    user: "0:0"
     environment:
       YORE_TOKEN: sandbox-token
     volumes:

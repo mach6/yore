@@ -42,7 +42,7 @@ freebsd/amd64. WSL runs the linux binaries; native Windows is not yet supported.
 | `make coverage-check` | Enforce the repo-wide coverage floor with go-covercheck (run **after** `make test`). |
 | `make release` | Cross-compile the tier-1 platform matrix into `dist/`. |
 | `make build-docker` | Build the server image from `docker/Dockerfile` as `yore:dev` (override with `IMAGE_TAG=`). |
-| `make test-docker` | Smoke-test that image by running `yore version` in it. |
+| `make test-docker` | Smoke-test that image: print its version, then start the server on a fresh volume and wait for `/v1/ready`. |
 | `make push-docker` | Tag and push that image as `$REGISTRY/yore:<tag>` for each tag in `PUSH_TAGS`. Log in to the registry first. |
 | `make bench` | Store / matcher / crypto benchmarks. |
 | `make stress` | End-to-end harness against the 3-container sandbox: records, redacts, syncs, and verifies. `N=150` is a ~20 s smoke once the images are cached (a couple of minutes the first time, when it compiles yore into the client image); the default `N=5000` is a real run. |

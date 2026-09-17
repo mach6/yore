@@ -89,10 +89,10 @@ clean:
 build-docker:
 	docker build -f docker/Dockerfile --build-arg VERSION=$(VERSION) -t $(IMAGE):$(IMAGE_TAG) .
 
-# Smoke the image: the entrypoint is `yore server`, so override it to run a
-# trivial subcommand that must exit 0.
+# Smoke the image: print its version, then start the server on a fresh volume
+# and require it to report ready.
 test-docker:
-	docker run --rm --entrypoint /yore $(IMAGE):$(IMAGE_TAG) version
+	docker/smoke.sh $(IMAGE):$(IMAGE_TAG)
 
 # Needs a prior `docker login` to the registry.
 push-docker:
