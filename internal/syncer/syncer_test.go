@@ -363,6 +363,53 @@ func TestRevokeRotation(t *testing.T) {
 	}
 }
 
+// TestReenrollAfterRevoke pins that a revoked machine can be brought back the
+// same way any machine joins: a fresh invitation and an approval. It keeps its
+// host id, so the history it pushed before the revoke is still its own.
+func TestReenrollAfterRevoke(t *testing.T) {
+	ctx := context.Background()
+	url := newServer(t)
+	a, aStore, b, bStore := enrollPair(t, url)
+
+	for _, r := range makeRecords(10) {
+		_, err := aStore.Append(r)
+		require.NoError(t, err, "A append")
+	}
+	_, err := a.Push(ctx)
+	require.NoError(t, err, "A.Push")
+	require.NoError(t, a.Revoke(ctx, b.DeviceID()), "A.Revoke(B)")
+
+	// B comes back on the same store, as the machine itself would. A new
+	// Syncer stands in for its daemon restarting: nothing cached survives.
+	key, err := cryptobox.GenerateDeviceKey()
+	require.NoError(t, err, "new key for B")
+	b2 := New(bStore, NewHTTPClient(url, ""), key, testEpoch)
+	require.Equal(t, b.DeviceID(), b2.DeviceID(), "B keeps its host id")
+
+	tok, err := a.MintToken(ctx)
+	require.NoError(t, err, "A.MintToken")
+	_, _, err = b2.Enroll(ctx, "machine-B", tok.Token)
+	require.NoError(t, err, "B re-enroll")
+	pending, err := a.PendingDevices(ctx)
+	require.NoError(t, err, "A.PendingDevices")
+	require.Len(t, pending, 1, "B is pending again, not active")
+	require.Equal(t, b.DeviceID(), pending[0].ID)
+	require.NoError(t, a.Approve(ctx, b2.DeviceID()), "A.Approve(B)")
+
+	// B reads the history written before its revoke, under the rotated key.
+	got, _, err := b2.PullOthers(ctx, map[string]uint64{})
+	require.NoError(t, err, "B.PullOthers")
+	require.Len(t, got, 10, "B pulled A's history")
+
+	// A second registration of the now-active B is still refused.
+	tok2, err := a.MintToken(ctx)
+	require.NoError(t, err, "A.MintToken")
+	_, _, err = b2.Enroll(ctx, "machine-B", tok2.Token)
+	var ae *APIError
+	require.ErrorAs(t, err, &ae, "re-registering an active machine")
+	require.Equal(t, http.StatusConflict, ae.Status)
+}
+
 // TestRecoverAfterLosingEveryDevice is the guarantee recovery exists for: with
 // every enrolled machine gone, the recovery phrase alone must bring the history
 // back. It is the difference between "lost a laptop" and "lost the archive".
@@ -414,6 +461,67 @@ func TestRecoverAfterLosingEveryDevice(t *testing.T) {
 	// B now reads everything A ever wrote.
 	got, _, err := b.PullOthers(ctx, map[string]uint64{})
 	require.NoError(t, err, "B.PullOthers")
+	require.Len(t, got, len(want), "recovered record count")
+	for _, g := range got {
+		requireSameRecord(t, want[g.ID], g)
+	}
+}
+
+// TestRecoverAfterRevoke pins that revoking a machine does not strand the
+// recovery phrase. A revoke rotates the History Key and re-wraps every DEK
+// under the new one, so a recovery wrap still holding the old key would open
+// nothing and fail to admit anyone.
+func TestRecoverAfterRevoke(t *testing.T) {
+	ctx := context.Background()
+	url := newServer(t)
+
+	a, aStore := newDevice(t, url)
+	_, _, err := a.Enroll(ctx, "machine-A", testToken)
+	require.NoError(t, err, "A.Enroll")
+	salt, err := cryptobox.NewRecoverySalt()
+	require.NoError(t, err, "NewRecoverySalt")
+	phrase, err := cryptobox.NewRecoveryPhrase()
+	require.NoError(t, err, "NewRecoveryPhrase")
+	rk, err := cryptobox.DeriveRecoveryKey(phrase, salt)
+	require.NoError(t, err, "DeriveRecoveryKey")
+	require.NoError(t, a.Bootstrap(ctx, rk, salt), "A.Bootstrap")
+
+	b, _ := newDevice(t, url)
+	tok, err := a.MintToken(ctx)
+	require.NoError(t, err, "A.MintToken")
+	_, _, err = b.Enroll(ctx, "machine-B", tok.Token)
+	require.NoError(t, err, "B.Enroll")
+	require.NoError(t, a.Approve(ctx, b.DeviceID()), "A.Approve(B)")
+
+	for _, r := range makeRecords(12) {
+		_, aerr := aStore.Append(r)
+		require.NoError(t, aerr, "A append")
+	}
+	_, err = a.Push(ctx)
+	require.NoError(t, err, "A.Push")
+	want := canonicalByID(t, aStore)
+
+	require.NoError(t, a.Revoke(ctx, b.DeviceID()), "A.Revoke(B)")
+
+	// Every machine is now lost; only the phrase remains.
+	c, _ := newDevice(t, url)
+	rc := NewHTTPClient(url, "")
+	hk, hkVer, err := RecoverHK(ctx, rc, phrase)
+	require.NoError(t, err, "RecoverHK")
+	require.Equal(t, bootstrapHKVersion+1, hkVer, "recovery must hold the rotated key")
+
+	tkt, err := rc.RecoveryToken(ctx)
+	require.NoError(t, err, "RecoveryToken")
+	_, _, err = c.Enroll(ctx, "machine-C", tkt.Token)
+	require.NoError(t, err, "C.Enroll")
+	blob, err := cryptobox.WrapHK(hk, c.dev.Public())
+	require.NoError(t, err, "wrap HK for C")
+	require.NoError(t, rc.RecoveryActivate(ctx, c.DeviceID(), wire.ActivateReq{Wrap: wire.HKWrap{
+		DeviceID: c.DeviceID(), Blob: blob, HKVersion: hkVer,
+	}}), "recovery activate C")
+
+	got, _, err := c.PullOthers(ctx, map[string]uint64{})
+	require.NoError(t, err, "C.PullOthers")
 	require.Len(t, got, len(want), "recovered record count")
 	for _, g := range got {
 		requireSameRecord(t, want[g.ID], g)

@@ -776,6 +776,84 @@ func TestRotateHappy(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, "post dek at v2 after rotate")
 }
 
+// TestRotateCarriesRecovery pins that the recovery wrap rotates with the
+// device wraps: a rotation that left it behind would leave the recovery phrase
+// opening a History Key that no longer opens any DEK.
+func TestRotateCarriesRecovery(t *testing.T) {
+	c := setup(t)
+	dcA, ids := rotateSetup(t, c)
+	recPub := bytes.Repeat([]byte{7}, 32)
+	recSign, recSignPriv, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err, "recovery keygen")
+	status, body := initRecovery(t, dcA, recPub, recSign)
+	require.Equalf(t, http.StatusOK, status, "init recovery: %s", body)
+
+	// Any active device can read the recovery public key, and nothing more.
+	status, body = dcA.do("GET", "/v1/keys/recovery", nil)
+	require.Equalf(t, http.StatusOK, status, "recovery pub: %s", body)
+	require.Equal(t, recPub, mustJSON[wire.RecoveryPub](t, body).PubKey)
+	status, _ = c.anon().do("GET", "/v1/keys/recovery", nil)
+	require.Equal(t, http.StatusUnauthorized, status, "unsigned recovery pub read must be refused")
+
+	status, _ = dcA.do("POST", "/v1/devices/B/revoke", nil)
+	require.Equal(t, http.StatusOK, status, "revoke B")
+
+	deks := make([]wire.DEKWrap, 0, len(ids))
+	for _, id := range ids {
+		deks = append(deks, wire.DEKWrap{KeyID: id, DeviceID: "A", HKVersion: 2, Blob: []byte("v2-" + id)})
+	}
+	rotate := func(rw *wire.HKWrap) (int, []byte) {
+		return dcA.do("POST", "/v1/keys/rotate", wire.RotateReq{
+			HKVersion:    2,
+			HKWraps:      []wire.HKWrap{{DeviceID: "A", HKVersion: 2, Blob: []byte("hk2-A")}},
+			DEKWraps:     deks,
+			RecoveryWrap: rw,
+		})
+	}
+
+	status, _ = rotate(nil)
+	require.Equal(t, http.StatusBadRequest, status, "rotate without the recovery wrap")
+	status, _ = rotate(&wire.HKWrap{DeviceID: "recovery", HKVersion: 1, Blob: []byte("hk2-rec")})
+	require.Equal(t, http.StatusBadRequest, status, "recovery wrap at the wrong version")
+	_, body = dcA.do("GET", "/v1/keys/hk?device_id=A", nil)
+	require.Equal(t, 1, mustJSON[wire.HKWrap](t, body).HKVersion, "refused rotations change nothing")
+
+	status, body = rotate(&wire.HKWrap{DeviceID: "recovery", HKVersion: 2, Blob: []byte("hk2-rec")})
+	require.Equalf(t, http.StatusOK, status, "rotate: %s", body)
+
+	rec := c.withKey("recovery", recSignPriv)
+	status, body = rec.do("GET", "/v1/recovery", nil)
+	require.Equalf(t, http.StatusOK, status, "recovery wrap: %s", body)
+	w := mustJSON[wire.HKWrap](t, body)
+	require.Equal(t, []byte("hk2-rec"), w.Blob, "recovery wrap rotated")
+	require.Equal(t, 2, w.HKVersion, "recovery wrap version")
+
+	// The recovery key itself is unchanged: only its wrap rotates.
+	_, body = dcA.do("GET", "/v1/keys/recovery", nil)
+	require.Equal(t, recPub, mustJSON[wire.RecoveryPub](t, body).PubKey)
+}
+
+// With no recovery key there is nothing to rotate, and a stray wrap is refused
+// rather than stored where recovery would later find it.
+func TestRotateWithoutRecovery(t *testing.T) {
+	c := setup(t)
+	dcA, ids := rotateSetup(t, c)
+	status, _ := dcA.do("GET", "/v1/keys/recovery", nil)
+	require.Equal(t, http.StatusNotFound, status, "no recovery key configured")
+
+	deks := make([]wire.DEKWrap, 0, len(ids))
+	for _, id := range ids {
+		deks = append(deks, wire.DEKWrap{KeyID: id, DeviceID: "A", HKVersion: 2, Blob: []byte("v2-" + id)})
+	}
+	status, _ = dcA.do("POST", "/v1/keys/rotate", wire.RotateReq{
+		HKVersion:    2,
+		HKWraps:      []wire.HKWrap{{DeviceID: "A", HKVersion: 2, Blob: []byte("hk2-A")}, {DeviceID: "B", HKVersion: 2, Blob: []byte("hk2-B")}},
+		DEKWraps:     deks,
+		RecoveryWrap: &wire.HKWrap{DeviceID: "recovery", HKVersion: 2, Blob: []byte("hk2-rec")},
+	})
+	require.Equal(t, http.StatusBadRequest, status, "recovery wrap without a recovery key")
+}
+
 func TestRotatePartialIsAllOrNothing(t *testing.T) {
 	c := setup(t)
 	dcA, ids := rotateSetup(t, c)

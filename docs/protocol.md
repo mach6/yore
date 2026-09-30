@@ -135,8 +135,9 @@ server's configured token is accepted, but **only while the tenant has no active
 device**. Once one exists that token enrolls nothing, which is what makes it a
 first credential rather than a standing one.
 
-**Revoke**: `POST /v1/devices/{id}/revoke`, then `POST /v1/keys/rotate` (new HK,
-all data keys re-wrapped). Records are never re-encrypted.
+**Revoke**: `GET /v1/keys/recovery`, `POST /v1/devices/{id}/revoke`, then
+`POST /v1/keys/rotate` (new HK, all data keys and the recovery wrap re-wrapped).
+Records are never re-encrypted.
 
 When a cycle runs is a client concern; see `architecture.md`.
 
@@ -221,7 +222,9 @@ the **same transaction as the write**, so it can never admit two devices.
 → `200 wire.RegisterResp` `{device, group_formed}`; `group_formed` false means
 this device should form the group. Errors: `400` (empty id, keys not 32B, device
 id mismatch), `401` (bad signature, or an unknown/redeemed/expired token), `409`
-(id already registered).
+(id already registered and not revoked). A revoked id may register again: it
+comes back `pending` under the key it now presents, keeps its history stream,
+and needs approving like any new machine.
 
 ### `POST /v1/tokens`: mint an enrollment token *(signed)*
 
@@ -290,6 +293,12 @@ Sets the device revoked and deletes its HK wrap. → `200 {"status":"revoked"}`.
 treats that as "not activated". A revoked caller never reaches the handler: the
 signature check refuses it first with `403 device_revoked`.
 
+### `GET /v1/keys/recovery`: the recovery public key *(signed)*
+
+→ `200 wire.RecoveryPub` `{pub_key}`, the X25519 key the recovery wrap is sealed
+to, so a rotating device can seal the new HK to it. `404` if the group has no
+recovery key.
+
 ### `GET /v1/keys/dek?cursor=K&limit=M`: list wrapped epoch data keys *(signed)*
 
 Ordered by `key_id` (ULIDs sort by creation time), strictly after `cursor`
@@ -311,17 +320,19 @@ and `hk_version` equal to the current version. Idempotent by `key_id`.
 
 ### `POST /v1/keys/rotate`: atomic re-key after a revoke *(signed)*
 
-Request `wire.RotateReq` `{hk_version, hk_wraps:[HKWrap], dek_wraps:[DEKWrap]}`,
-applied all-or-nothing in one transaction. Rules:
+Request `wire.RotateReq` `{hk_version, hk_wraps:[HKWrap], dek_wraps:[DEKWrap],
+recovery_wrap:HKWrap}`, applied all-or-nothing in one transaction. Rules:
 
 - `hk_version` must be exactly current + 1;
 - `hk_wraps` must be non-empty and every `device_id` in it currently active;
 - `dek_wraps` must cover **exactly** the existing set of `key_id`s, with no
-  missing, extra, or duplicate entries. The error names the first offender.
+  missing, extra, or duplicate entries. The error names the first offender;
+- `recovery_wrap` is required when the group has a recovery key and refused
+  when it has none; its `hk_version` must equal `hk_version`.
 
 On success all HK wraps are replaced (devices absent from `hk_wraps` lose
-access), all data-key wraps are overwritten under the new HK, and the version is
-bumped. Records are untouched. → `200 {"hk_version": N}`. Errors: `400` on any
+access), all data-key wraps are overwritten under the new HK, the recovery wrap
+is replaced (the recovery key itself is not), and the version is bumped. Records are untouched. → `200 {"hk_version": N}`. Errors: `400` on any
 rule violation.
 
 ### Recovery endpoints
@@ -522,7 +533,10 @@ in one atomic `POST /v1/keys/rotate`: mint a fresh HK at `current+1`, **re-wrap
 every existing data key** under it preserving each key's plaintext, key id,
 device id, and epoch (so old records still open under the same AAD, and
 **records are never re-encrypted**), and wrap the new HK for every still-active
-device. Rotation is refused if no active device would survive. Unwrapped data-key
+device and for the recovery key, whose public half comes from `GET
+/v1/keys/recovery`. Without that last wrap the recovery phrase would open a
+key that no longer opens anything. Rotation is refused if no active device
+would survive. Unwrapped data-key
 plaintexts stay valid across rotation; only the HK-wrap cache is invalidated
 client-side.
 

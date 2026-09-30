@@ -23,7 +23,7 @@ var errSyncOff = errors.New("sync not configured (run `yore setup`)")
 
 // errRevoked is returned once the server has refused this device as revoked.
 // Retrying cannot fix it: the device has to be enrolled again.
-var errRevoked = errors.New("this device has been revoked (re-enroll it with `yore enroll`)")
+var errRevoked = errors.New("this device has been revoked (to sync again, run `yore devices token` on an enrolled machine, then `yore setup --token <token>` here)")
 
 // listDevices returns the enrolled devices with per-device verification codes
 // for pending ones (computed here so proto stays independent of wire/cryptobox).

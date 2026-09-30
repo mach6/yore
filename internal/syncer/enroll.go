@@ -212,12 +212,19 @@ func (s *Syncer) Approve(ctx context.Context, deviceID string) error {
 // revoked device can decrypt nothing new. It revokes the device, then in one
 // atomic Rotate: mints a fresh HK, re-wraps EVERY existing DEK under the new HK
 // (preserving each DEK's plaintext, so old records stay decryptable without
-// being re-encrypted), and wraps the new HK for every still-active device. This
+// being re-encrypted), and wraps the new HK for every still-active device and
+// for the recovery key. This
 // is the O(1) revocation property: only keys rotate, never the record corpus.
 func (s *Syncer) Revoke(ctx context.Context, deviceID string) error {
 	hkOld, versionOld, err := s.resolveHK(ctx)
 	if err != nil {
 		return err
+	}
+	// Fetched before revoking, so a failure here leaves the group untouched
+	// rather than revoked but not yet rotated.
+	recPub, hasRecovery, err := s.http.RecoveryPub(ctx)
+	if err != nil {
+		return fmt.Errorf("syncer: fetch recovery key: %w", err)
 	}
 	if err := s.http.RevokeDevice(ctx, deviceID); err != nil {
 		return err
@@ -261,10 +268,26 @@ func (s *Syncer) Revoke(ctx context.Context, deviceID string) error {
 		return fmt.Errorf("syncer: refusing to rotate with no surviving active devices")
 	}
 
+	// Seal the new HK for the recovery phrase too, or recovery would keep
+	// handing back a key that no longer opens any DEK.
+	var recoveryWrap *wire.HKWrap
+	if hasRecovery {
+		pub, err := cryptobox.PublicFromBytes(recPub)
+		if err != nil {
+			return fmt.Errorf("syncer: server returned a malformed recovery key: %w", err)
+		}
+		blob, err := cryptobox.WrapHK(hkNew, pub)
+		if err != nil {
+			return fmt.Errorf("syncer: wrap new history key for recovery: %w", err)
+		}
+		recoveryWrap = &wire.HKWrap{DeviceID: RecoveryDeviceID, Blob: blob, HKVersion: newVersion}
+	}
+
 	if err := s.http.Rotate(ctx, wire.RotateReq{
-		HKVersion: newVersion,
-		HKWraps:   hkWraps,
-		DEKWraps:  dekWraps,
+		HKVersion:    newVersion,
+		HKWraps:      hkWraps,
+		DEKWraps:     dekWraps,
+		RecoveryWrap: recoveryWrap,
 	}); err != nil {
 		return err
 	}

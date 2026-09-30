@@ -118,12 +118,20 @@ type DEKListResp struct {
 }
 
 // RotateReq atomically replaces the entire wrap set after a revocation:
-// a full new HK wrap set (surviving devices only) and every DEK re-wrapped
-// under the new HK. The server applies all-or-nothing.
+// a full new HK wrap set (surviving devices only), every DEK re-wrapped under
+// the new HK, and, when the group has a recovery key, the new HK sealed to it.
+// The server applies all-or-nothing.
 type RotateReq struct {
-	HKVersion int       `json:"hk_version"` // must be current+1
-	HKWraps   []HKWrap  `json:"hk_wraps"`
-	DEKWraps  []DEKWrap `json:"dek_wraps"`
+	HKVersion    int       `json:"hk_version"` // must be current+1
+	HKWraps      []HKWrap  `json:"hk_wraps"`
+	DEKWraps     []DEKWrap `json:"dek_wraps"`
+	RecoveryWrap *HKWrap   `json:"recovery_wrap,omitempty"` // required iff recovery is configured
+}
+
+// RecoveryPub is the group's recovery public key, which a rotating device
+// seals the new History Key to so the recovery phrase keeps opening it.
+type RecoveryPub struct {
+	PubKey []byte `json:"pub_key"`
 }
 
 // PushRecord is one sealed history record in a host's append-only stream.

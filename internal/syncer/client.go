@@ -455,6 +455,20 @@ func (c *HTTPClient) UploadDEKWraps(ctx context.Context, wraps []wire.DEKWrap) (
 	return resp.Stored, err
 }
 
+// RecoveryPub fetches the group's recovery public key. found is false when the
+// group has no recovery key.
+func (c *HTTPClient) RecoveryPub(ctx context.Context) (pub []byte, found bool, err error) {
+	var resp wire.RecoveryPub
+	if err := c.do(ctx, http.MethodGet, "/v1/keys/recovery", nil, nil, &resp, nil); err != nil {
+		var ae *APIError
+		if errors.As(err, &ae) && ae.Status == http.StatusNotFound {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	return resp.PubKey, true, nil
+}
+
 // Rotate atomically installs a new HK generation: a fresh HK wrap set for the
 // surviving devices and every DEK re-wrapped under the new HK.
 func (c *HTTPClient) Rotate(ctx context.Context, req wire.RotateReq) error {

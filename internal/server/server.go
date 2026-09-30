@@ -580,6 +580,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/devices", s.signed(s.handleListDevices))
 	mux.HandleFunc("GET /v1/keys/hk", s.signed(s.handleGetHK))
 	mux.HandleFunc("GET /v1/keys/dek", s.signed(s.handleListDEK))
+	mux.HandleFunc("GET /v1/keys/recovery", s.signed(s.handleGetRecoveryPub))
 
 	mux.HandleFunc("POST /v1/records", s.handlePush)
 	mux.HandleFunc("POST /v1/devices", s.handleRegister)
