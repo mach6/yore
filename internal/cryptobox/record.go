@@ -16,18 +16,25 @@ type RecordAAD struct {
 
 // bytes renders the AAD. Field order and separators are part of the wire
 // contract; do not reorder.
-func (a RecordAAD) bytes() []byte {
-	return []byte(recSealDomain + "|" + a.RecordID + "|" + a.HostID + "|" +
+func (a RecordAAD) bytes(domain string) []byte {
+	return []byte(domain + "|" + a.RecordID + "|" + a.HostID + "|" +
 		strconv.FormatUint(a.Seq, 10) + "|" + a.KeyID)
 }
 
 // SealRecord encrypts a record's plaintext (typically its JSON encoding) under
 // the epoch DEK, binding aad. The blob is nonce(24) ‖ ciphertext.
 func SealRecord(plaintext []byte, dek [32]byte, aad RecordAAD) ([]byte, error) {
-	return sealAEAD(dek, plaintext, aad.bytes())
+	return sealAEAD(dek, plaintext, aad.bytes(recSealDomain))
 }
 
 // OpenRecord reverses SealRecord. aad must match the seal-time value exactly.
+// A record sealed under the legacy separator opens too.
 func OpenRecord(blob []byte, dek [32]byte, aad RecordAAD) ([]byte, error) {
-	return openAEAD(dek, blob, aad.bytes())
+	pt, err := openAEAD(dek, blob, aad.bytes(recSealDomain))
+	if err != nil {
+		if legacy, lerr := openAEAD(dek, blob, aad.bytes(legacyRecSealDomain)); lerr == nil {
+			return legacy, nil
+		}
+	}
+	return pt, err
 }

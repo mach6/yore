@@ -176,6 +176,9 @@ func TestVerificationCodeStableAndDistinct(t *testing.T) {
 	require.NotEqual(t, VerificationCode(a), VerificationCode(b), "VerificationCode collided for distinct keys")
 	// Format: 6 groups of 4 => 6*4 + 5 separators = 29 chars.
 	require.Len(t, VerificationCode(a), 29, "code length")
+	// Two machines on different builds compare this code by eye during
+	// approval, so its value is part of the protocol, not just its shape.
+	require.Equal(t, "NNNZ-CZ6T-C4PN-BNSK-RMEY-P6FW", VerificationCode(a), "code changed for a fixed key")
 }
 
 // TestErrNotFound covers the one distinction a rollout depends on: a server that

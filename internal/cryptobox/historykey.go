@@ -49,7 +49,7 @@ func WrapHK(hk, recipientPub [32]byte) ([]byte, error) {
 		return nil, ErrLowOrder
 	}
 
-	wrapKey, err := hkWrapKey(shared, ephPub, recipientPub[:])
+	wrapKey, err := hkWrapKey(hkWrapDomain, shared, ephPub, recipientPub[:])
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +73,20 @@ func WrapHK(hk, recipientPub [32]byte) ([]byte, error) {
 
 // UnwrapHK reverses WrapHK using k's private key. It succeeds only for the
 // device the blob was sealed to; any other device (or a tampered blob) fails.
+// A wrap sealed under the legacy separator opens too.
 func UnwrapHK(blob []byte, k DeviceKey) ([32]byte, error) {
+	hk, err := unwrapHK(hkWrapDomain, blob, k)
+	if err == nil {
+		return hk, nil
+	}
+	if legacy, lerr := unwrapHK(legacyHKWrapDomain, blob, k); lerr == nil {
+		return legacy, nil
+	}
+	return [32]byte{}, err
+}
+
+// unwrapHK opens a wrap sealed under one domain separator.
+func unwrapHK(domain string, blob []byte, k DeviceKey) ([32]byte, error) {
 	if len(blob) < keySize+nonceSize {
 		return [32]byte{}, ErrTruncated
 	}
@@ -92,7 +105,7 @@ func UnwrapHK(blob []byte, k DeviceKey) ([32]byte, error) {
 
 	// The recipient's own public key is bound into the HKDF info, matching
 	// what WrapHK used as recipientPub.
-	wrapKey, err := hkWrapKey(shared, ephPub, k.pub[:])
+	wrapKey, err := hkWrapKey(domain, shared, ephPub, k.pub[:])
 	if err != nil {
 		return [32]byte{}, err
 	}
@@ -102,7 +115,7 @@ func UnwrapHK(blob []byte, k DeviceKey) ([32]byte, error) {
 	if err != nil {
 		return [32]byte{}, err
 	}
-	pt, err := aead.Open(nil, nonce, ct, []byte(hkWrapDomain))
+	pt, err := aead.Open(nil, nonce, ct, []byte(domain))
 	if err != nil {
 		return [32]byte{}, err
 	}
@@ -118,8 +131,8 @@ func UnwrapHK(blob []byte, k DeviceKey) ([32]byte, error) {
 // hkWrapKey derives the 32-byte HK wrapping key via HKDF-SHA256 over the ECDH
 // shared secret, binding both public keys into the info string so a blob is
 // cryptographically tied to the exact (ephemeral, recipient) pair.
-func hkWrapKey(shared, ephPub, recipientPub []byte) ([32]byte, error) {
-	info := hkWrapDomain + "|" + b64(ephPub) + "|" + b64(recipientPub)
+func hkWrapKey(domain string, shared, ephPub, recipientPub []byte) ([32]byte, error) {
+	info := domain + "|" + b64(ephPub) + "|" + b64(recipientPub)
 	out, err := hkdf.Key(sha256.New, shared, nil, info, keySize)
 	if err != nil {
 		return [32]byte{}, err
