@@ -1058,3 +1058,9 @@ func TestPruneTokensKeepsTheClaimedOnes(t *testing.T) {
 		return nil
 	}), "check")
 }
+
+// A token is stored only as this hash, so the hash has to stay the same
+// across builds or tokens minted before an upgrade stop redeeming after it.
+func TestHashTokenIsStable(t *testing.T) {
+	require.Equal(t, "2f88edd023fc75ef9d050eb45d87cadff64fe0b244d9dc37a5680dfc9ceb56a0", fmt.Sprintf("%x", hashToken("token-1")))
+}

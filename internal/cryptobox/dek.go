@@ -21,15 +21,19 @@ func NewDEK() (keyID string, dek [32]byte, err error) {
 // replayed against a different key slot, device, epoch, or HK generation. The
 // blob is nonce(24) ‖ ciphertext.
 func WrapDEK(dek, hk [32]byte, keyID, deviceID string, epoch int64, hkVersion int) ([]byte, error) {
-	return sealAEAD(hk, dek[:], dekAAD(keyID, deviceID, epoch, hkVersion))
+	return sealAEAD(hk, dek[:], dekAAD(dekWrapDomain, keyID, deviceID, epoch, hkVersion))
 }
 
 // UnwrapDEK reverses WrapDEK. The four binding parameters must match exactly
-// what WrapDEK was given, or authentication fails.
+// what WrapDEK was given, or authentication fails. A wrap sealed under the
+// legacy separator opens too.
 func UnwrapDEK(blob []byte, hk [32]byte, keyID, deviceID string, epoch int64, hkVersion int) ([32]byte, error) {
-	pt, err := openAEAD(hk, blob, dekAAD(keyID, deviceID, epoch, hkVersion))
+	pt, err := openAEAD(hk, blob, dekAAD(dekWrapDomain, keyID, deviceID, epoch, hkVersion))
 	if err != nil {
-		return [32]byte{}, err
+		var lerr error
+		if pt, lerr = openAEAD(hk, blob, dekAAD(legacyDEKWrapDomain, keyID, deviceID, epoch, hkVersion)); lerr != nil {
+			return [32]byte{}, err
+		}
 	}
 	defer zero(pt)
 	if len(pt) != keySize {
@@ -42,7 +46,7 @@ func UnwrapDEK(blob []byte, hk [32]byte, keyID, deviceID string, epoch int64, hk
 
 // dekAAD builds the DEK-wrap additional-data string. Field order and
 // separators are part of the wire contract; do not reorder.
-func dekAAD(keyID, deviceID string, epoch int64, hkVersion int) []byte {
-	return []byte(dekWrapDomain + "|" + keyID + "|" + deviceID + "|" +
+func dekAAD(domain, keyID, deviceID string, epoch int64, hkVersion int) []byte {
+	return []byte(domain + "|" + keyID + "|" + deviceID + "|" +
 		strconv.FormatInt(epoch, 10) + "|" + strconv.Itoa(hkVersion))
 }

@@ -227,7 +227,7 @@ id mismatch), `401` (bad signature, or an unknown/redeemed/expired token), `409`
 
 → `200 wire.TokenResp` `{token, expires_ms}`. Valid 30 minutes, single use. The
 plaintext is returned exactly once; the server stores only
-`sha256("yore/token/v1|" ‖ token)`, so a database read yields no usable token,
+`sha256("github.com/mach6/yore/token/v1|" ‖ token)`, so a database read yields no usable token,
 and a token can never be shown again after the moment it was minted.
 
 The stored record is `{created_ms, expires_ms, claimed_ms, claimed_by,
@@ -390,7 +390,14 @@ Every confidentiality boundary is **XChaCha20-Poly1305**
 `nonce ‖ ciphertext` unless noted. Each construction binds a
 **domain-separation string** as additional data (and, for HK, into the HKDF
 info), so a blob sealed under one construction can never open under another:
-`yore/hk-wrap/v1`, `yore/dek-wrap/v1`, `yore/rec/v1`.
+`github.com/mach6/yore/hk-wrap/v1`, `github.com/mach6/yore/dek-wrap/v1`,
+`github.com/mach6/yore/rec/v1`.
+
+Earlier builds sealed under `yore/hk-wrap/v1`, `yore/dek-wrap/v1`, and
+`yore/rec/v1`. Nothing is sealed under those any more, but keys and records
+already sealed under them are never re-sealed, so every open tries the current
+string first and then the earlier one for the same construction. The two sets
+stay disjoint across constructions, so the separation between them holds.
 
 ## Device identity: `device.key`
 
@@ -428,8 +435,8 @@ wrapping key via HKDF-SHA256, and seal HK. The blob is:
 ephemeralPub(32) ‖ nonce(24) ‖ ciphertext
 ```
 
-- HKDF info: `yore/hk-wrap/v1|<b64url(ephemeralPub)>|<b64url(recipientPub)>`
-- AEAD additional data: `yore/hk-wrap/v1`
+- HKDF info: `github.com/mach6/yore/hk-wrap/v1|<b64url(ephemeralPub)>|<b64url(recipientPub)>`
+- AEAD additional data: `github.com/mach6/yore/hk-wrap/v1`
 
 Both public keys are bound into the derivation, so a wrap is cryptographically
 tied to the exact (ephemeral, recipient) pair and reveals nothing about the
@@ -448,7 +455,7 @@ wraps it once under HK.
 with AAD:
 
 ```
-yore/dek-wrap/v1|<keyID>|<deviceID>|<epoch>|<hkVersion>
+github.com/mach6/yore/dek-wrap/v1|<keyID>|<deviceID>|<epoch>|<hkVersion>
 ```
 
 so a wrap cannot be replayed against a different key slot, device, epoch, or HK
@@ -487,7 +494,7 @@ rather than the ciphertext, and is bound as AAD.
 with AAD:
 
 ```
-yore/rec/v1|<recordID>|<hostID>|<seq>|<keyID>
+github.com/mach6/yore/rec/v1|<recordID>|<hostID>|<seq>|<keyID>
 ```
 
 so a sealed record cannot be moved to a different id, host stream, sequence
@@ -505,7 +512,7 @@ established the group must not form at all.
 
 **Enroll** (any later device): `POST /v1/devices` lands pending. The device shows
 a **verification code**, six groups of four Crockford-base32 characters over
-`SHA-256("yore/verify/v1|" ‖ pubKey)`. An existing active device confirms the
+`SHA-256("github.com/mach6/yore/verify/v1|" ‖ pubKey)`. An existing active device confirms the
 same code out of band, which guards against a swapped key, then approves: it
 wraps HK for the newcomer's public key and activates it. The newcomer resolves HK
 and can read everything.
