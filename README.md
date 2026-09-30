@@ -181,6 +181,9 @@ yore devices                # back on the first machine: select it, press a,
 which invitations are still outstanding and how long they have left, `x` to
 cancel an invitation or revoke a machine, `S` to refresh.
 
+A revoked machine comes back the same way a new one joins: an invitation, then
+`yore setup --token <token>` on it, then approval. It keeps its own history.
+
 Lost every machine? `yore recover` asks for the recovery phrase and re-enrolls.
 
 Your device key is kept in your OS keyring where one is available, and in a
@@ -349,6 +352,7 @@ that.
 | Force a sync now | `yore sync`, or `S` in the browser |
 | Add a machine | `n` in `yore devices`, then `yore setup --token …` there, then `a` to approve |
 | Approve or revoke a machine | `yore devices`; `a` or `x`, both ask first |
+| Bring back a revoked machine | same as adding one: an invitation, `yore setup --token …` on it, then `a` |
 | Get back in after losing every machine | `yore recover` |
 | Check your setup | `yore doctor`, `yore status` |
 | Stop the daemon or server | `yore stop`, `yore server stop` |

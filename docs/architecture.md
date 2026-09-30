@@ -828,7 +828,8 @@ device X25519 + Ed25519 keypairs   per machine; private halves never leave it
 - **Recovery.** Per-device keys mean losing every device would otherwise lose the
   archive for good, so bootstrap also seals HK to a key derived (Argon2id) from a
   one-time recovery phrase, shown once and never stored. The server holds only
-  the salt, the recovery public keys, and that wrap.
+  the salt, the recovery public keys, and that wrap. Every rotation re-seals the
+  wrap to the new HK; the recovery key itself stays write-once.
 - **Optional certificate pinning** (`yore setup --pin`) hardens against a
   TLS-inspecting proxy and fails closed. Fail-closed is the right default and a
   bad failure mode to diagnose blind: the pin covers the server's *key*, not its

@@ -64,7 +64,8 @@ func runStatus() int {
 		// of the group, its cached copy of everyone else's history has been
 		// deleted, and only re-enrolling changes that.
 		fmt.Println("            this device was revoked: its cached remote history has been deleted")
-		fmt.Println("            re-enroll it with `yore enroll` to sync again")
+		fmt.Println("            to sync again, run `yore devices token` on an enrolled machine,")
+		fmt.Println("            then `yore setup --token <token>` here, and approve it there")
 	}
 	return 0
 }

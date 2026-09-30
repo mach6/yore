@@ -269,6 +269,27 @@ func (s *Server) handleGetRecovery(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, init.Wrap)
 }
 
+// GET /v1/keys/recovery: the recovery public key *(signed by an active
+// device)* A device rotating the History Key needs it to seal the new key for
+// the recovery phrase; without that, a rotation would leave the phrase opening
+// a key that no longer opens anything.
+func (s *Server) handleGetRecoveryPub(w http.ResponseWriter, r *http.Request) {
+	db, ok := mustDB(w, r)
+	if !ok {
+		return
+	}
+	init, found, err := loadRecovery(db)
+	if err != nil {
+		writeAPIErr(w, r, err)
+		return
+	}
+	if !found {
+		writeErr(w, http.StatusNotFound, "no recovery key configured")
+		return
+	}
+	writeJSON(w, http.StatusOK, wire.RecoveryPub{PubKey: init.PubKey})
+}
+
 // POST /v1/recovery: publish the recovery key and its HK wrap *(signed)*
 // Written once, by the device that bootstraps the group. It is not replaceable
 // through this endpoint: overwriting it would let anyone who compromises one
@@ -670,9 +691,18 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 				return rerr
 			}
 		}
+		// A revoked machine may register again: it comes back pending, under
+		// whatever key it now holds, and needs approving like any newcomer. It
+		// keeps its id, and with it the history stream it already pushed.
 		devB := tx.Bucket(bucketDevices)
-		if devB.Get([]byte(req.ID)) != nil {
-			return fail(http.StatusConflict, "device already registered")
+		if raw := devB.Get([]byte(req.ID)); raw != nil {
+			var prev wire.Device
+			if uerr := json.Unmarshal(raw, &prev); uerr != nil {
+				return uerr
+			}
+			if prev.Status != wire.DeviceRevoked {
+				return fail(http.StatusConflict, "device already registered")
+			}
 		}
 		val, err := json.Marshal(dev)
 		if err != nil {
@@ -1108,7 +1138,40 @@ func (s *Server) handleRotate(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// The recovery wrap rotates with everything else. Only the wrap is
+		// replaced: the recovery key itself stays write-once, so a rotating
+		// device cannot swap in a recovery key of its own.
+		recB := tx.Bucket(bucketRecovery)
+		var recovery *wire.RecoveryInit
+		if raw := recB.Get(recoveryKey); raw != nil {
+			recovery = new(wire.RecoveryInit)
+			if err := json.Unmarshal(raw, recovery); err != nil {
+				return err
+			}
+		}
+		switch {
+		case recovery == nil && req.RecoveryWrap != nil:
+			return fail(http.StatusBadRequest, "recovery_wrap given but no recovery key is configured")
+		case recovery != nil && req.RecoveryWrap == nil:
+			return fail(http.StatusBadRequest, "recovery_wrap required: the recovery key must rotate too")
+		case recovery != nil && len(req.RecoveryWrap.Blob) == 0:
+			return fail(http.StatusBadRequest, "recovery_wrap.blob required")
+		case recovery != nil && req.RecoveryWrap.HKVersion != req.HKVersion:
+			return fail(http.StatusBadRequest, "recovery_wrap.hk_version must equal hk_version")
+		}
+
 		// Apply. Replace all hk_wraps (dropping absent devices), overwrite deks.
+		if recovery != nil {
+			recovery.Wrap.Blob = req.RecoveryWrap.Blob
+			recovery.Wrap.HKVersion = req.RecoveryWrap.HKVersion
+			val, err := json.Marshal(recovery)
+			if err != nil {
+				return err
+			}
+			if err := recB.Put(recoveryKey, val); err != nil {
+				return err
+			}
+		}
 		hkB := tx.Bucket(bucketHKWraps)
 		var oldKeys [][]byte
 		hc := hkB.Cursor()
