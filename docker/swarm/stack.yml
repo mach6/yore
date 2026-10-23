@@ -26,7 +26,7 @@
 # 2. Named tenants. Each is an isolated db at /data/tenants/<name>.db,
 #    unreachable by any other tenant's token, with backups in
 #    /data/backups/<name>/. Nothing is stored at /data/yore.db in this mode.
-#    Mount a JSON object of {"name":"token", …} as a secret, point
+#    Mount a JSON object of {"name":"token", ...} as a secret, point
 #    YORE_TOKENS_FILE at it, and remove YORE_TOKEN_FILE (and its secret):
 #      printf '{"alice":"%s","bob":"%s"}' "$(openssl rand -base64 32)" \
 #        "$(openssl rand -base64 32)" | docker secret create yore_tokens -

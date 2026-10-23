@@ -48,7 +48,7 @@ func TestRunHookDevinNonExecSkipped(t *testing.T) {
 	require.Empty(t, spooledRecords(t, dir), "a non-exec tool must not be recorded")
 }
 
-// TestRunHookDevinPreDurationAndPrompt covers the full pre→prompt→post flow: the
+// TestRunHookDevinPreDurationAndPrompt covers the full pre->prompt->post flow: the
 // PreToolUse stamp yields a real duration, and the cached prompt is attached.
 func TestRunHookDevinPreDurationAndPrompt(t *testing.T) {
 	dir := t.TempDir()

@@ -118,7 +118,7 @@ func cursorHooksPath(project bool) (string, error) {
 func cmdCursorShell(bin string) string  { return bin + " hook cursor" }
 func cmdCursorPrompt(bin string) string { return bin + " hook cursor-prompt" }
 
-// mergeCursorHook adds a Cursor hook block ({"command": …}) under
+// mergeCursorHook adds a Cursor hook block ({"command": ...}) under
 // hooks[event] unless one already runs command. Returns whether it changed
 // anything, and seeds the required "version": 1 key.
 func mergeCursorHook(cfg map[string]any, event, command string) bool {

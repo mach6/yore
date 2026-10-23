@@ -49,7 +49,7 @@ type Record struct {
 	StartMs int64  `json:"start_ms,omitempty"`
 
 	// Executor is the agent/tool that ran the command ("claude-code", "cursor",
-	// …), empty when the user typed it. It is NOT a tag: it is an attribute of
+	// ...), empty when the user typed it. It is NOT a tag: it is an attribute of
 	// the record, captured once and never edited, whereas tags are labels the
 	// user puts on and takes off; which is why it has its own key rather than
 	// riding on "tag".
@@ -76,7 +76,7 @@ type Record struct {
 	TagOp   string `json:"tag_op,omitempty"`
 
 	// Tags is the record's resolved freeform tags, filled by the daemon at query
-	// time (command tags ∪ session tags ∪ the cwd-prefix auto_tags rules). The
+	// time (command tags plus session tags plus the cwd-prefix auto_tags rules). The
 	// executor is deliberately not among them. Never stored or synced: it is
 	// derived on read.
 	Tags []string `json:"tags,omitempty"`

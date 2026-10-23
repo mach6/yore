@@ -142,7 +142,7 @@ type PushRecord struct {
 	Blob  []byte `json:"blob"`
 }
 
-// PushReq uploads a batch (ascending seq, ≤1000) for one host stream.
+// PushReq uploads a batch (ascending seq, <=1000) for one host stream.
 type PushReq struct {
 	HostID  string       `json:"host_id"`
 	Records []PushRecord `json:"records"`

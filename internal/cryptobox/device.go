@@ -89,7 +89,7 @@ func PublicFromBytes(b []byte) ([32]byte, error) {
 
 // Marshal serializes the key to its single-line wire form
 //
-//	yore-device2.<base64url(x25519priv‖x25519pub‖ed25519seed)>
+//	yore-device2.<base64url(x25519priv||x25519pub||ed25519seed)>
 //
 // (no trailing newline). This is what internal/secret stores in the OS keyring
 // or the 0600 fallback file.

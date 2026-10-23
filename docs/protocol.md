@@ -84,7 +84,7 @@ Server verification, in order:
    the `sign_key` of the device named in `X-Yore-Device`, which must be
    **active**.
 2. Verify the signature over the canonical string.
-3. Reject a timestamp outside ±5 minutes (`reqsign.Skew`).
+3. Reject a timestamp outside +/-5 minutes (`reqsign.Skew`).
 4. Reject a repeated `(device, nonce)` from the in-memory replay cache. Entries
    expire after `Skew`, so the cache stays bounded by request rate over 5
    minutes.
@@ -145,13 +145,13 @@ When a cycle runs is a client concern; see `architecture.md`.
 
 ### `GET /v1/health`: liveness (no auth)
 
-→ `200 {"status":"ok"}`. Backs the container and CLI healthcheck. Deliberately
+-> `200 {"status":"ok"}`. Backs the container and CLI healthcheck. Deliberately
 shallow: it touches no database, because a restart is the only remedy its
 consumer has, and the failures it must catch are the ones a restart fixes.
 
 ### `GET /v1/ready`: storage still accepts a write (no auth)
 
-→ `200 {"status":"ok"}`, or `503 {"error":"storage unavailable"}`.
+-> `200 {"status":"ok"}`, or `503 {"error":"storage unavailable"}`.
 
 A bbolt read is served from the existing mmap and needs no write at all, so a
 server whose volume has filled, or gone read-only, or started failing I/O,
@@ -170,28 +170,29 @@ restart turns a degraded-but-readable server into a crash loop. Point monitoring
 
 ### `GET /v1/hosts`: stream tips
 
-→ `200 {"hosts":[{"host_id":"01J…","max_seq":48211}, …]}`, sorted by `host_id`.
-`max_seq` is the last key of the host's stream bucket, 0 if it never pushed.
+-> `200 {"hosts":[{"host_id":"01J...","max_seq":48211}, ...]}`, sorted by
+`host_id`. `max_seq` is the last key of the host's stream bucket, 0 if it never
+pushed.
 
 ### `POST /v1/records`: push a batch *(signed)*
 
 Request `wire.PushReq`:
 
 ```json
-{ "host_id": "01J…",
-  "records": [ {"seq": 48212, "id": "01J…", "key_id": "01J…", "blob": "<base64>"}, … ] }
+{ "host_id": "01J...",
+  "records": [ {"seq": 48212, "id": "01J...", "key_id": "01J...", "blob": "<base64>"}, ... ] }
 ```
 
-Rules: `host_id` required, ≤1000 records, strictly ascending `seq`, body ≤10 MiB.
+Rules: `host_id` required, <=1000 records, strictly ascending `seq`, body <=10 MiB.
 Idempotent: an existing `(host_id, seq)` is skipped, first write wins.
 
-→ `200 {"stored": 142, "max_seq": 48353}` (`stored` counts only newly written
+-> `200 {"stored": 142, "max_seq": 48353}` (`stored` counts only newly written
 rows). Errors: `400` (missing host_id, >1000, non-ascending, malformed JSON),
 `413` (body over the cap).
 
 A record count alone does not bound a body: a thousand records carrying long
-prompts or heredocs is megabytes. The client therefore batches on **both** ≤1000
-records and ≤8 MiB of encoded body, and on a `413` (or the `400` a truncated body
+prompts or heredocs is megabytes. The client therefore batches on **both** <=1000
+records and <=8 MiB of encoded body, and on a `413` (or the `400` a truncated body
 decodes as) halves the batch and retries, down to a single record, at which
 point the error is real and is surfaced. This matters because the push watermark
 only advances over what the server acked, so a body that can never fit would
@@ -203,7 +204,7 @@ Returns records with `seq > after`, ascending. `limit` defaults to and is capped
 at 1000.
 
 ```json
-{ "records": [ {"seq":48001,"id":"01J…","key_id":"01J…","blob":"<base64>","created_ms":1752…}, … ],
+{ "records": [ {"seq":48001,"id":"01J...","key_id":"01J...","blob":"<base64>","created_ms":1752...}, ... ],
   "next_after": 49000 }
 ```
 
@@ -219,7 +220,7 @@ plus `X-Yore-Token: <token>`. Must carry a valid signature made with the private
 key for `sign_key`, and `X-Yore-Device` must equal `id`. The token is redeemed in
 the **same transaction as the write**, so it can never admit two devices.
 
-→ `200 wire.RegisterResp` `{device, group_formed}`; `group_formed` false means
+-> `200 wire.RegisterResp` `{device, group_formed}`; `group_formed` false means
 this device should form the group. Errors: `400` (empty id, keys not 32B, device
 id mismatch), `401` (bad signature, or an unknown/redeemed/expired token), `409`
 (id already registered and not revoked). A revoked id may register again: it
@@ -228,10 +229,10 @@ and needs approving like any new machine.
 
 ### `POST /v1/tokens`: mint an enrollment token *(signed)*
 
-→ `200 wire.TokenResp` `{token, expires_ms}`. Valid 30 minutes, single use. The
+-> `200 wire.TokenResp` `{token, expires_ms}`. Valid 30 minutes, single use. The
 plaintext is returned exactly once; the server stores only
-`sha256("github.com/mach6/yore/token/v1|" ‖ token)`, so a database read yields no usable token,
-and a token can never be shown again after the moment it was minted.
+`sha256("github.com/mach6/yore/token/v1|" || token)`, so a database read yields no
+usable token, and a token can never be shown again after the moment it was minted.
 
 The stored record is `{created_ms, expires_ms, claimed_ms, claimed_by,
 revoked_ms}`. `claimed_by` is the id of the device that enrolled on it, stamped
@@ -242,7 +243,7 @@ token was good for.
 
 ### `GET /v1/tokens`: list enrollment tokens *(signed)*
 
-→ `200 [wire.EnrollToken, …]`, newest first, where `EnrollToken` is `{id, state,
+-> `200 [wire.EnrollToken, ...]`, newest first, where `EnrollToken` is `{id, state,
 created_ms, expires_ms, claimed_ms, claimed_by, revoked_ms}`. `id` is the hex of
 the stored hash, and safe to publish, since enrolling requires presenting the
 plaintext; the id is a handle, not a credential. `state` is one of
@@ -255,7 +256,7 @@ readable at all, and why it is signed rather than bearer-only.
 
 ### `POST /v1/tokens/{id}/revoke`: cancel an unused token *(signed)*
 
-→ `204`. Idempotent. `400` for a malformed id, `404` if unknown, `409` if
+-> `204`. Idempotent. `400` for a malformed id, `404` if unknown, `409` if
 already claimed, since revoking then would say something untrue about how that
 machine got in and take nothing away from it. Unlike device revocation this
 rotates nothing: the token admitted no one, so there is no key a holder could
@@ -263,7 +264,7 @@ already have read with.
 
 ### `GET /v1/devices`: list *(signed)*
 
-→ `200 [wire.Device, …]` (all statuses), sorted by id. `Device` is
+-> `200 [wire.Device, ...]` (all statuses), sorted by id. `Device` is
 `{id, name, pub_key, sign_key, status, created_ms}` with `status` one of
 `pending|active|revoked`.
 
@@ -276,26 +277,26 @@ key.
 Rules: `wrap.device_id` must equal `{id}`; the device must exist and not be
 revoked; if any HK wrap already exists, `hk_version` must equal the current
 version; otherwise this is the bootstrap (first device, signed by the pending
-device itself) and any `hk_version ≥ 1` is accepted and pinned. Stores the wrap
+device itself) and any `hk_version >= 1` is accepted and pinned. Stores the wrap
 and sets the device active.
 
-→ `200 {"status":"active"}`. Errors: `400` (device id mismatch, bad version),
+-> `200 {"status":"active"}`. Errors: `400` (device id mismatch, bad version),
 `404` (unknown), `409` (revoked).
 
 ### `POST /v1/devices/{id}/revoke`: revoke *(signed)*
 
-Sets the device revoked and deletes its HK wrap. → `200 {"status":"revoked"}`.
+Sets the device revoked and deletes its HK wrap. -> `200 {"status":"revoked"}`.
 `404` if unknown. Follow with `POST /v1/keys/rotate`.
 
 ### `GET /v1/keys/hk?device_id=X`: this device's wrapped History Key *(signed)*
 
-→ `200 wire.HKWrap`. `404` if none, meaning pending or never wrapped; the client
+-> `200 wire.HKWrap`. `404` if none, meaning pending or never wrapped; the client
 treats that as "not activated". A revoked caller never reaches the handler: the
 signature check refuses it first with `403 device_revoked`.
 
 ### `GET /v1/keys/recovery`: the recovery public key *(signed)*
 
-→ `200 wire.RecoveryPub` `{pub_key}`, the X25519 key the recovery wrap is sealed
+-> `200 wire.RecoveryPub` `{pub_key}`, the X25519 key the recovery wrap is sealed
 to, so a rotating device can seal the new HK to it. `404` if the group has no
 recovery key.
 
@@ -306,8 +307,8 @@ Ordered by `key_id` (ULIDs sort by creation time), strictly after `cursor`
 at 1000.
 
 ```json
-{ "wraps": [ {"key_id":"01J…","device_id":"01J…","epoch":1752…,"blob":"<base64>","hk_version":1}, … ],
-  "next_cursor": "01J…" }
+{ "wraps": [ {"key_id":"01J...","device_id":"01J...","epoch":1752...,"blob":"<base64>","hk_version":1}, ... ],
+  "next_cursor": "01J..." }
 ```
 
 `next_cursor` is the last returned `key_id`, present only when more remain.
@@ -315,8 +316,8 @@ at 1000.
 ### `POST /v1/keys/dek`: upload wrapped data keys *(signed)*
 
 Request `[]wire.DEKWrap`. Each must have a non-empty `key_id` and `device_id`,
-and `hk_version` equal to the current version. Idempotent by `key_id`.
-→ `200 {"stored": N}`. Errors: `400` (missing fields, wrong version).
+and `hk_version` equal to the current version. Idempotent by `key_id`. -> `200
+{"stored": N}`. Errors: `400` (missing fields, wrong version).
 
 ### `POST /v1/keys/rotate`: atomic re-key after a revoke *(signed)*
 
@@ -332,8 +333,8 @@ recovery_wrap:HKWrap}`, applied all-or-nothing in one transaction. Rules:
 
 On success all HK wraps are replaced (devices absent from `hk_wraps` lose
 access), all data-key wraps are overwritten under the new HK, the recovery wrap
-is replaced (the recovery key itself is not), and the version is bumped. Records are untouched. → `200 {"hk_version": N}`. Errors: `400` on any
-rule violation.
+is replaced (the recovery key itself is not), and the version is bumped. Records
+are untouched. -> `200 {"hk_version": N}`. Errors: `400` on any rule violation.
 
 ### Recovery endpoints
 
@@ -351,7 +352,7 @@ One server can host several isolated tenants, each with its own devices, keys,
 and record streams. **The wire protocol is unchanged**: a client sends nothing
 tenant-specific; the server routes each request by the identity that signed it.
 
-- **Device → tenant.** The auth middleware finds the tenant whose `devices`
+- **Device to tenant.** The auth middleware finds the tenant whose `devices`
   bucket holds `X-Yore-Device` (device ids are globally unique ULIDs, so at most
   one can match) and binds that tenant's database into the request context. The
   lookup is cached per device id. Enrollment routes by token instead, and
@@ -365,7 +366,7 @@ tenant-specific; the server routes each request by the identity that signed it.
 - **One mode or the other.** A server is configured **either** with a single
   token (`--token` / `$YORE_TOKEN` / `$YORE_TOKEN_FILE`), hosting one tenant
   whose database is `--db`, **or** with named tenants (`$YORE_TOKENS_FILE`, a
-  JSON `{"name":"token", …}`) at `<dir(--db)>/tenants/<name>.db`, in which case
+  JSON `{"name":"token", ...}`) at `<dir(--db)>/tenants/<name>.db`, in which case
   nothing is created at `--db` and the path only roots `tenants/` and `backups/`.
   Both together is refused at startup, and so is neither.
 - **Names.** `[A-Za-z0-9_-]+`; `default` is reserved, since it names the backup
@@ -376,12 +377,12 @@ tenant-specific; the server routes each request by the identity that signed it.
 
 Each tenant's database holds:
 
-- `devices`: device_id → `Device`
-- `hk_wraps`: device_id → `HKWrap`
-- `dek_wraps`: key_id → `DEKWrap`
-- `tokens`: sha256(token) → the token record
-- `recovery`: fixed key → `RecoveryInit` (salt, recovery public keys, HK wrap)
-- `records:<host_id>`, one bucket per stream: seq (8-byte big-endian) →
+- `devices`: device_id -> `Device`
+- `hk_wraps`: device_id -> `HKWrap`
+- `dek_wraps`: key_id -> `DEKWrap`
+- `tokens`: sha256(token) -> the token record
+- `recovery`: fixed key -> `RecoveryInit` (salt, recovery public keys, HK wrap)
+- `records:<host_id>`, one bucket per stream: seq (8-byte big-endian) ->
   `{id, key_id, blob, created_ms}`
 - `meta`: `hk_version`
 
@@ -398,7 +399,7 @@ default 3).
 
 Every confidentiality boundary is **XChaCha20-Poly1305**
 (`chacha20poly1305.NewX`) with a fresh 24-byte random nonce; blobs are
-`nonce ‖ ciphertext` unless noted. Each construction binds a
+`nonce || ciphertext` unless noted. Each construction binds a
 **domain-separation string** as additional data (and, for HK, into the HKDF
 info), so a blob sealed under one construction can never open under another:
 `github.com/mach6/yore/hk-wrap/v1`, `github.com/mach6/yore/dek-wrap/v1`,
@@ -418,7 +419,7 @@ it: an **X25519** keypair that seals and unwraps the History Key, and an
 `0600`, and loading is refused if the file is group- or other-readable:
 
 ```
-yore-device2.<base64url( x25519priv(32) ‖ x25519pub(32) ‖ ed25519seed(32) )>
+yore-device2.<base64url( x25519priv(32) || x25519pub(32) || ed25519seed(32) )>
 ```
 
 `base64url` is raw and unpadded. The `yore-device2.` prefix marks the format that
@@ -443,7 +444,7 @@ key: generate a throwaway X25519 keypair, ECDH with the recipient, derive the
 wrapping key via HKDF-SHA256, and seal HK. The blob is:
 
 ```
-ephemeralPub(32) ‖ nonce(24) ‖ ciphertext
+ephemeralPub(32) || nonce(24) || ciphertext
 ```
 
 - HKDF info: `github.com/mach6/yore/hk-wrap/v1|<b64url(ephemeralPub)>|<b64url(recipientPub)>`
@@ -462,7 +463,7 @@ boundary for a given time and width without coordination. The first time a devic
 records into an epoch it mints a fresh 32-byte data key with a ULID `key_id` and
 wraps it once under HK.
 
-**Wrap** (`WrapDEK`) seals the data key under HK as `nonce(24) ‖ ciphertext`,
+**Wrap** (`WrapDEK`) seals the data key under HK as `nonce(24) || ciphertext`,
 with AAD:
 
 ```
@@ -501,7 +502,7 @@ shape.
 Stream metadata (`seq`, `key_id`, and the outer `id`) rides in the wire record
 rather than the ciphertext, and is bound as AAD.
 
-**Seal** (`SealRecord`) under the epoch data key is `nonce(24) ‖ ciphertext`,
+**Seal** (`SealRecord`) under the epoch data key is `nonce(24) || ciphertext`,
 with AAD:
 
 ```
@@ -523,10 +524,10 @@ established the group must not form at all.
 
 **Enroll** (any later device): `POST /v1/devices` lands pending. The device shows
 a **verification code**, six groups of four Crockford-base32 characters over
-`SHA-256("github.com/mach6/yore/verify/v1|" ‖ pubKey)`. An existing active device confirms the
-same code out of band, which guards against a swapped key, then approves: it
-wraps HK for the newcomer's public key and activates it. The newcomer resolves HK
-and can read everything.
+`SHA-256("github.com/mach6/yore/verify/v1|" || pubKey)`. An existing active device
+confirms the same code out of band, which guards against a swapped key, then
+approves: it wraps HK for the newcomer's public key and activates it. The newcomer
+resolves HK and can read everything.
 
 **Revoke and rotate**: revoke the device (the server deletes its HK wrap), then
 in one atomic `POST /v1/keys/rotate`: mint a fresh HK at `current+1`, **re-wrap
@@ -595,10 +596,10 @@ spawns one; the loser of the store lock exits silently.
 
 ```json
 { "op": "query",
-  "record": { …rec.Record… },     // OpRecord only
-  "query":  { …QueryReq… },       // OpQuery only
-  "delete_id": "01J…",            // OpDelete target
-  "device_id": "01J…" }           // OpApprove / OpRevoke target
+  "record": { ...rec.Record... },     // OpRecord only
+  "query":  { ...QueryReq... },       // OpQuery only
+  "delete_id": "01J...",            // OpDelete target
+  "device_id": "01J..." }           // OpApprove / OpRevoke target
 ```
 
 `QueryReq`:
@@ -648,10 +649,10 @@ appears in no row.
 
 ```json
 { "ok": true, "err": "",
-  "query":   { "rows":[…], "total":N, "scope":"local", "prompts":[…], "remote":{…} },
-  "hosts":   { "hosts":[{"hostname","host_id","count"}], "remote":{…} },
+  "query":   { "rows":[...], "total":N, "scope":"local", "prompts":[...], "remote":{...} },
+  "hosts":   { "hosts":[{"hostname","host_id","count"}], "remote":{...} },
   "devices": { "devices":[{"id","name","status","code","self"}] },
-  "status":  { "pid","uptime_sec","local_rows","remote":{…},"version" } }
+  "status":  { "pid","uptime_sec","local_rows","remote":{...},"version" } }
 ```
 
 Only the payload for the op is populated; `err` is non-empty on failure, with

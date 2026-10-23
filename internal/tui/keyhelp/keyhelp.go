@@ -18,8 +18,8 @@ import (
 )
 
 // Row is one binding: the keys as the user should press them, and what they do.
-// Keys is display text ("↑/k", "^t", "1-5"), not a key name the program matches
-// against; dispatch happens on the raw key strings in Keyed.
+// Keys is display text ("<U+2191>/k", "^t", "1-5"), not a key name the program
+// matches against; dispatch happens on the raw key strings in Keyed.
 type Row struct {
 	Keys string
 	Desc string
@@ -38,9 +38,10 @@ type Group struct {
 // gutter is the gap between columns in the full panel.
 const gutter = 3
 
-// Line renders the terse footer: "key desc · key desc · …", clipped to w by
-// dropping whole pieces from the end. The first piece is always kept: a footer
-// that shows one binding is still a footer; a truncated one is noise.
+// Line renders the terse footer: "key desc <U+00B7> key desc <U+00B7> ...",
+// clipped to w by dropping whole pieces from the end. The first piece is
+// always kept: a footer that shows one binding is still a footer; a truncated
+// one is noise.
 func Line(th *theme.Theme, rows []Row, w int) string {
 	if w < 1 || len(rows) == 0 {
 		return ""
@@ -74,7 +75,7 @@ func Line(th *theme.Theme, rows []Row, w int) string {
 	return b.String()
 }
 
-// Panel renders the full grouped key list into a w×h block, windowed at row
+// Panel renders the full grouped key list into a wxh block, windowed at row
 // `top`. It reports the total number of rows the content wants, so the caller
 // can clamp its scroll offset and say whether there is more below. Groups are
 // packed into as many columns as w affords and are filled in reading order

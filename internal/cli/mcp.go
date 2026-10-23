@@ -11,7 +11,7 @@ import (
 
 // runMcpServe runs the Model Context Protocol server on stdio: it ensures the
 // daemon is up, then serves read-only history queries to an AI agent (Claude
-// Code, Cursor, …) until stdin closes. Wired into agent configs by
+// Code, Cursor, ...) until stdin closes. Wired into agent configs by
 // `yore init claude-code` / `yore init cursor`; not typed by users.
 func runMcpServe() int {
 	c, err := daemon.EnsureRunning(stateDir())

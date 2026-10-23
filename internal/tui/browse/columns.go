@@ -287,8 +287,8 @@ var drillSpecs = []colSpec[rec.Record]{
 		less: func(a, b rec.Record) bool { return a.StartMs < b.StartMs },
 	},
 	{
-		// 4 wide, matching the browse table's exit column ("✗255" is the widest
-		// marker), so the same value is the same width in both tables.
+		// 4 wide, matching the browse table's exit column ("<U+2717>255" is the
+		// widest marker), so the same value is the same width in both tables.
 		title: "st", width: 4,
 		cell: func(th *theme.Theme, r rec.Record, _ int64) (string, lipgloss.Style) { return exitMarker(th, r) },
 		less: func(a, b rec.Record) bool { return exitRank(a) < exitRank(b) },

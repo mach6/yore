@@ -510,7 +510,7 @@ func NewModel(b Backend, opts Options) Model {
 	ti.Cursor.Style = th.Accent
 
 	afilter := textinput.New()
-	afilter.Prompt = "" // the explorer draws its own "filter <list> ❯" prompt
+	afilter.Prompt = "" // the explorer draws its own "filter <list> <U+276F>" prompt
 	afilter.TextStyle = th.Input
 	afilter.Cursor.SetMode(cursor.CursorStatic)
 	afilter.Cursor.Style = th.Accent
@@ -610,9 +610,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Same for `yore devices`: the D key fetches both lists on the way in, so
 		// landing on that view directly has to fetch them too or it opens on
-		// "loading…" and stays there.
-		// Appended individually rather than as one batch: Init's own return is
-		// already a tea.Batch, and nesting one inside it buys nothing.
+		// "loading" plus an ellipsis (U+2026) and stays there. Appended
+		// individually rather than as one batch: Init's own return is already a
+		// tea.Batch, and nesting one inside it buys nothing.
 		if mm.view == viewDevices {
 			cmds = append(cmds, mm.devicesCmd(), mm.tokensCmd())
 		}
@@ -872,7 +872,7 @@ func (m Model) hostsCmd() tea.Cmd {
 
 // syncNow forces an immediate push/pull (the S key) and flashes progress; the
 // result arrives as a syncDoneMsg. b.Sync() blocks until the daemon's cycle
-// finishes, so "syncing…" shows for the real duration.
+// finishes, so "syncing" plus an ellipsis (U+2026) shows for the real duration.
 func (m Model) syncNow() (tea.Model, tea.Cmd) {
 	m.flash = "syncing…" // no expiry tick: replaced by applySync when the cycle ends
 	m.flashID++
@@ -1271,7 +1271,7 @@ func (m Model) helpBodyWidth() int  { return maxInt(1, m.width-2) }
 func (m Model) helpBodyHeight() int { return maxInt(1, m.midHeight-2) }
 
 // helpMaxTop is how far the panel can scroll; zero unless the list is taller
-// than the pane, which on a stock 80×24 terminal it can be.
+// than the pane, which on a stock 80x24 terminal it can be.
 func (m Model) helpMaxTop() int {
 	body := m.helpBodyHeight()
 	_, total := keyhelp.Panel(m.th, m.helpGroups(), m.helpBodyWidth(), body, 0)
@@ -1844,7 +1844,7 @@ func (m *Model) setAgentPane(p agentPane) {
 
 // moveAgentPane moves the focused pane's cursor by d rows. The details pane has
 // no cursor, but it does have more body than fits, so there it scrolls: the same
-// thing ↑/↓ do in the browse view's detail pane. Moving the command cursor from
+// thing up/down do in the browse view's detail pane. Moving the command cursor from
 // here instead, as it once did, meant the keys drove a list the focused pane was
 // not even showing.
 func (m *Model) moveAgentPane(d int) {
@@ -1985,12 +1985,12 @@ func (m Model) cycleAgent() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// hscrollStep is how many display columns one ←/→ press moves the selected row.
+// hscrollStep is how many display columns one <-/-> press moves the selected row.
 const hscrollStep = 8
 
 // scrollRight / scrollLeft nudge the horizontal offset of the focused list's
 // selected row, clamped so scrolling stops at the end of the line (and never
-// goes negative), keeping ←/→ responsive in both directions.
+// goes negative), keeping <-/-> responsive in both directions.
 func (m *Model) scrollRight() {
 	m.hscroll += hscrollStep
 	if mx := m.maxHScroll(); m.hscroll > mx {
@@ -2017,7 +2017,7 @@ func (m Model) maxHScroll() int {
 	if total <= colW {
 		return 0
 	}
-	return total - (colW - 1) // mirror hOffset: the leading "…" costs one column
+	return total - (colW - 1) // mirror hOffset: the leading ellipsis costs one column
 }
 
 // hScrollTarget returns the selected item's single-line primary text and the
@@ -2192,7 +2192,7 @@ func (m Model) moveHost(d int) (tea.Model, tea.Cmd) {
 
 // cycleHost is the H key: one stop down the sidebar (all hosts, then each
 // machine in the order the sidebar lists them, and around again) from anywhere
-// in the browse view, the mirror of the explorer's H. It wraps where ↑/↓ clamp:
+// in the browse view, the mirror of the explorer's H. It wraps where up/down clamp:
 // a key you press repeatedly to sweep the machines has to come back around,
 // while an arrow key that jumped from the last row to the first would be a
 // cursor that lost its place. The header's scope word reports where it landed,
@@ -2358,11 +2358,12 @@ func tagOp(remove bool) string {
 // trips over the same connection, run off the event loop the same way (see
 // bulkTagCmd) so the UI keeps redrawing for however long the batch takes. A
 // remove is narrowed to the checked rows that actually carry the tag. That is
-// not the efficiency argument the add path deliberately passes up: it is that "✓
-// untagged 12 records" over a set where three were tagged is a lie, and the only
-// way to count honestly is to know which rows were in scope before asking. A row
-// whose tag arrived since the last query is missed by this; the next query shows
-// it still tagged, which is recoverable, whereas a wrong count is not.
+// not the efficiency argument the add path deliberately passes up: it is that
+// "<U+2713> untagged 12 records" over a set where three were tagged is a lie,
+// and the only way to count honestly is to know which rows were in scope before
+// asking. A row whose tag arrived since the last query is missed by this; the
+// next query shows it still tagged, which is recoverable, whereas a wrong count
+// is not.
 func (m Model) tagChecked(name string, remove bool) (tea.Model, tea.Cmd) {
 	var ids []string
 	if remove {
@@ -2626,7 +2627,7 @@ func (m Model) onBulkTick() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if !m.bulk.canceled() {
-		m.flash = m.bulk.progress() // "stopping…" is not overwritten by a count
+		m.flash = m.bulk.progress() // "stopping" plus U+2026 is not overwritten by a count
 	}
 	return m, bulkTick()
 }
@@ -3082,9 +3083,9 @@ func (m *Model) applyLayout() {
 	m.detail.Width = maxInt(1, dr.w-2)
 	m.detail.Height = maxInt(1, dr.h-2) // the two border rows; the title is in one
 
-	// The text input spans the search line after the "❯ " prompt (reserving the
-	// trailing cursor cell textinput always draws), less the period tab strip
-	// that shares the line.
+	// The text input spans the search line after the "<U+276F> " prompt
+	// (reserving the trailing cursor cell textinput always draws), less the
+	// period tab strip that shares the line.
 	iw := w - 3
 	if m.showPeriodTabs() {
 		iw -= periodTabsWidth() + 2
@@ -3093,8 +3094,9 @@ func (m *Model) applyLayout() {
 		iw = 4
 	}
 	m.ti.Width = iw
-	// The explorer's filter box shares that line with its own "filter <list> ❯"
-	// prompt, which is longer than the browse view's bare "❯ ".
+	// The explorer's filter box shares that line with its own prompt, "filter
+	// <list> <U+276F>", which is longer than the browse view's bare
+	// "<U+276F> ".
 	m.afilter.Width = maxInt(4, iw-lipgloss.Width("filter commands "))
 	m.filterInput.Width = maxInt(4, iw-lipgloss.Width(filterEntryPrompt(axisExec)))
 

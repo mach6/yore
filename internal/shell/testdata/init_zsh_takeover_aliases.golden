@@ -118,7 +118,7 @@ fi
 # siblings hsa (all hosts), hss (this session), hsc (this cwd), and hsw (this git
 # repo). yore does NOT touch `h`; keep your own (e.g. h=history). You may already
 # use these names, so drop any first at runtime, and escape each function name
-# (\hb, \hs, \hsa, …) so zsh does not alias-expand it at PARSE time: an unescaped
+# (\hb, \hs, \hsa, ...) so zsh does not alias-expand it at PARSE time: an unescaped
 # hs() would abort sourcing with "defining function based on alias".
 unalias hb hs hsa hss hsc hsw 2>/dev/null
 \hb() {  # browse; drop the picked command onto the next prompt (print -z)

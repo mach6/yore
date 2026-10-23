@@ -71,8 +71,8 @@ func focusSidebar(t *testing.T, m Model) Model {
 	return m
 }
 
-// TestHostCycleWalksHostsAndReturnsToAll: H walks the ring all → each host in
-// name order → all, and every aggregate the view shows walks with it.
+// TestHostCycleWalksHostsAndReturnsToAll: H walks the ring all -> each host in
+// name order -> all, and every aggregate the view shows walks with it.
 func TestHostCycleWalksHostsAndReturnsToAll(t *testing.T) {
 	rows, prompts := hostFixture(30)
 	m := explorerHosts(t, rows, prompts)

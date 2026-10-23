@@ -19,7 +19,7 @@ func NewDEK() (keyID string, dek [32]byte, err error) {
 // WrapDEK seals dek under the History Key. The keyID, deviceID, epoch, and HK
 // version are all bound as additional data, so a wrap cannot be silently
 // replayed against a different key slot, device, epoch, or HK generation. The
-// blob is nonce(24) ‖ ciphertext.
+// blob is nonce(24) || ciphertext.
 func WrapDEK(dek, hk [32]byte, keyID, deviceID string, epoch int64, hkVersion int) ([]byte, error) {
 	return sealAEAD(hk, dek[:], dekAAD(dekWrapDomain, keyID, deviceID, epoch, hkVersion))
 }

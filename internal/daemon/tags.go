@@ -97,8 +97,8 @@ func (t *tagIndex) apply(r rec.Record) {
 	set[name] = true
 }
 
-// effective returns a row's resolved freeform tags: command tags ∪ session tags
-// ∪ the matching auto_tags rules, sorted and de-duplicated. nil when none. The
+// effective returns a row's resolved freeform tags: command tags plus session tags
+// plus the matching auto_tags rules, sorted and de-duplicated. nil when none. The
 // record's executor is deliberately not among them. It is an attribute of the
 // command (which agent ran it) not a label anyone put on it, and folding the
 // two together meant a user tag and "claude-code" arrived as one

@@ -26,7 +26,7 @@ func NewHistoryKey() ([32]byte, error) {
 // (bound to both public keys) to derive the wrapping key. Only the holder of
 // recipientPub's private key can unwrap. The blob is
 //
-//	ephemeralPub(32) ‖ nonce(24) ‖ ciphertext
+//	ephemeralPub(32) || nonce(24) || ciphertext
 //
 // and reveals nothing about the sender.
 func WrapHK(hk, recipientPub [32]byte) ([]byte, error) {

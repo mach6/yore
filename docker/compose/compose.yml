@@ -33,7 +33,7 @@
 # 2. Named tenants. Each is an isolated db at /data/tenants/<name>.db,
 #    unreachable by any other tenant's token, with backups in
 #    /data/backups/<name>/. Nothing is stored at /data/yore.db in this mode.
-#    Write a JSON object of {"name":"token", …} to a file the container can
+#    Write a JSON object of {"name":"token", ...} to a file the container can
 #    read, mount it, and point YORE_TOKENS_FILE at it instead of setting
 #    YORE_TOKEN:
 #      printf '{"alice":"%s","bob":"%s"}' "$(openssl rand -base64 32)" \

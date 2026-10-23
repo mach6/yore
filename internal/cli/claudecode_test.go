@@ -176,7 +176,7 @@ func TestRunHookClaudeCodeCaptures(t *testing.T) {
 	assert.Equal(t, 0, *got.Exit, "success defaults to exit 0")
 }
 
-// TestRunHookClaudeCodePreStampsDuration covers the PreToolUse→PostToolUse
+// TestRunHookClaudeCodePreStampsDuration covers the PreToolUse->PostToolUse
 // timing path: the pre hook records a start, the post hook turns it into a real
 // duration, and the stamp is consumed exactly once.
 func TestRunHookClaudeCodePreStampsDuration(t *testing.T) {

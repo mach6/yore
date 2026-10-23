@@ -190,9 +190,9 @@ func (m Model) renderRow(r rec.Record, q match.Query, selected bool, w int, nowM
 }
 
 // exitMarker is a command's outcome as a glyph plus a style. Each of the three
-// states gets its own glyph: success and unknown used to share "·" and differ
-// only in color, which is unreadable for anyone who cannot separate dim grey
-// from green.
+// states gets its own glyph: success and unknown used to share "<U+00B7>" and
+// differ only in color, which is unreadable for anyone who cannot separate dim
+// grey from green.
 func (m Model) exitMarker(r rec.Record) (string, lipgloss.Style) {
 	switch {
 	case r.Exit == nil:
@@ -205,9 +205,9 @@ func (m Model) exitMarker(r rec.Record) (string, lipgloss.Style) {
 }
 
 // composeLine joins the segments behind a 2-column selection gutter. The
-// selected row shows a bold accent "❯ " marker (always visible, independent of
-// background rendering) followed by a reverse-video bar; unselected rows get a
-// blank gutter so columns stay aligned.
+// selected row shows a bold accent "<U+276F> " marker (always visible,
+// independent of background rendering) followed by a reverse-video bar;
+// unselected rows get a blank gutter so columns stay aligned.
 func (m Model) composeLine(segs []styledSeg, selected bool, w int) string {
 	body := w - 2
 	if body < 0 {
@@ -239,9 +239,10 @@ func (m Model) composeLine(segs []styledSeg, selected bool, w int) string {
 }
 
 // commandSegments turns a command into highlighted, single-line, width-limited
-// runs. Newlines collapse to a dim ⏎ marker with following whitespace
-// squeezed out; match spans (byte offsets over the original command) are
-// colored with theme.Match. It returns the runs and their total display width.
+// runs. Newlines collapse to a dim return-symbol (U+23CE) marker with
+// following whitespace squeezed out; match spans (byte offsets over the
+// original command) are colored with theme.Match. It returns the runs and
+// their total display width.
 func (m Model) commandSegments(cmd string, q match.Query, maxCols int) (segs []styledSeg, width int) {
 	if maxCols <= 0 || cmd == "" {
 		return nil, 0

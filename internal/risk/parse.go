@@ -27,7 +27,7 @@ type tok struct {
 
 // subst is the marker the lexer emits wherever a command substitution, process
 // substitution, or subshell opens or closes: every one of them a place a new
-// command begins, including inside double quotes, where `"$(curl …)"` still runs.
+// command begins, including inside double quotes, where `"$(curl ...)"` still runs.
 const subst = "\x00("
 
 // lex splits a command line into words and operators. Escapes, both quote
@@ -168,7 +168,7 @@ var splitters = map[string]bool{
 }
 
 // execArgs introduce a command inside another command's argument list, which is
-// how `find … -exec rm -rf {} \;` hides a deletion from a naive scan.
+// how `find ... -exec rm -rf {} \;` hides a deletion from a naive scan.
 var execArgs = map[string]bool{
 	"-exec": true, "-execdir": true, "-ok": true, "-okdir": true,
 }
@@ -371,7 +371,7 @@ func (c *cmdline) cmd(names ...string) bool {
 }
 
 // sub matches a command and the leading words of its subcommand, so
-// `aws s3 rm …` is reachable without a regexp that would also match prose.
+// `aws s3 rm ...` is reachable without a regexp that would also match prose.
 func (c *cmdline) sub(head string, words ...string) bool {
 	return c.each(func(s *segment) bool { return s.is(head, words...) })
 }
@@ -422,7 +422,7 @@ func (s *segment) hasArg(v string) bool {
 	return false
 }
 
-// argPrefix reports an argument beginning with p, `of=/dev/sda`, `s3://…`.
+// argPrefix reports an argument beginning with p, `of=/dev/sda`, `s3://...`.
 func (s *segment) argPrefix(p string) bool {
 	for _, a := range s.args {
 		if strings.HasPrefix(a.val, p) {
@@ -433,7 +433,7 @@ func (s *segment) argPrefix(p string) bool {
 }
 
 // payloads are the strings this line hands to something that will execute them:
-// the quoted arguments of an interpreter (`sh -c '…'`, `python -c '…'`). Once
+// the quoted arguments of an interpreter (`sh -c '...'`, `python -c '...'`). Once
 // inside such a payload every quoted string is suspect in turn, which is how
 // `python -c 'os.system("rm -rf /")'` is reached, while `grep "rm -rf"`, whose
 // command word executes nothing, is not.

@@ -632,7 +632,7 @@ func (rc *remoteCache) search(q, hostname string) []rec.Record {
 
 // hostCounts aggregates the cache's records into per-host counts (carrying each
 // host's HostID), for the browse HOSTS sidebar and Stats. Unlike search() it
-// does NOT require enabled(), so a bare &remoteCache{records: …} answers without
+// does NOT require enabled(), so a bare &remoteCache{records: ...} answers without
 // a syncer; the cache is already live-only (foldRemote drops tombstones), so it
 // follows search()'s convention and does not re-filter Deleted() here. Returns
 // nil when the cache is nil or empty.

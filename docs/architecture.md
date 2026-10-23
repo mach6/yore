@@ -27,13 +27,13 @@ freebsd/amd64.
 
 ```
                     redact gate (leading-space / ignore-dirs / secret rules)
-                          │ drop (silent, exit 0)
-shell hook ─(append,<1ms)─┴▶ spool file ─▶ ┌─ yore daemon (unix socket) ─────────┐
-                                           │  owns local bbolt (this host only)  │
-search / browse  ◀──── unix socket ──────▶ │  RAM corpus (warm snapshot + tail)  │◀─HTTPS─▶ yore server
-   (thin TUI clients)                      │  remote plaintext: RAM only         │  (ciphertext,
-                                           │  background sync loop (push/pull)   │   wrapped keys,
-                                           └─────────────────────────────────────┘   public keys)
+                          | drop (silent, exit 0)
+shell hook -(append,<1ms)-+> spool file -> +- yore daemon (unix socket) ---------+
+                                           |  owns local bbolt (this host only)  |
+search / browse  <---- unix socket ------> |  RAM corpus (warm snapshot + tail)  |<-HTTPS-> yore server
+  (thin TUI clients)                       |  remote plaintext: RAM only         |  (ciphertext,
+                                           |  background sync loop (push/pull)   |   wrapped keys,
+                                           +-------------------------------------+   public keys)
 ```
 
 ### The prompt path is the load-bearing invariant
@@ -152,11 +152,11 @@ edit, which is the exact cost the cache exists to avoid.
 **Memory cost.** The corpus is the daemon's whole footprint and is linear in
 records: roughly 620 bytes of live heap per record (a 304-byte `rec.Record`,
 ~200 bytes of size-class-rounded strings, and the parallel command header), with
-resident memory around 3× live because Go's collector keeps that much headroom
+resident memory around 3x live because Go's collector keeps that much headroom
 by default.
 
 ```
-daemon RSS ≈ 2.5 KB × (this host's records + remote_keep × other hosts)
+daemon RSS ~ 2.5 KB x (this host's records + remote_keep x other hosts)
 ```
 
 Measured on a ten-machine group holding 470,000 records: 1.1 GB. `remote_keep`
@@ -164,7 +164,7 @@ bounds the second term; the first is unbounded, since your own history grows
 forever, at roughly 75 MB of RSS per 30,000 commands.
 
 **Prompt index.** Agent prompt text lives on its own record, so the daemon keeps
-a `promptID → text` index, fed by the startup store scan, local ingest, and
+a `promptID -> text` index, fed by the startup store scan, local ingest, and
 remote pull, and rejoins each query row with its prompt text on the way out.
 
 **Ingest.** A spool wake starts a 75 ms straggler window, then one fsync'd
@@ -194,8 +194,8 @@ per line, one response per request):
 
 ## Search model
 
-Every query is `match → scope filter → optional executor/tag filter → sort →
-dedupe → window`. Matching is substring (smart-case) by default or fuzzy
+Every query is `match -> scope filter -> optional executor/tag filter -> sort ->
+dedupe -> window`. Matching is substring (smart-case) by default or fuzzy
 (subsequence); the incremental per-connection filter applies to substring only.
 
 Scopes:
@@ -210,7 +210,7 @@ Scopes:
   `.git`; local only).
 
 Sort is recency (descending `start_ms`, ties by descending `seq`) or frecency
-(frequency × bucketed recency, with a ×2 boost for the same cwd, which
+(frequency x bucketed recency, with a x2 boost for the same cwd, which
 inherently collapses to one row per command). Recency can additionally dedupe,
 newest winning.
 
@@ -426,7 +426,7 @@ Vertically the screen fits charts whole or not at all: each is offered the rows
 it needs and declines if taking them would starve the ranked columns, so a short
 terminal loses a chart cleanly instead of showing one with its axis sliced off.
 The heatmap has a compact fallback, weeks folded into one row of totals, because
-the full graph needs ten rows and a stock 80×24 terminal has never had them.
+the full graph needs ten rows and a stock 80x24 terminal has never had them.
 
 Four rules govern color and glyphs. A terminal has very few levers for hierarchy,
 and a lever spent twice is a distinction the eye cannot find:
@@ -434,20 +434,22 @@ and a lever spent twice is a distinction the eye cannot find:
 - **Chart ink is its own single-hue ramp**, deliberately not the UI accent, which
   would otherwise make everything with ink the color of everything selectable.
   Intensity rides on lightness as well as glyph height, and the heatmap draws a
-  solid block rather than a `░▒▓` density ramp, the least portable glyphs in the
-  box-drawing set, where a font that renders `▒` and `▓` alike silently collapses
-  two levels.
+  solid block rather than a density ramp of the light, medium and dark shade
+  blocks (U+2591, U+2592, U+2593), the least portable glyphs in the box-drawing
+  set, where a font that renders the medium and dark shades alike silently
+  collapses two levels.
 - **Headings come in exactly three ranks**: accent+bold for a pane name, bold for
   a heading inside a pane, dim for the chrome below both.
 - **State is a glyph, not a color**, so it survives colorblindness and
-  screenshots. Exit status is `·` unknown, `✓` ok, `✗N` failed. `·` is the
-  same glyph everywhere a value is missing (an unreported duration, an untimed
-  imported command, an empty heatmap day), and it is one cell wide in every
-  terminal, which the em-dash it replaced was not. Risk is a
-  glyph-first ramp shared verbatim with the MCP output (`⛔ ⚠ ▲ • ✓`), shown for
-  **every** command including clean ones, since a row that appears only on a hit
-  cannot be told from a rule that never ran. The prompt details pane has no risk
-  row: a prompt is not a command.
+  screenshots. Exit status is a middle dot (U+00B7) for unknown, a check mark
+  (U+2713) for ok, and a ballot x (U+2717) plus the code for failed. The middle
+  dot is the same glyph everywhere a value is missing (an unreported duration,
+  an untimed imported command, an empty heatmap day), and it is one cell wide in
+  every terminal, which the em-dash it replaced was not. Risk is a glyph-first
+  ramp shared verbatim with the MCP output (U+26D4 critical, U+26A0 high, U+25B2
+  medium, U+2022 low, U+2713 safe), shown for **every** command including clean
+  ones, since a row that appears only on a hit cannot be told from a rule that
+  never ran. The prompt details pane has no risk row: a prompt is not a command.
 - **Identity is a hue.** Hostnames and executor names hash into a fixed 8-hue
   palette, red and green excluded because those belong to exit status, so the
   same identity is the same color everywhere it appears. Command text is
@@ -515,7 +517,7 @@ on the *shape* of a credential: AWS access and secret keys, GitHub, Slack,
 Google, Stripe, OpenAI/Anthropic, Hugging Face, npm, PyPI and SendGrid tokens,
 PEM blocks, JWTs, URL userinfo, password flags for common tools, generic
 `token=`/`secret=`/`password=` assignments, and the prose form of the same
-("the api key is …"), because this gate covers agent **prompts** as well as
+("the api key is ..."), because this gate covers agent **prompts** as well as
 commands and a prompt states a secret in a sentence.
 
 **A secret rule redacts; it does not reject.** The credential is replaced with a
@@ -526,13 +528,15 @@ export DB_PASSWORD=⟪redacted:generic-token-assign⟫
 mysql -uroot -p⟪redacted:mysql-password⟫ appdb
 ```
 
+The marker's brackets are the characters ⟪ (U+27EA) and ⟫ (U+27EB).
+
 Dropping the whole record was the older behavior and it was wrong in practice:
 the commands most worth remembering are often exactly the ones with a token in
 them, and an entry that silently vanished is indistinguishable from one never
 run. The marker is deliberately not valid shell, so a redacted command recalled
 onto the prompt fails loudly rather than running wrong.
 
-Only the credential goes. Rules mark it with a `(?P<secret>…)` capture group, so
+Only the credential goes. Rules mark it with a `(?P<secret>...)` capture group, so
 a rule that matches a wide context still blanks only the password; a rule with
 no such group (a whole-value shape like an AWS key) has its entire match
 replaced. Spans from all rules are collected against the *original* text and
@@ -565,17 +569,17 @@ way down to the on-disk format.
 
 **Executor** resolution: an explicit `--executor`, else `$YORE_EXECUTOR`
 (`$YORE_TAG` is the older name and still works), else auto-detection from agent
-environment markers (`CLAUDECODE` → `claude-code`, `CURSOR_TRACE_ID` → `cursor`,
-`AIDER_MODEL` → `aider`, and so on), else empty, meaning interactive.
+environment markers (`CLAUDECODE` -> `claude-code`, `CURSOR_TRACE_ID` -> `cursor`,
+`AIDER_MODEL` -> `aider`, and so on), else empty, meaning interactive.
 
 **User tags** are freeform and a record can carry several. A tag record adds or
 removes a named label on a command or a session and rides the same encrypted
 stream as commands, remapped by name on sync: names are the identity, so there
 is no id reconciliation. The daemon folds tag records into an in-RAM index
-(`command|session → {tags}`) and resolves each row's effective tags at query
-time: command tags ∪ session tags ∪ `auto_tags` (cwd-prefix rules from config,
-applied at read time, so there is no cost on the record path and rules apply
-retroactively).
+(`command|session -> {tags}`) and resolves each row's effective tags at query
+time: command tags plus session tags plus `auto_tags` (cwd-prefix rules from
+config, applied at read time, so there is no cost on the record path and rules
+apply retroactively).
 
 Tagging a session is the common case: it covers every command that shell has
 already run and every one it runs afterwards. `yore tag list` counts
@@ -600,7 +604,7 @@ or by editing the rule.
 ## Agent capture
 
 An agent whose commands run in a non-interactive shell (Claude Code's Bash tool
-is `zsh -c …`) is never seen by the rc hooks, so each agent gets native hooks
+is `zsh -c ...`) is never seen by the rc hooks, so each agent gets native hooks
 installed by `yore init <agent>`.
 
 The general shape, using Claude Code as the reference: **PreToolUse** stamps each
@@ -644,7 +648,7 @@ see the join.
 
 Storing the text once rather than on every command that quotes it is what keeps
 prompt tracing cheap: one prompt drives roughly sixteen commands in practice, so
-the inlined alternative pays 16× the bytes on disk, on the wire, and in the
+the inlined alternative pays 16x the bytes on disk, on the wire, and in the
 daemon's heap, for a field the search path never indexes. It also makes a prompt
 that triggered **no** commands representable at all: as a field on its commands,
 such a prompt would have nowhere to live. `sync_prompts = false` keeps prompt
@@ -665,9 +669,9 @@ cannot answer.
 It exposes twelve tools (`search_commands`, `recent_commands`, `command_status`,
 `session_history`, `list_sessions`, `get_stats`, `get_prompts`, `suggest_next`,
 `what_failed`, `find_agent_session`, `replay_agent_session`, `assess_risk`) and
-eight context resources (`yore://history/recent`, `…/failures/recent`,
-`…/stats/today`, `…/risk/summary`, `…/agents/activity`, `…/agents/sessions`,
-`…/context/project`, `…/history/session/<id>`).
+eight context resources (`yore://history/recent`, `.../failures/recent`,
+`.../stats/today`, `.../risk/summary`, `.../agents/activity`, `.../agents/sessions`,
+`.../context/project`, `.../history/session/<id>`).
 
 Nothing is pushed. A tool runs only when the model calls it, and a resource
 enters context only when the client attaches it.
@@ -705,7 +709,7 @@ This is the distinction the whole classifier rests on: `grep -rn "rm -rf" docs/`
 and `sh -c 'rm -rf /'` carry the same eight characters and only one of them
 deletes anything. Before any rule runs, the line is lexed into words and cut
 into command *segments* wherever a shell would start a new command: a pipe, a
-`;`, a `&&`, a `$(…)` even inside double quotes, a `find -exec`. Each segment
+`;`, a `&&`, a `$(...)` even inside double quotes, a `find -exec`. Each segment
 resolves the command word it would actually execute, with `sudo`-style wrappers
 stepped over so `sudo rm -rf /` is an `rm`, quoted text kept as inert data,
 redirection targets pulled out, and **its own flags kept to itself**, so the
@@ -727,10 +731,10 @@ install` is high (package-install), not medium (privilege).
 
 | Level | Covers |
 |---|---|
-| ⛔ critical | recursive forced `rm`; force/mirror/delete pushes and history rewrites; `DROP`/`TRUNCATE`/unfiltered `DELETE`; raw disk writes, `mkfs`, `shred`; `terraform destroy` and auto-approved applies; `kubectl delete namespace`; cloud resource deletion; recursive object-store wipes; fork bombs and shells bound to sockets |
-| ⚠ high | package installs and removals; publishing to a registry; fetch piped into an interpreter; running a local script; ephemeral runners (`npx`, `uvx`); world-writable or setuid `chmod`, recursive `chown`; `git clean -f`, `find -delete`, `rsync --delete`; container and cluster teardown; partition-table edits; `crontab -r`; account changes; reading private key material; firewall teardown; a container given the host; `shutdown`/`reboot` |
-| ▲ medium | `sudo`, `su`, `pkexec`; container stop/remove; `kill`/`pkill`; recoverable git surgery (`reset`, `restore`, `stash drop`, `rebase`, `amend`); `truncate` and bare `>` redirects; service stop/disable; piping local output into a request body; `terraform apply`, `kubectl apply`, `helm install`; running an executable out of the working directory |
-| • low | network reach (`curl`, `wget`, `ssh`, `scp`, `nc`); `git push`; a credential typed into the environment |
+| critical (U+26D4) | recursive forced `rm`; force/mirror/delete pushes and history rewrites; `DROP`/`TRUNCATE`/unfiltered `DELETE`; raw disk writes, `mkfs`, `shred`; `terraform destroy` and auto-approved applies; `kubectl delete namespace`; cloud resource deletion; recursive object-store wipes; fork bombs and shells bound to sockets |
+| high (U+26A0) | package installs and removals; publishing to a registry; fetch piped into an interpreter; running a local script; ephemeral runners (`npx`, `uvx`); world-writable or setuid `chmod`, recursive `chown`; `git clean -f`, `find -delete`, `rsync --delete`; container and cluster teardown; partition-table edits; `crontab -r`; account changes; reading private key material; firewall teardown; a container given the host; `shutdown`/`reboot` |
+| medium (U+25B2) | `sudo`, `su`, `pkexec`; container stop/remove; `kill`/`pkill`; recoverable git surgery (`reset`, `restore`, `stash drop`, `rebase`, `amend`); `truncate` and bare `>` redirects; service stop/disable; piping local output into a request body; `terraform apply`, `kubectl apply`, `helm install`; running an executable out of the working directory |
+| low (U+2022) | network reach (`curl`, `wget`, `ssh`, `scp`, `nc`); `git push`; a credential typed into the environment |
 
 Rules live in Go rather than regexps wherever being right matters more than being
 uniform, which is most of them. `chmod` is the clearest case: only the group and
@@ -744,8 +748,8 @@ whole line) so `git commit -m "drop table support"` is a commit message.
 
 **What it does not see.** The parser resolves command position, not semantics. A
 command behind an alias, a Makefile target, or a variable holding a program name
-trips nothing; neither does one carried inside `docker exec web …` or
-`ssh host …`, where the remote command is an argument this classifier does not
+trips nothing; neither does one carried inside `docker exec web ...` or `ssh
+host ...`, where the remote command is an argument this classifier does not
 follow. That is the deliberate trade: a classifier wrong in an obvious,
 inspectable direction beats one wrong subtly, and `risk.toml` is where a team
 closes the gaps that matter to them.
@@ -803,11 +807,11 @@ the matching `--scope`. yore never rebinds `h`.
 
 ```
 device X25519 + Ed25519 keypairs   per machine; private halves never leave it
-  │ X25519 seals ─▶ History Key (HK)   one 32B symmetric key per group, stored
-  │                                     only as per-device wrapped blobs
-  │ HK wraps    ─▶ epoch data keys      32B, one per epoch (default 24h)
-  │ DEK seals   ─▶ history records      XChaCha20-Poly1305, AAD-bound
-  └ Ed25519 signs ─▶ every sync request
+  | X25519 seals --> History Key (HK)   one 32B symmetric key per group, stored
+  |                                     only as per-device wrapped blobs
+  | HK wraps    --> epoch data keys      32B, one per epoch (default 24h)
+  | DEK seals   --> history records      XChaCha20-Poly1305, AAD-bound
+  + Ed25519 signs --> every sync request
 ```
 
 - **Read** costs one asymmetric HK unwrap per daemon lifetime; every data key and
@@ -874,14 +878,14 @@ outcome. Every cycle is push then pull, serialized by a mutex so the periodic
 loop and an explicit sync never overlap.
 
 **Push** uploads local records above the persisted `last_uploaded_seq` watermark
-in ascending batches bounded by **both** ≤1000 records **and** ≤8 MiB of encoded
-body, advancing the watermark by exactly what the server acked. Size is a bound
-because size is what the server actually limits: a thousand records carrying long
-prompts or heredocs is megabytes, and a body over the server's 10 MiB cap fails
-*every* retry, so the watermark never advances and sync wedges permanently. If
-the server rejects a batch anyway, the client halves it and retries, terminating
-at a single record so a genuinely bad request surfaces as an error rather than
-looping forever.
+in ascending batches bounded by **both** at most 1000 records **and** at most 8
+MiB of encoded body, advancing the watermark by exactly what the server acked.
+Size is a bound because size is what the server actually limits: a thousand
+records carrying long prompts or heredocs is megabytes, and a body over the
+server's 10 MiB cap fails *every* retry, so the watermark never advances and sync
+wedges permanently. If the server rejects a batch anyway, the client halves it
+and retries, terminating at a single record so a genuinely bad request surfaces
+as an error rather than looping forever.
 
 **Pull** is split in two so ciphertext can be banked before anything is spent on
 crypto: `PullCiphertext` walks each other host's stream from its persisted
@@ -933,7 +937,7 @@ Single-tenant or multi-tenant, never a mix. Each tenant is an isolated bbolt fil
 owned solely by the server process; the identity that signed a request selects
 the tenant every handler operates on.
 
-- **Device → tenant.** The auth middleware finds the tenant holding the signing
+- **Device to tenant.** The auth middleware finds the tenant holding the signing
   device's record (ids are globally unique ULIDs, so at most one matches) and
   caches the mapping. Enrollment routes by token, recovery by the tenant that
   holds recovery material. Bootstrap tokens are compared constant-time against
@@ -982,7 +986,7 @@ the tenant every handler operates on.
   (default 1h, `"0"` disables), keeping the newest `backup_keep` (default 3),
   using the same temp-file, atomic-rename, and prune scheme as the server.
 - **What backups cost.** Each one is a full copy, so `backup_keep` is a
-  multiplier, not a margin: peak disk is roughly `(backup_keep + 1) × db size`,
+  multiplier, not a margin: peak disk is roughly `(backup_keep + 1) x db size`,
   and every interval rewrites a whole database. At the default, a 300 MB store
   occupies ~1.2 GB and rewrites 300 MB an hour. Size a server volume for the
   multiple, not the database. A backup is smaller than its `data.db` because it
@@ -1049,7 +1053,7 @@ rather than grepping.
 | `ignore_patterns` | none | regexes whose matching commands are **dropped**, not redacted |
 | `ignore_dirs` | none | cwd prefixes whose commands are never recorded |
 | `record_space_prefixed` | `false` | record leading-space commands too |
-| `auto_tags` | none | cwd-prefix → tag rules, applied at query time |
+| `auto_tags` | none | cwd-prefix to tag rules, applied at query time |
 | `capture_spool_only` | `false` | capture writes to the spool only, never poking or spawning the daemon |
 | `backup_interval` | `1h` | local backup cadence; `"0"` disables |
 | `backup_keep` | `3` | local backups retained |

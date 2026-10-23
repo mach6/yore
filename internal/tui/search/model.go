@@ -72,7 +72,7 @@ type Model struct {
 
 	scope    string // one of proto.Scope*
 	dedupe   bool
-	frecency bool // alt+f: rank by frequency×recency instead of recency
+	frecency bool // alt+f: rank by frequency x recency instead of recency
 	fuzzy    bool // alt+z: subsequence matching instead of substring
 
 	// hideAgents keeps agent-run commands out of the results (alt+a); hidden is how

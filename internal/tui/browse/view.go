@@ -86,11 +86,11 @@ func (m Model) View() string {
 	return strings.Join([]string{top, mid, m.statusBar(w), footer}, "\n")
 }
 
-// searchLine draws the "❯ query" input row, with the shared period tabs pushed
-// to the right so the browse view advertises the same 1..5 filter the stats and
-// agent screens carry in their headers. It is never wider than w: the input
-// viewport is clamped in applyLayout (which reserves the tab strip) and the
-// prompt is two columns.
+// searchLine draws the "<U+276F> query" input row, with the shared period tabs
+// pushed to the right so the browse view advertises the same 1..5 filter the
+// stats and agent screens carry in their headers. It is never wider than w: the
+// input viewport is clamped in applyLayout (which reserves the tab strip) and
+// the prompt is two columns.
 func (m Model) searchLine(w int) string {
 	if m.tagging {
 		// tagInput already carries a "tag: " prompt.
@@ -98,7 +98,8 @@ func (m Model) searchLine(w int) string {
 	}
 	if m.axis != axisNone {
 		// The prompt names the axis: this box and the search field share the line,
-		// and a bare ❯ would not say which of the three was taking the keystrokes.
+		// and a bare chevron would not say which of the three was taking the
+		// keystrokes.
 		return clipW(m.th.Prompt.Render(filterEntryPrompt(m.axis))+m.filterInput.View(), w)
 	}
 	prompt := m.th.Dim.Render("❯ ")
@@ -127,9 +128,9 @@ func clipW(s string, w int) string {
 // titledBox draws a pane: its name seated IN the top border rule, its body
 // filling everything inside.
 //
-//	╭─ PROMPTS  3/47 ──────╮
-//	│ 2h  s.4f2  claude  8 │
-//	╰──────────────────────╯
+//	+- PROMPTS  3/47 ------+
+//	| 2h  s.4f2  claude  8 |
+//	+----------------------+
 //
 // The name goes in the rule rather than on a line of its own inside the box
 // because a pane only has so many rows: a title line costs one, and in the
@@ -189,7 +190,8 @@ func (m Model) topRule(ink lipgloss.Style, focused bool, w int, name, suffix str
 	if focused && m.zoom {
 		head += m.th.Accent.Render("  ⛶")
 	}
-	// "╭─ " + head + " " + fill + "╮" spans w+2 columns.
+	// "<U+256D><U+2500> " + head + " " + fill + "<U+256E>" spans w+2
+	// columns.
 	fill := w - 3 - lipgloss.Width(head)
 	if fill < 0 {
 		return plain
@@ -436,7 +438,7 @@ func (m Model) renderRow(r rec.Record, l colLayout, q match.Query, selected bool
 }
 
 // exitMarker is a command's outcome as a glyph plus a style. Each of the three
-// states gets its OWN glyph: success and unknown used to share "·" and differ
+// states gets its OWN glyph: success and unknown used to share "<U+00B7>" and differ
 // only in color, which put a real distinction out of reach for anyone who cannot
 // separate dim grey from green, and put it out of reach of a screenshot.
 func exitMarker(th *theme.Theme, r rec.Record) (string, lipgloss.Style) {
@@ -452,7 +454,7 @@ func exitMarker(th *theme.Theme, r rec.Record) (string, lipgloss.Style) {
 
 // exitWord is a command's outcome spelled out, for the details panes where there
 // is room for a word. It leads with the same glyph exitMarker uses in the table,
-// so the two never disagree about what a "·" means.
+// so the two never disagree about what a "<U+00B7>" means.
 func exitWord(r rec.Record) string {
 	switch {
 	case r.Exit == nil:
@@ -503,8 +505,9 @@ func hueSeg(th *theme.Theme, name string) []styledSeg {
 }
 
 // riskStyle maps a risk level to its ink: critical borrows the exit red and
-// safe the exit green (the same ✓ means the same thing on both rows) medium
-// the match amber, and high is the ramp's own orange between them.
+// safe the exit green (the same check mark (U+2713) means the same thing on
+// both rows) medium the match amber, and high is the ramp's own orange
+// between them.
 func riskStyle(th *theme.Theme, l risk.Level) lipgloss.Style {
 	switch l {
 	case risk.Critical:
@@ -520,10 +523,10 @@ func riskStyle(th *theme.Theme, l risk.Level) lipgloss.Style {
 	}
 }
 
-// riskSegs renders a verdict as "⚠ high (script-exec)": glyph and level in the
-// tier's ink, the category dim. Glyph-first, so the tier survives without color.
-// A clean verdict is categorized "safe", which would only stutter after the
-// level, so the category is dropped when it repeats the label, but "ignored"
+// riskSegs renders a verdict as "<U+26A0> high (script-exec)": glyph and level
+// in the tier's ink, the category dim. Glyph-first, so the tier survives without
+// color. A clean verdict is categorized "safe", which would only stutter after
+// the level, so the category is dropped when it repeats the label, but "ignored"
 // survives, since a row silenced by the user's risk.toml should say so.
 func riskSegs(th *theme.Theme, a risk.Assessment) []styledSeg {
 	segs := []styledSeg{{text: a.Level.Glyph() + " " + a.Level.String(), style: riskStyle(th, a.Level)}}
@@ -762,8 +765,8 @@ type rk struct {
 }
 
 // commandSegments turns a command into highlighted, single-line, width-limited
-// runs, collapsing embedded newlines to a dim ⏎ marker. Returns the runs and
-// their total display width.
+// runs, collapsing embedded newlines to a dim return-symbol (U+23CE) marker.
+// Returns the runs and their total display width.
 func commandSegments(th *theme.Theme, cmd string, q match.Query, maxCols int) (segs []styledSeg, width int) {
 	if maxCols <= 0 || cmd == "" {
 		return nil, 0
@@ -1128,9 +1131,10 @@ func maxInt(a, b int) int {
 }
 
 // hOffset returns the display-column window [offset, offset+w) of a single-line
-// string, marking a leading "…" when content is hidden to the left and a
-// trailing "…" when it continues past the right. Result width is at most w. It
-// is how a selected row scrolls horizontally to reveal truncated text.
+// string, marking a leading ellipsis (U+2026) when content is hidden to the
+// left and a trailing one when it continues past the right. Result width is at
+// most w. It is how a selected row scrolls horizontally to reveal truncated
+// text.
 func hOffset(s string, offset, w int) string {
 	if w <= 0 {
 		return ""
@@ -1162,7 +1166,7 @@ func hOffset(s string, offset, w int) string {
 	leading := offset > 0
 	budget := w
 	if leading {
-		budget-- // reserve the leading "…"
+		budget-- // reserve the leading ellipsis
 	}
 	end, used := start, 0
 	for end < len(runes) && used+widths[end] <= budget {
@@ -1171,7 +1175,7 @@ func hOffset(s string, offset, w int) string {
 	}
 	trailing := end < len(runes)
 	if trailing {
-		for end > start && used+1 > budget { // make room for the trailing "…"
+		for end > start && used+1 > budget { // make room for the trailing ellipsis
 			end--
 			used -= widths[end]
 		}

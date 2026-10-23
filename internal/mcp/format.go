@@ -64,7 +64,9 @@ func formatChronological(title string, rows []rec.Record) string {
 // theme.Unknown in the TUI so both surfaces say "no value" the same way.
 const unknown = "·"
 
-// exitGlyph renders a record's outcome: ✓ ok, ✗N failed, · unknown.
+// exitGlyph renders a record's outcome: a check mark (U+2713) for ok,
+// a ballot x (U+2717) and the code for failed, a middle dot (U+00B7) for
+// unknown.
 func exitGlyph(r rec.Record) string {
 	if r.Exit == nil {
 		return unknown

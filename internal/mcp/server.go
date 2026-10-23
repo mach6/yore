@@ -1,5 +1,5 @@
 // Package mcp is yore's Model Context Protocol server: a local, read-only, stdio
-// JSON-RPC 2.0 endpoint that lets a coding agent (Claude Code, Cursor, …) query
+// JSON-RPC 2.0 endpoint that lets a coding agent (Claude Code, Cursor, ...) query
 // the shell history it is creating, across every machine you own. It never opens
 // the bbolt store or a network port. It is a thin adapter over the daemon's
 // query layer (internal/proto over the unix socket), so it inherits the daemon's

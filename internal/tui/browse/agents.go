@@ -309,9 +309,10 @@ func (m Model) agentPaneHeading(p agentPane) (name, suffix string) {
 		return "COMMANDS", m.listSuffix(ctCommands, countSuffix(m.drillSel, m.drillLen(), m.cmdQ))
 	default:
 		// The title says what the pane is describing, since the pane can outlive
-		// the focus that chose it, and "↓ more" when its body runs past the
-		// bottom: the pane has no scrollbar, and a record silently cut off at
-		// the last visible row reads as a record that ends there.
+		// the focus that chose it, and a down arrow (U+2193) with "more" when
+		// its body runs past the bottom: the pane has no scrollbar, and a record
+		// silently cut off at the last visible row reads as a record that ends
+		// there.
 		suffix := "prompt"
 		if m.infoCmd {
 			suffix = "command"
@@ -327,8 +328,8 @@ func (m Model) agentPaneHeading(p agentPane) (name, suffix string) {
 }
 
 // filterNoun names the list the / key is aiming at, for the prompt on the filter
-// box: "filter prompts ❯" says what is about to be narrowed, which a bare ❯
-// cannot when two panes can both be filtered.
+// box: "filter prompts" and a chevron (U+276F) says what is about to be
+// narrowed, which a bare chevron cannot when two panes can both be filtered.
 func filterNoun(p agentPane) string {
 	if p == apCommands {
 		return "commands"
@@ -354,9 +355,9 @@ func countSuffix(sel, n int, query string) string {
 // --- agent sidebar -------------------------------------------------------
 
 // agentListInner draws the executor sidebar: an "All agents" row followed by one
-// row per executor with its command count. The active filter carries a ● bullet
-// (inactive rows keep the column, so the names stay aligned), and the selected
-// executor's summary fills the space below the list.
+// row per executor with its command count. The active filter carries a black
+// circle (U+25CF) bullet (inactive rows keep the column, so the names stay
+// aligned), and the selected executor's summary fills the space below the list.
 func (m Model) agentListInner(w, h int) string {
 	th := m.th
 	if m.agents == nil {
@@ -405,9 +406,9 @@ func (m Model) agentHostsInner(w, h int) string {
 	return padLines(lines, w, h)
 }
 
-// agentHostLine formats one host row in agentLine's "● name count" shape, so
-// the two left-column lists read the same way; except the hostname keeps its
-// identity color, the one it carries everywhere else in the UI.
+// agentHostLine formats one host row in agentLine's "<U+25CF> name count"
+// shape, so the two left-column lists read the same way; except the hostname
+// keeps its identity color, the one it carries everywhere else in the UI.
 func (m Model) agentHostLine(i int, sel bool, w int) string {
 	th := m.th
 	name, count, active := "all hosts", 0, m.agentHostFilter == ""
@@ -439,7 +440,7 @@ func (m Model) agentHostLine(i int, sel bool, w int) string {
 	return composeSegs(segs, sel, w, th)
 }
 
-// agentLine formats one sidebar row: "● name    count".
+// agentLine formats one sidebar row: "<U+25CF> name    count".
 func (m Model) agentLine(i int, sel bool, w int) string {
 	th := m.th
 	name, count, active := "all agents", 0, m.agentFilter == ""
@@ -612,7 +613,8 @@ func (m Model) promptInfoLines(p promptStat, w, bodyCap int) []string {
 }
 
 // commandsSegs is the prompt's outcome tally with the table's outcome colors
-// on the same glyphs: "3   ✓2 ✗1", count normal, successes green, failures red.
+// on the same glyphs: "3   <U+2713>2 <U+2717>1", count normal, successes green,
+// failures red.
 func commandsSegs(th *theme.Theme, p promptStat) []styledSeg {
 	return []styledSeg{
 		{text: strconv.Itoa(p.count), style: th.Norm},

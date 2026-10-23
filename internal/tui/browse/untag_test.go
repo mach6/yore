@@ -302,10 +302,10 @@ func TestUntagNameIsNormalized(t *testing.T) {
 // a checked id the period tab is hiding is still found and still untagged. The
 // state is built by hand because no key can reach it today: every path that
 // changes the visible row set (search, host, period, leaving the table) clears
-// the selection first, so checked ⊆ rows holds. That is what makes this worth
-// pinning rather than dropping: the lookup does not lean on that invariant, and
-// a bulk untag that silently skipped rows would be a quiet wrong answer if it
-// ever stopped holding.
+// the selection first, so checked being a subset of rows holds. That is what
+// makes this worth pinning rather than dropping: the lookup does not lean on
+// that invariant, and a bulk untag that silently skipped rows would be a quiet
+// wrong answer if it ever stopped holding.
 func TestUntagChecksTagsOutsideTheVisiblePage(t *testing.T) {
 	f := &fakeBackend{}
 	m := ready(t, f, 120, 40)

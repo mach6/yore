@@ -42,7 +42,7 @@ func interactiveSearch(initialQuery, scope, executor, tag string) int {
 		// No /dev/tty (or the TUI failed): behave like headless so pipes and
 		// odd environments still get results, preserving the scope and tag
 		// filters the caller asked for. showHost=false: this feeds the Ctrl-R
-		// `$(yore search …)` capture, whose contract is that ONLY the bare
+		// `$(yore search ...)` capture, whose contract is that ONLY the bare
 		// command is printed; a host prefix would corrupt the buffer.
 		fallbackScope := scope
 		if fallbackScope == "" {

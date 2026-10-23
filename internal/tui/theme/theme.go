@@ -125,7 +125,8 @@ func NewWithRenderer(r *lipgloss.Renderer) *Theme {
 		Norm:   base.Foreground(cNorm),
 		// Reverse video (terminal-native) so the selected row is unmistakable
 		// even when adaptive light/dark detection is wrong or the terminal does
-		// not render truecolor backgrounds. Paired with a ❯ marker in the rows.
+		// not render truecolor backgrounds. Paired with a chevron (U+276F)
+		// marker in the rows.
 		Sel:      base.Reverse(true).Bold(true),
 		Dim:      base.Foreground(cDim),
 		Match:    base.Foreground(cMatch).Bold(true),

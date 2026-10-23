@@ -442,7 +442,7 @@ func TestRedactAllOccurrences(t *testing.T) {
 }
 
 // TestRedactOverlappingRulesDoNotNest is why spans are collected against the
-// original text: `export DB_PASSWORD=…` is caught by two rules, and redacting
+// original text: `export DB_PASSWORD=...` is caught by two rules, and redacting
 // them in sequence would let the second match the marker the first inserted.
 func TestRedactOverlappingRulesDoNotNest(t *testing.T) {
 	f := mustFilter(t, nil, nil)

@@ -23,7 +23,7 @@ type renderCase struct {
 	golden string
 }
 
-// cases covers each shell × integration mode, with the alias toggle where it is
+// cases covers each shell x integration mode, with the alias toggle where it is
 // meaningful (capture mode emits no aliases regardless).
 var cases = func() []renderCase {
 	cs := make([]renderCase, 0, 15)

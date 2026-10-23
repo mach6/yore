@@ -332,7 +332,7 @@ func newImportCmd() *cobra.Command {
 		Use:   "import [auto | FILE...]",
 		Short: "Import existing shell history files",
 		Long: "import ingests existing shell history. `yore import auto` finds and imports\n" +
-			"the usual files (~/.zsh_history, ~/.bash_history, …); `yore import --format\n" +
+			"the usual files (~/.zsh_history, ~/.bash_history, ...); `yore import --format\n" +
 			"zsh|bash FILE...` imports explicit files. Re-runs are no-ops.",
 		Example: "  yore import auto\n  yore import --format zsh ~/.zsh_history",
 		RunE: func(_ *cobra.Command, args []string) error {
@@ -666,7 +666,7 @@ func newServerCmd() *cobra.Command {
 		Long: "server runs the sync server in the foreground. It hosts either ONE tenant,\n" +
 			"whose token comes from --token, $YORE_TOKEN, or $YORE_TOKEN_FILE and whose db\n" +
 			"is --db, or a set of NAMED tenants from $YORE_TOKENS_FILE (a JSON object\n" +
-			"{\"name\":\"token\", …}), each with its own db under <dir(--db)>/tenants/.\n" +
+			"{\"name\":\"token\", ...}), each with its own db under <dir(--db)>/tenants/.\n" +
 			"The two are mutually exclusive: set one or the other, never both.\n\n" +
 			"It shuts down gracefully on SIGINT/SIGTERM; `yore server stop` is a\n" +
 			"convenience for a local instance.",

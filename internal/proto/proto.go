@@ -85,7 +85,7 @@ type QueryReq struct {
 	// morning would answer a 1000-row request with a handful.
 	HumanOnly bool   `json:"human_only,omitempty"`
 	Tag       string `json:"tag,omitempty"`   // freeform user-tag filter (matches any effective tag); "" = any
-	Sort      string `json:"sort,omitempty"`  // "" = recency (newest first); "frecency" = frequency×recency
+	Sort      string `json:"sort,omitempty"`  // "" = recency (newest first); "frecency" = frequency x recency
 	Fuzzy     bool   `json:"fuzzy,omitempty"` // subsequence (fzf-style) matching instead of substring
 	// Limit windows the matched rows: 0 = the server default (200), LimitAll =
 	// every match. The daemon already holds the whole corpus in RAM and sorts
@@ -105,7 +105,7 @@ type QueryReq struct {
 // Sort modes for QueryReq.Sort.
 const (
 	SortRecency  = ""         // newest first
-	SortFrecency = "frecency" // frequency × recency, same-dir boost (implies dedupe)
+	SortFrecency = "frecency" // frequency x recency, same-dir boost (implies dedupe)
 )
 
 // LimitAll asks for every matching row rather than a window of them. It is for

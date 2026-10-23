@@ -14,7 +14,7 @@ import (
 // afford, and it sits with the panel's other alt-modified toggles.
 //
 // Keys are named the way the keyboard in front of the user names them, so the
-// alt keys read "alt+z" and not the Mac "⌥z": yore's platforms are Linux,
+// alt keys read "alt+z" and not the Mac "<U+2325>z": yore's platforms are Linux,
 // FreeBSD and WSL as much as macOS, and on all but one of them that glyph is
 // on no key at all. "^r" stays, being the terminal's own notation for control
 // rather than any one vendor's.

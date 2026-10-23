@@ -25,9 +25,9 @@ Read the source, do not restate it here.
 
 ## Workspace Rules
 
-- **No transient files in the working tree.** Debug scripts, scratch output, throwaway test data → `.agents/` (gitignored). Never litter the repo.
+- **No transient files in the working tree.** Debug scripts, scratch output, throwaway test data go in `.agents/` (gitignored). Never litter the repo.
 - **No planning references in code or comments.** No roadmap/phase numbers, token IDs, group names, or session notes in source. A comment explains the code to a contributor who has never seen the plan. Plan docs do not belong in the repo at all: roadmaps, phases, and open issues live in the issue tracker.
-- **Never use an em-dash.** Not in docs, not in Go doc comments or any other comment, not in a user-visible string, not in a commit message or PR description. Use the punctuation it would have stood for: a colon when what follows explains what came before, parentheses for a bracketed aside, a semicolon or full stop between independent clauses, a comma otherwise. `·` is the UI's glyph for a value a record never carried; see `theme.Unknown`. `grep -rn` for the character across the repo must return nothing.
+- **Never use an em-dash.** Not in docs, not in Go doc comments or any other comment, not in a user-visible string, not in a commit message or PR description. Use the punctuation it would have stood for: a colon when what follows explains what came before, parentheses for a bracketed aside, a semicolon or full stop between independent clauses, a comma otherwise. The middle dot (U+00B7) is the UI's glyph for a value a record never carried; see `theme.Unknown`. `grep -rn` for the character across the repo must return nothing.
 - **Docs are maintained, and each has one tone.** Update them when you change a capability. `README.md` is user-facing: what it does and how to use it, no internals. `docs/architecture.md` is a design doc for engineers: how the pieces fit and why, not what the code makes obvious. `docs/protocol.md` is the exact formats. Docs describe what is true now: never a changelog, a roadmap, or a list of known issues, and never a reference to any particular person, machine, or filesystem.
 
 ## Commit Messages

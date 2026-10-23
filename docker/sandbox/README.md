@@ -85,7 +85,7 @@ only ever sees ciphertext:
 
 ```sh
 docker cp yore-sandbox-server-1:/data/yore.db /tmp/srv.db
-grep -a hello-from-zsh-box /tmp/srv.db && echo "LEAK" || echo "ciphertext only ✓"
+grep -a hello-from-zsh-box /tmp/srv.db && echo "LEAK" || echo "ciphertext only"
 ```
 
 ## Interactive shells
@@ -99,7 +99,7 @@ docker compose -f docker/sandbox/compose.yml exec bash bash    # bash-box
 docker compose -f docker/sandbox/compose.yml exec fish fish    # fish-box
 ```
 
-The rc files already `eval "$(yore init …)"`, or `yore init fish | source`, as
+The rc files already `eval "$(yore init ...)"`, or `yore init fish | source`, as
 fish has no `eval`, so hooks are live. In takeover mode the shell's own history
 file is disabled and yore is the single source of truth (so `!N`, up-arrow, and
 Ctrl-R all read from yore). fish announces this itself on startup with "fish is
@@ -157,7 +157,7 @@ docker/sandbox/stress.sh --keep
 1. **Fresh sandbox**, `down -v` then `up -d --build`, so it always exercises the
    *current* source, then waits for the server's `/v1/health` (probed from inside
    a client; nothing is published to your host).
-2. **Enrolls** zsh-box (bootstrap) and bash-box (pending → approved from
+2. **Enrolls** zsh-box (bootstrap) and bash-box (pending to approved from
    zsh-box), and seeds an `ignore_dirs` entry plus a short `backup_interval` into
    the client config before any recording.
 3. **Generates load**: one `docker exec` per host runs a shell loop that records
@@ -165,20 +165,20 @@ docker/sandbox/stress.sh --keep
    unique, greppable markers:
    - **normal** commands (the bulk: a positive control that must be stored),
    - **secrets** in valid shapes (github token, AWS secret, URL userinfo, PEM
-     header, `TOKEN=…`), each embedding `SEKRETMARKER`; must be redacted,
+     header, `TOKEN=...`), each embedding `SEKRETMARKER`; must be redacted,
    - **leading-space** and **ignore-dir** commands; must be dropped,
    - **agent-tagged** batches (`CLAUDECODE=1`, `YORE_TAG=stress-agent`,
-     `AIDER_MODEL=…`); must be tagged.
+     `AIDER_MODEL=...`); must be tagged.
 4. **Syncs** both hosts (two rounds for full convergence).
 
-### What it verifies (each a ✓/✗; non-zero exit if any fails)
+### What it verifies (each a check mark or a ballot x; non-zero exit if any fails)
 
 | check | how |
 |-------|-----|
-| **Redaction / E2E at scale** (headline) | `docker cp` each client's `data.db` **and** the server's `yore.db` out, `grep -a` for `SEKRETMARKER` → **zero** hits everywhere (redaction dropped the secrets; the server holds ciphertext only). |
+| **Redaction / E2E at scale** (headline) | `docker cp` each client's `data.db` **and** the server's `yore.db` out, `grep -a` for `SEKRETMARKER` -> **zero** hits everywhere (redaction dropped the secrets; the server holds ciphertext only). |
 | **Positive control** | the normal `<HOSTMARKER>` commands are present via `yore search --headless`. |
-| **Convergence** | from each host, a deep `--scope all` search finds the *other* host's commands; counts match the expected non-dropped totals (±tolerance). |
-| **Dropped-count sanity** | stored ≈ generated − (secrets + space-prefixed + ignore-dir); the numbers are printed. |
+| **Convergence** | from each host, a deep `--scope all` search finds the *other* host's commands; counts match the expected non-dropped totals (+/-tolerance). |
+| **Dropped-count sanity** | stored ~ generated - (secrets + space-prefixed + ignore-dir); the numbers are printed. |
 | **Tags** | `yore search --headless --tag claude-code` (and `stress-agent`, `aider`) match the planted counts. |
 | **Performance** | times the bulk-record loop, `yore sync`, and a deep `--scope all` search at full volume; prints ms and records/sec. |
 | **Health** | exactly **one** `yore daemon` *process* per client (`pgrep -f '[y]ore daemon'`: the `[y]` trick avoids pgrep matching its own shell, and counts processes, not threads), **zero** zombies (from `/proc/<pid>/stat`), and a rolling backup exists under `~/.config/yore/backups/`. |
@@ -198,8 +198,8 @@ share one server and must never see each other's history.
 
 | tenant  | machines | distributions                                                   |
 |---------|----------|-----------------------------------------------------------------|
-| `alice` | `a01`…`a10` | alpine 3.20, alpine edge, debian 12, ubuntu 24.04, fedora 41, almalinux 9, arch, opensuse leap |
-| `bob`   | `b01`…`b10` | the same eight, differently paired with shells                  |
+| `alice` | `a01` to `a10` | alpine 3.20, alpine edge, debian 12, ubuntu 24.04, fedora 41, almalinux 9, arch, opensuse leap |
+| `bob`   | `b01` to `b10` | the same eight, differently paired with shells                  |
 
 Two users means two **server tenants**: `fleet-tokens.json` maps a name to a
 bootstrap token, the server hosts each in its own database under
@@ -246,8 +246,8 @@ docker/sandbox/fleet.sh --no-build   # re-run the load on the fleet already up
    attribution and user tags surviving the round trip; one daemon per node, no
    zombies, backups rolling.
 
-Every check prints ✓/✗ and a per-node table lands in `.agents/fleet/` (gitignored)
-along with each generator's tallies.
+Every check prints a check mark (U+2713) or a ballot x (U+2717) and a per-node
+table lands in `.agents/fleet/` (gitignored) along with each generator's tallies.
 
 ### Notes for anyone extending it
 

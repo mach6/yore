@@ -50,7 +50,7 @@ func BackupDir(dir string) string { return filepath.Join(dir, "backups") }
 // bookkeeping. Booleans therefore carry their effective value directly (no
 // accessor indirection). Duration and size settings are stored as human strings
 // ("24h", "5MB") and resolved by the typed accessors below (KeyEpochD,
-// LogMaxBytes, …), which also fall back to the default if the stored value is
+// LogMaxBytes, ...), which also fall back to the default if the stored value is
 // malformed. No consumer parses this file by hand: the shell integration and
 // other callers read values through Get / `yore get-config`.
 type Config struct {
@@ -191,7 +191,7 @@ type Config struct {
 // seeds this before decoding the file over it, so every setting the user does
 // not mention keeps the value here. Booleans whose default is true are the
 // reason this exists: a decoder cannot distinguish "absent" from "false" once
-// seeded, which is exactly the behavior we want: absent → default, present →
+// seeded, which is exactly the behavior we want: absent -> default, present ->
 // override. String/int settings left at their zero value here are defaulted by
 // their typed accessors instead (single source of truth for those).
 func Defaults() Config {
