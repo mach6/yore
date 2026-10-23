@@ -78,13 +78,13 @@ type ColumnPrefs struct {
 // It is exported because it is what gets persisted: Options.Splits restores a
 // remembered layout and Options.SaveSplits is called when a drag finishes.
 type Splits struct {
-	BrowseLeft int // host sidebar width, ‰ of the terminal width
-	BrowseTop  int // results-table height, ‰ of the middle region
-	AgentLeft  int // agent sidebar width, ‰ of the terminal width
-	AgentTop   int // prompt-list height, ‰ of the middle region
-	AgentHosts int // executor-list height, ‰ of the explorer's top-left region
-	DevicesTop int // device-list height, ‰ of the middle region
-	ZoomDetail int // detail-companion width when zoomed with it kept visible (Z), ‰ of the terminal width
+	BrowseLeft int // host sidebar width, per mille of the terminal width
+	BrowseTop  int // results-table height, per mille of the middle region
+	AgentLeft  int // agent sidebar width, per mille of the terminal width
+	AgentTop   int // prompt-list height, per mille of the middle region
+	AgentHosts int // executor-list height, per mille of the explorer's top-left region
+	DevicesTop int // device-list height, per mille of the middle region
+	ZoomDetail int // detail-companion width when zoomed with it kept visible (Z), per mille of the width
 }
 
 // Divider bounds. The ratios keep both sides of a seam meaningful; the absolute

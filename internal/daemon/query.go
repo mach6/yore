@@ -265,7 +265,7 @@ func fuzzyMatch(query string, cmds []string) []int {
 }
 
 // frecencyRank collapses rows to one per command and orders them by a
-// frequency×recency score with a boost for commands last run in the query's
+// frequency x recency score with a boost for commands last run in the query's
 // cwd, so the commands you run often and recently (and here) float to the top.
 func frecencyRank(rows []rec.Record, cwd string, nowMs int64) []rec.Record {
 	type agg struct {
@@ -311,7 +311,7 @@ func frecencyRank(rows []rec.Record, cwd string, nowMs int64) []rec.Record {
 }
 
 // recencyWeight buckets an age (in ms) into a decaying weight, matching the
-// coarse frecency bands users expect (this hour ≫ today ≫ this week ≫ older).
+// coarse frecency bands users expect (this hour >> today >> this week >> older).
 func recencyWeight(ageMs int64) float64 {
 	switch {
 	case ageMs < int64(time.Hour/time.Millisecond):

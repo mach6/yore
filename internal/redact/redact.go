@@ -55,7 +55,7 @@ import (
 // its regex (used for user patterns, whose shape we can't predict). fold makes
 // the hint scan ASCII-case-insensitive (hints must then be lowercase).
 //
-// secret is the index of the pattern's `(?P<secret>…)` capture group, or 0 when
+// secret is the index of the pattern's `(?P<secret>...)` capture group, or 0 when
 // it has none. It is what lets Redact mask the credential and keep the rest of
 // the line: most rules match a context far wider than the secret itself
 // (`mysql -u root -p<pw>` matches from the program name), so replacing the
@@ -79,18 +79,18 @@ type rule struct {
 //	jwt                  a JSON Web Token (two base64url JSON segments)
 //	aws-access-key       an AWS access key id (AKIA / ASIA temp)
 //	aws-secret           an AWS secret access key value in assignment context
-//	github-token         a GitHub PAT / OAuth / app token (ghp_ … / github_pat_)
+//	github-token         a GitHub PAT / OAuth / app token (ghp_ ... / github_pat_)
 //	slack-token          a Slack API token (xoxb-/xoxa-/xoxp-/xoxr-/xoxs-)
-//	google-api-key       a Google / Firebase API key (AIza…)
-//	stripe-key           a Stripe secret or restricted key (sk_live_/rk_test_…)
-//	llm-api-key          an OpenAI / Anthropic style key (sk-…, sk-ant-…)
-//	huggingface-token    a Hugging Face access token (hf_…)
-//	npm-token            an npm automation/access token (npm_…)
-//	pypi-token           a PyPI API token (pypi-…)
+//	google-api-key       a Google / Firebase API key (AIza...)
+//	stripe-key           a Stripe secret or restricted key (sk_live_/rk_test_...)
+//	llm-api-key          an OpenAI / Anthropic style key (sk-..., sk-ant-...)
+//	huggingface-token    a Hugging Face access token (hf_...)
+//	npm-token            an npm automation/access token (npm_...)
+//	pypi-token           a PyPI API token (pypi-...)
 //	sendgrid-key         a SendGrid API key (SG.<id>.<secret>)
 //	url-userinfo         a password embedded in a URL (scheme://user:pass@host)
-//	openssl-passin       an inline passphrase to openssl (-passin pass:…)
-//	gpg-passphrase       an inline passphrase to gpg (--passphrase …)
+//	openssl-passin       an inline passphrase to openssl (-passin pass:...)
+//	gpg-passphrase       an inline passphrase to gpg (--passphrase ...)
 //	sshpass-password     sshpass -p <password> (its whole purpose is inline pw)
 //	mysql-password       mysql/mariadb -p<pw> (attached only; see notes below)
 //	mongo-password       mongosh/mongo -p <pw> / --password <pw>
@@ -458,10 +458,11 @@ const (
 )
 
 // isMark reports whether s is already a redaction marker. Skipping those makes
-// Redact idempotent: `PASSWORD=⟪redacted:…⟫` still matches the assignment rules
-// that produced it, and without this a second pass (on import, or on a record
-// that crossed the gate twice) would redact the marker and report a fresh hit
-// for text that has no secret left in it.
+// Redact idempotent: `PASSWORD=⟪redacted:...⟫` (the marker
+// brackets are U+27EA and U+27EB) still matches the assignment rules that
+// produced it, and without this a second pass (on import, or on a record that
+// crossed the gate twice) would redact the marker and report a fresh hit for
+// text that has no secret left in it.
 func isMark(s string) bool {
 	return strings.HasPrefix(s, markPrefix) && strings.HasSuffix(s, markSuffix)
 }

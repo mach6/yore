@@ -21,7 +21,7 @@ func TestTagIndexApplyAndResolve(t *testing.T) {
 
 	cmd := rec.Record{ID: "cmd1", Session: "sess1", Executor: "claude-code"}
 
-	// Effective tags = command tag ∪ session tag, normalized. The executor is an
+	// Effective tags = command tag plus session tag, normalized. The executor is an
 	// attribute of the record, not a label on it, and must not appear.
 	eff := idx.effective(cmd)
 	assert.ElementsMatch(t, []string{"refactor", "work"}, eff)

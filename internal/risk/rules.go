@@ -552,7 +552,7 @@ func matchPipeToShell(c *cmdline) bool {
 }
 
 // matchRunFetched covers the shapes that fetch and execute without a pipe:
-// `bash <(curl …)`, `eval "$(curl …)"`.
+// `bash <(curl ...)`, `eval "$(curl ...)"`.
 func matchRunFetched(c *cmdline) bool {
 	return c.cmd(keys(fetchers)...) && c.cmd(keys(interpreters)...)
 }

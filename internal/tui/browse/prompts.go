@@ -223,7 +223,7 @@ func (m Model) promptListInner(w, h int) string {
 		segs := rowSegs(th, ctPrompts, promptSpecs, l, p, now)
 		text := oneLine(p.text)
 		// The selected row scrolls horizontally to reveal a long prompt, but only
-		// when this pane holds focus; else the command pane owns ←/→.
+		// when this pane holds focus; else the command pane owns <-/->.
 		if i == sel && m.apane == apPrompts && m.hscroll > 0 {
 			segs = append(segs, plainSegs(th.Norm, hOffset(text, m.hscroll, textW), textW)...)
 		} else {
@@ -316,8 +316,9 @@ func modalCwd(cmds []rec.Record) string {
 
 // promptStatus summarizes a prompt's command outcomes as a compact glyph/label
 // and the style for its status cell. The CMDS column already carries the total,
-// so a clean run is just a green ✓ (not "✓N", which read as an exit code and
-// duplicated CMDS); any failures surface as a red ✗N: the count that matters.
+// so a clean run is just a green check mark (not "<U+2713>N", which read as an
+// exit code and duplicated CMDS); any failures surface as a red "<U+2717>N":
+// the count that matters.
 func promptStatus(th *theme.Theme, p promptStat) (string, lipgloss.Style) {
 	switch {
 	case p.failures > 0:

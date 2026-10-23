@@ -24,7 +24,7 @@ import (
 //
 // It hosts either ONE tenant (its token from --token, $YORE_TOKEN, or
 // $YORE_TOKEN_FILE, its db at --db) or a set of NAMED tenants from
-// $YORE_TOKENS_FILE (a JSON object {"name":"token", …}), each its own db at
+// $YORE_TOKENS_FILE (a JSON object {"name":"token", ...}), each its own db at
 // <dir(--db)>/tenants/<name>.db. The two are mutually exclusive: configuring
 // both is an error, not a merge, so there is exactly one answer to which db a
 // token's history lives in.
@@ -111,7 +111,7 @@ func resolveServerToken(flag string) (string, error) {
 	return string(trimNL(b)), nil
 }
 
-// loadTenants reads named tenants from a JSON object {"name":"token", …} at
+// loadTenants reads named tenants from a JSON object {"name":"token", ...} at
 // path. An empty path means no named tenants: the single-token server. An
 // unreadable file, invalid JSON, or an object with no tenants in it is a hard
 // error: the server must never silently fall back to some other mode when
@@ -212,7 +212,7 @@ func trimNL(b []byte) []byte {
 
 // runHealthcheck probes url's health endpoint. It backs the container HEALTHCHECK
 // (distroless has no curl) but also runs interactively, so it prints a one-line
-// result ("healthy: …" to stdout, "unhealthy: …" to stderr) and returns the exit
+// result ("healthy: ..." to stdout, "unhealthy: ..." to stderr) and returns the exit
 // code the container probe reads (0 = 2xx). With no url it defaults to the
 // configured server (like `yore doctor`), so a bare `yore healthcheck` probes the
 // server you actually sync with; it falls back to the local server address only

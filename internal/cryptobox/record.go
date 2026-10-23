@@ -22,7 +22,7 @@ func (a RecordAAD) bytes(domain string) []byte {
 }
 
 // SealRecord encrypts a record's plaintext (typically its JSON encoding) under
-// the epoch DEK, binding aad. The blob is nonce(24) ‖ ciphertext.
+// the epoch DEK, binding aad. The blob is nonce(24) || ciphertext.
 func SealRecord(plaintext []byte, dek [32]byte, aad RecordAAD) ([]byte, error) {
 	return sealAEAD(dek, plaintext, aad.bytes(recSealDomain))
 }

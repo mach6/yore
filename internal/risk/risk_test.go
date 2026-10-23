@@ -118,7 +118,7 @@ func TestAssessLevels(t *testing.T) {
 		{"kubectl get pods", None, "safe"},
 		{"npm run build", None, "safe"},
 
-		// Safer variants must NOT be critical (still a network push → low).
+		// Safer variants must NOT be critical (still a network push -> low).
 		{"git push --force-with-lease origin main", Low, "vcs"},
 	}
 	for _, tc := range tests {
@@ -188,7 +188,7 @@ func TestChmodModeIsRead(t *testing.T) {
 
 // TestFlagsBelongToTheirCommand: an rm is recursive-and-forced only when the
 // flags are the rm's own; `grep -rn` plus a quoted "rm -rf" is not a deletion,
-// and `find … -exec rm -rf` is.
+// and `find ... -exec rm -rf` is.
 func TestFlagsBelongToTheirCommand(t *testing.T) {
 	require.Equal(t, Critical, Assess(`rm -rf build`).Level)
 	require.Equal(t, Critical, Assess(`find / -name x -exec rm -rf {} \;`).Level)

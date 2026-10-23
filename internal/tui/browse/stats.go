@@ -35,8 +35,9 @@ var sparkBlocks = []rune("▁▂▃▄▅▆▇█")
 
 // The contribution heatmap draws one glyph, not a density ramp: intensity is
 // carried by color (theme.Data), and a day with nothing at all by a dim dot.
-// ░▒▓ used to carry the levels, and they are the least portable glyphs in the
-// box-drawing set; plenty of terminal fonts render ▒ and ▓ close enough to be
+// Shade blocks (U+2591 to U+2593) used to carry the levels, and they are the
+// least portable glyphs in the box-drawing set; plenty of terminal fonts
+// render the medium and dark shades (U+2592, U+2593) close enough to be
 // indistinguishable, which silently collapsed two of the four levels.
 const (
 	heatEmpty = '·'
@@ -81,9 +82,9 @@ func periodCutoff(nowMs int64, days int) int64 {
 // periodDays returns the selected window's length in days (0 = all).
 func (m Model) periodDays() int { return statPeriods[m.period].days }
 
-// periodTabs renders the shared "1 Today 2 7d …" strip, the active tab
-// highlighted. Every view draws the identical widget, so the keys mean the same
-// thing wherever you are.
+// periodTabs renders the shared period strip ("1 Today 2 7d" and so on), the
+// active tab highlighted. Every view draws the identical widget, so the keys
+// mean the same thing wherever you are.
 func (m Model) periodTabs() string {
 	th := m.th
 	var b strings.Builder
@@ -462,7 +463,7 @@ func (m Model) kpiHeader(s *statsData, w int) string {
 	seg := func(label, val string) string {
 		return th.Dim.Render(label+" ") + th.Norm.Render(val)
 	}
-	// Success rate is color-coded: green ≥90%, amber ≥70%, else red.
+	// Success rate is color-coded: green >=90%, amber >=70%, else red.
 	successSeg := th.Dim.Render("Success ") + th.Norm.Render("n/a")
 	if s.successPS >= 0 {
 		style := th.ExitErr
@@ -602,8 +603,9 @@ func statColumn(th *theme.Theme, title string, items []cmdCount, colW, rows int,
 	return lines
 }
 
-// statLine is "name  ▬▬▬▬   count", padded to exactly colW columns. The bar is a
-// proportional gauge; it is dropped when the column is too narrow.
+// statLine is "name  <U+25AC><U+25AC><U+25AC><U+25AC>   count", padded to
+// exactly colW columns. The bar is a proportional gauge; it is dropped when the
+// column is too narrow.
 func statLine(th *theme.Theme, it cmdCount, maxN, colW int, kind statNameKind) string {
 	count := strconv.Itoa(it.n)
 	cntW := runewidth.StringWidth(count)
@@ -798,12 +800,12 @@ func heatCell(th *theme.Theme, cnt, peak int) string {
 	return th.Data(lvl - 1).Render(strings.Repeat(string(heatFill), heatCellW))
 }
 
-// heatmapChart is the contribution calendar. Full, it is 7 weekday rows × as many
+// heatmapChart is the contribution calendar. Full, it is 7 weekday rows x as many
 // week columns as the terminal affords, with a month ruler underneath, without
 // the ruler a year of unlabelled columns says nothing about when. Compact, it
 // folds the week into a single row of per-week totals. That form exists because
 // the full graph needs 10 rows and used to be gated on the pane being 26 tall,
-// which a standard 80×24 terminal never is: the one view that shows years of
+// which a standard 80x24 terminal never is: the one view that shows years of
 // history at a glance was invisible at the default terminal size. Compressing
 // beats disappearing.
 func (m Model) heatmapChart(s *statsData, w int, compact bool) []string {

@@ -10,11 +10,12 @@ import (
 // "#<epoch>" lines, so everything read out of one arrives untimed. Rendering
 // that as 1970-01-01 reads like a bug rather than like missing data.
 //
-// It is the same "·" the exit column uses for an outcome nobody reported and
-// the heatmap uses for a day with no activity, so one glyph means "no value"
-// everywhere in the UI. It is also a fixed single cell: the em-dash this used
-// to be is East-Asian-Ambiguous, which renders two cells wide in some
-// terminals and pushes every column after it out of line.
+// It is the same middle dot (U+00B7) the exit column uses for an outcome
+// nobody reported and the heatmap uses for a day with no activity, so one
+// glyph means "no value" everywhere in the UI. It is also a fixed single
+// cell: the em-dash this used to be is East-Asian-Ambiguous, which renders
+// two cells wide in some terminals and pushes every column after it out of
+// line.
 const Unknown = "·"
 
 // RelTime renders a compact, width-stable (<= 8 columns) relative time for a

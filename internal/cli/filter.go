@@ -14,7 +14,7 @@ import (
 // newFilterCmd builds `yore filter`: the redaction gate for the shell's own
 // native history. It is called synchronously from the shell's add-history hook
 // (zsh's zshaddhistory) with the command text on stdin. It exits 0 if yore
-// WOULD record the command (clean → keep it in the shell's history) or 1 if it
+// WOULD record the command (clean -> keep it in the shell's history) or 1 if it
 // should be dropped (secret, ignored directory, or space-prefixed). It must be
 // fast and print nothing on any path.
 func newFilterCmd() *cobra.Command {
@@ -23,7 +23,7 @@ func newFilterCmd() *cobra.Command {
 		Use:   "filter",
 		Short: "Redaction gate for the shell's native history (reads command on stdin)",
 		Long: "filter reads a command on stdin and exits 0 if yore would record it\n" +
-			"(clean → keep it in the shell's own history) or 1 if it should be\n" +
+			"(clean -> keep it in the shell's own history) or 1 if it should be\n" +
 			"dropped (secret, ignored directory, or space-prefixed). It prints\n" +
 			"nothing and is called synchronously from the shell's add-history hook.",
 		SilenceErrors:         true,

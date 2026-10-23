@@ -136,16 +136,16 @@ func TestRanges(t *testing.T) {
 }
 
 func TestRangesUTF8Offsets(t *testing.T) {
-	// "café ÉCLAIR": the case-insensitive term "éclair" must report the
-	// byte offsets of "ÉCLAIR" in the ORIGINAL string, not in a lowercased
-	// copy (é and É are 2 bytes each in UTF-8).
-	text := "café ÉCLAIR" // bytes: c a f é(2) sp É(2) C L A I R
+	// "caf<U+00E9> <U+00C9>CLAIR": the case-insensitive term "<U+00E9>clair" must
+	// report the byte offsets of "<U+00C9>CLAIR" in the ORIGINAL string, not in
+	// a lowercased copy (U+00E9 and U+00C9 are 2 bytes each in UTF-8).
+	text := "café ÉCLAIR" // bytes: c a f U+00E9(2) sp U+00C9(2) C L A I R
 	got := Parse("éclair").Ranges(text)
-	// "café " = c(1)a(1)f(1)é(2)space(1) = 6 bytes; ÉCLAIR spans [6, 6+7)=[6,13)
-	// É is 2 bytes, CLAIR is 5 bytes -> 7 bytes total.
+	// "caf<U+00E9> " = c(1)a(1)f(1)U+00E9(2)space(1) = 6 bytes; "<U+00C9>CLAIR"
+	// spans [6, 6+7)=[6,13). U+00C9 is 2 bytes, CLAIR is 5 bytes -> 7 bytes total.
 	want := [][2]int{{6, 13}}
 	require.Equal(t, want, got)
-	// Sanity: the reported span, sliced out of the original text, is ÉCLAIR.
+	// Sanity: the reported span, sliced out of the original text, is "<U+00C9>CLAIR".
 	require.Equal(t, "ÉCLAIR", text[got[0][0]:got[0][1]])
 }
 

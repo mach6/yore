@@ -210,7 +210,7 @@ func TestNotificationAndUnknownMethod(t *testing.T) {
 	require.NoError(t, s.Serve(strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/initialized"}`+"\n"), &out, io.Discard))
 	require.Empty(t, bytes.TrimSpace(out.Bytes()))
 
-	// Unknown method → method-not-found error.
+	// Unknown method -> method-not-found error.
 	resp := call(t, s, "no/such/method", nil)
 	require.NotNil(t, resp.Error)
 	require.Equal(t, codeMethodNotFound, resp.Error.Code)

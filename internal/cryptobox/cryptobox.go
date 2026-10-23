@@ -5,11 +5,11 @@
 // # Key hierarchy
 //
 //	device X25519 keypair   never leaves the machine (device.key, 0600)
-//	  │  seals ──▶ History Key (HK)   32B symmetric, one per group,
-//	  │                               stored only as per-device wrapped blobs
-//	  │  wraps  ──▶ epoch Data Encryption Keys (DEKs)   32B, one per device
-//	  │                               per epoch, each wrapped once under HK
-//	  └  seals  ──▶ history records    each sealed with its epoch's DEK
+//	  |  seals --> History Key (HK)   32B symmetric, one per group,
+//	  |                               stored only as per-device wrapped blobs
+//	  |  wraps  --> epoch Data Encryption Keys (DEKs)   32B, one per device
+//	  |                               per epoch, each wrapped once under HK
+//	  +  seals  --> history records    each sealed with its epoch's DEK
 //
 // Every operation is O(1) in the age of the history: unwrapping one DEK opens
 // an entire epoch of records, and adding a device re-wraps only HK and the
@@ -76,7 +76,7 @@ var (
 )
 
 // sealAEAD encrypts plaintext under key with a fresh nonce, returning
-// nonce ‖ ciphertext. aad is authenticated but not encrypted.
+// nonce || ciphertext. aad is authenticated but not encrypted.
 func sealAEAD(key [32]byte, plaintext, aad []byte) ([]byte, error) {
 	aead, err := chacha20poly1305.NewX(key[:])
 	if err != nil {
@@ -86,7 +86,7 @@ func sealAEAD(key [32]byte, plaintext, aad []byte) ([]byte, error) {
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, err
 	}
-	// Seal appends the ciphertext to nonce, yielding nonce ‖ ciphertext.
+	// Seal appends the ciphertext to nonce, yielding nonce || ciphertext.
 	return aead.Seal(nonce, nonce, plaintext, aad), nil
 }
 

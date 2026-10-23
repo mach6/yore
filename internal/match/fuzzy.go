@@ -12,7 +12,7 @@ import (
 // sensitive. An empty pattern matches everything with score 0.
 //
 // The score rewards contiguous runs and an early first match, so "gco" ranks
-// "git commit" (g…co) sensibly against longer, more scattered hits. It is used
+// "git commit" (g...co) sensibly against longer, more scattered hits. It is used
 // only for relative ordering, not as an absolute quantity.
 func Fuzzy(pattern, s string) (ok bool, score int) {
 	if pattern == "" {

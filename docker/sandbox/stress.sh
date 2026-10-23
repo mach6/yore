@@ -6,9 +6,10 @@
 # hammers two clients with lots of history: normal commands, secrets that MUST
 # be redacted, leading-space and ignore-dir commands that MUST be dropped, and
 # agent-tagged batches; syncs everything end-to-end encrypted, then verifies
-# correctness and reports timings. Every check prints ✓/✗ and the script exits
-# non-zero if any check fails. It always tears the sandbox down (even on
-# failure) unless --keep / KEEP=1 is given.
+# correctness and reports timings. Every check prints a check mark (U+2713) or
+# a ballot x (U+2717) and the script exits non-zero if any check fails. It
+# always tears the sandbox down (even on failure) unless --keep / KEEP=1 is
+# given.
 #
 # Usage:
 #   docker/sandbox/stress.sh                # N=5000 per host (a real run)
@@ -329,7 +330,7 @@ else
 fi
 
 # --- 5d. Dropped-count sanity ---------------------------------------------
-# stored (local) ≈ generated − (secrets + space + ignore)
+# stored (local) ~ generated - (secrets + space + ignore)
 z_gen=$(( Z_NORM + TC + TS + TA + SEC + SP + IG ))
 b_gen=$(( B_NORM + SEC + SP ))
 z_dropped=$(( SEC + SP + IG ))

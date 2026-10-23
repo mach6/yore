@@ -962,7 +962,7 @@ func TestOSC52RoundTrip(t *testing.T) {
 
 // TestOSC52Seq covers the copy sequence framing: a bare OSC 52 when not in tmux,
 // and tmux's passthrough wrapping (every inner ESC doubled, wrapped in
-// \ePtmux;…\e\\) when it is.
+// \ePtmux;...\e\\) when it is.
 func TestOSC52Seq(t *testing.T) {
 	const payload = "echo hi"
 	b64 := base64.StdEncoding.EncodeToString([]byte(payload))
@@ -1935,7 +1935,7 @@ func TestAgentsDetailsSubjectFollowsTheListPanes(t *testing.T) {
 }
 
 // TestAgentsDetailsScrolls: the pane holds a whole record, which on a tiled pane
-// is taller than the pane. Focused, ↑/↓ move its body rather than a list it is
+// is taller than the pane. Focused, up/down move its body rather than a list it is
 // not showing, it says when there is more below, and it clamps at both ends.
 func TestAgentsDetailsScrolls(t *testing.T) {
 	m := agentModel(t, 140, 14) // short enough that a record overflows
@@ -2416,7 +2416,7 @@ func TestAgentsDurColumnAdapts(t *testing.T) {
 	require.Containsf(t, strip(m.View()), " dur ", "the dur column should return once a command is timed")
 }
 
-// TestAgentsHorizontalScroll proves ←/→ reveal a prompt truncated with an
+// TestAgentsHorizontalScroll proves <-/-> reveal a prompt truncated with an
 // ellipsis, and that the offset resets on any other move.
 func TestAgentsHorizontalScroll(t *testing.T) {
 	long := "add rate limiting to the authentication middleware so that every request " +
@@ -2444,7 +2444,7 @@ func TestAgentsHorizontalScroll(t *testing.T) {
 	m, _ = step(t, m, press("k"))
 	require.Equal(t, 0, m.hscroll, "moving the cursor should reset horizontal scroll")
 
-	// ← never drives the offset negative.
+	// <- never drives the offset negative.
 	m, _ = step(t, m, press("left"))
 	require.Equal(t, 0, m.hscroll)
 }
@@ -2612,7 +2612,7 @@ func statsModelWH(t *testing.T, w, h int) Model {
 
 // TestStatsHeatmapSurvivesShortTerminal: the activity graph is the one view that
 // shows years at a glance, and it used to be gated on a pane 26 rows tall, so on
-// a stock 80×24 terminal it never appeared at all. It must compress instead.
+// a stock 80x24 terminal it never appeared at all. It must compress instead.
 func TestStatsHeatmapSurvivesShortTerminal(t *testing.T) {
 	full := strip(statsModelWH(t, 100, 40).View())
 	require.Contains(t, full, "peak", "a tall terminal gets a heatmap")
@@ -2811,9 +2811,9 @@ func TestHourAxisAlignsToBuckets(t *testing.T) {
 		}
 	}
 	// A cramped axis still labels what it can, at the same bucket positions the
-	// bars use…
+	// bars use...
 	require.Equal(t, "00 03 06 09 ", hourAxis(12))
-	// …and blanks out entirely rather than emitting a truncated label when even
+	// ...and blanks out entirely rather than emitting a truncated label when even
 	// one will not fit.
 	require.Equal(t, "  ", hourAxis(2))
 	require.Empty(t, hourAxis(0))
@@ -2878,17 +2878,17 @@ func TestPeriodIsSharedAcrossViews(t *testing.T) {
 	m := agentModel(t, 140, 40)
 	require.Equal(t, allPeriod, m.period)
 
-	// Set it in the agent explorer…
+	// Set it in the agent explorer...
 	m, _ = step(t, m, press("2"))
 	require.Equal(t, 1, m.period)
 
-	// …it holds in the stats screen…
+	// ...it holds in the stats screen...
 	m, _ = step(t, m, press("s"))
 	require.Equal(t, viewStats, m.view)
 	require.Equal(t, 1, m.period)
 	require.Containsf(t, strip(m.View()), "2 7d", "the stats header carries the same tabs")
 
-	// …and setting it there is visible back in browse.
+	// ...and setting it there is visible back in browse.
 	m, _ = step(t, m, press("3"))
 	m, _ = step(t, m, press("esc"))
 	require.Equal(t, viewBrowse, m.view)
@@ -3062,7 +3062,8 @@ func TestStartViewOpensDirectly(t *testing.T) {
 
 // TestStartDevicesFetchesTheList is what `yore devices` rides on. It is its own
 // test because the devices pane draws from a different fetch than the stats
-// sample: without it the pane opens on "loading…" and never leaves.
+// sample: without it the pane opens on "loading" plus an ellipsis (U+2026) and
+// never leaves.
 func TestStartDevicesFetchesTheList(t *testing.T) {
 	f := &fakeBackend{
 		resp: mkResp(mkRows("ls")),
@@ -3506,9 +3507,10 @@ func TestFailedMintReleasesTheKey(t *testing.T) {
 }
 
 // TestDevicesRefreshSaysSo: S reports itself the way the browse view's sync
-// does; a "refreshing…" while it runs, a "✓ refreshed" when it lands. A
-// refetch that finished silently was indistinguishable from a dead key, which
-// is exactly what it looks like when nothing has changed.
+// does; a "refreshing" plus an ellipsis (U+2026) while it runs, a
+// "<U+2713> refreshed" when it lands. A refetch that finished silently was
+// indistinguishable from a dead key, which is exactly what it looks like when
+// nothing has changed.
 func TestDevicesRefreshSaysSo(t *testing.T) {
 	m, _ := devicesFixture(t)
 

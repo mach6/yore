@@ -415,7 +415,7 @@ done
 [ "$srv_plain" = "0" ] && ok "E2E: the run marker appears in ZERO server bytes; the server holds ciphertext only" \
   || bad "E2E: server db contains plaintext command text ($srv_plain hits)"
 
-# --- drops: stored == generated − (space + ignore), to the record -----------
+# --- drops: stored == generated - (space + ignore), to the record -----------
 # Exact, not approximate. The generator says what it rolled and the earlier
 # probes are counted rather than guessed at, so the only thing a mismatch can
 # mean is that the write path gained or lost a command: which is the whole

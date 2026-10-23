@@ -118,9 +118,9 @@ This is safe to run more than once; re-importing the same file adds nothing.
 One caveat on timestamps: zsh's extended history stores a time per command, but
 bash only does if `HISTTIMEFORMAT` was set in the shell that wrote the file. A
 default `~/.bash_history` has no times in it at all, so those commands import
-with an unknown time (shown as `·`). `yore import` tells you when this happens.
-The times are not recoverable afterwards, so set `HISTTIMEFORMAT` to get them on
-future commands.
+with an unknown time (shown as a middle dot, U+00B7). `yore import` tells you
+when this happens. The times are not recoverable afterwards, so set
+`HISTTIMEFORMAT` to get them on future commands.
 
 ## Sync across machines
 
@@ -217,7 +217,7 @@ screens:
 
 Any pane zooms to full screen with `z` or resizes by dragging its border, and
 the sizes you choose are remembered. `c` shows, hides, and sorts columns in
-whichever list you are in, also remembered. `1`–`5` narrows every screen to
+whichever list you are in, also remembered. `1` to `5` narrows every screen to
 today, 7, 30, or 90 days, or everything. `?` lists every key that works on the
 screen you are on.
 
@@ -246,8 +246,9 @@ agent prompt) and masks just the credential, keeping the rest of the command:
 export DB_PASSWORD=⟪redacted:generic-token-assign⟫
 ```
 
-You keep the history; the secret is never written down or uploaded. The rules
-live in `~/.config/yore/redact.yml` and you can edit them.
+The marker's brackets are the characters ⟪ (U+27EA) and ⟫ (U+27EB). You keep
+the history; the secret is never written down or uploaded. The rules live in
+`~/.config/yore/redact.yml` and you can edit them.
 
 **Tags.** Label commands or whole sessions (`yore tag add refactor`), take a
 label back off (`yore tag rm refactor`), and filter by them
@@ -328,7 +329,7 @@ that.
 
 ## Everyday use
 
-| You want to… | Do this |
+| You want to... | Do this |
 |---|---|
 | Search and recall a command | `Ctrl-R` (or Up-arrow), type, `Enter` |
 | Re-run a command by number | `!N`, `!!`, `!$` |
@@ -339,7 +340,7 @@ that.
 | Jump to stats or the agent explorer | `yore stats`, `yore agents` |
 | See an agent's prompt and what it ran | `yore agents`; `Tab` cycles panes |
 | Filter one machine's agent work | `H` in `yore agents` |
-| Narrow to a time window | `1`–`5` for today, 7d, 30d, 90d, all |
+| Narrow to a time window | `1` to `5` for today, 7d, 30d, 90d, all |
 | Give one pane the whole screen | `z` |
 | Resize panes | drag the border with the mouse |
 | Delete, tag, or untag several commands | `space` to check rows (`ctrl+a` for all), then `d`, `Ctrl+T`, or `Ctrl+X` |
@@ -350,16 +351,16 @@ that.
 | Take a tag back off | `yore tag rm refactor --command <id>` (or `--session <id>`), or `Ctrl+X` in the browser |
 | See what your tags cover | `yore tag list` (`--scope all` for every machine), or the **By tag** column in `yore stats` |
 | Force a sync now | `yore sync`, or `S` in the browser |
-| Add a machine | `n` in `yore devices`, then `yore setup --token …` there, then `a` to approve |
+| Add a machine | `n` in `yore devices`, then `yore setup --token ...` there, then `a` to approve |
 | Approve or revoke a machine | `yore devices`; `a` or `x`, both ask first |
-| Bring back a revoked machine | same as adding one: an invitation, `yore setup --token …` on it, then `a` |
+| Bring back a revoked machine | same as adding one: an invitation, `yore setup --token ...` on it, then `a` |
 | Get back in after losing every machine | `yore recover` |
 | Check your setup | `yore doctor`, `yore status` |
 | Stop the daemon or server | `yore stop`, `yore server stop` |
 
 ## Uninstall
 
-Remove the `eval "$(yore init …)"` line from your shell config (or the
+Remove the `eval "$(yore init ...)"` line from your shell config (or the
 `yore init fish | source` line), reopen your shell, then:
 
 ```bash
