@@ -1,6 +1,8 @@
 ---
-# The gates live in the Makefile; this file only provisions a runner and calls
-# them, so `make ci` locally runs what CI runs.
+# The gates live in the Makefile; this file provisions a runner and calls them,
+# so `make ci` locally runs what CI runs. The one difference is the coverage
+# check: CI runs it through the go-covercheck action so pull requests get the
+# results as a comment; locally `make coverage-check` enforces the same floor.
 name: ci
 
 "on":
@@ -45,6 +47,9 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@v5
+        with:
+          # The write token must not be readable by the code `make test` runs.
+          persist-credentials: false
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -53,7 +58,9 @@ jobs:
       - name: Check coverage
         uses: mach6/go-covercheck-action@v1
         with:
-          comment: ${{ github.event_name == 'pull_request' }}
+          # Fork pull requests get a read-only token, so only comment on
+          # pull requests from this repository.
+          comment: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
 
   docker:
     needs: [yamllint, lint, test]

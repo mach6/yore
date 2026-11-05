@@ -39,7 +39,7 @@ freebsd/amd64. WSL runs the linux binaries; native Windows is not yet supported.
 | `make yamllint` | Lint the repository's YAML with `.yamllint.yml`. |
 | `make test` | `go test` via gotestfmt: a coverage pass (writes `coverage.out`) then a `-race` pass. |
 | `make lint` | `golangci-lint run` (covers gofmt, goimports, and vet). |
-| `make coverage-check` | Enforce the repo-wide coverage floor with go-covercheck (run **after** `make test`). |
+| `make coverage-check` | Enforce the repo-wide coverage floor with go-covercheck (run **after** `make test`). CI runs the same check through the go-covercheck action, which also comments on pull requests. |
 | `make release` | Cross-compile the tier-1 platform matrix into `dist/`. |
 | `make build-docker` | Build the server image from `docker/Dockerfile` as `yore:dev` (override with `IMAGE_TAG=`). |
 | `make test-docker` | Smoke-test that image: print its version, then start the server on a fresh volume and wait for `/v1/ready`. |
