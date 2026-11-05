@@ -5,7 +5,7 @@ a change so it passes CI on the first try.
 
 ## Prerequisites
 
-- **Go 1.26+** (yore is CGO-free, so no C toolchain is needed).
+- **Go 1.27+** (yore is CGO-free, so no C toolchain is needed).
 - A C compiler for the `-race` test pass (the race detector needs cgo).
 - **Docker** for the image targets and the end-to-end harnesses.
 - [`yamllint`](https://yamllint.readthedocs.io/) (`pip install yamllint`): the
