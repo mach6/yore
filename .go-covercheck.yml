@@ -6,6 +6,8 @@
 # `total` up over time.
 statementThreshold: 0
 blockThreshold: 0
+lineThreshold: 0
+functionThreshold: 0
 
 sortBy: statement-percent
 sortOrder: asc
@@ -14,5 +16,7 @@ format: table
 total:
   statements: 60
   blocks: 55
+  lines: 60
+  functions: 55
 
 skip: []
