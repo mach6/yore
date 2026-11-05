@@ -66,7 +66,7 @@ With [Homebrew](https://brew.sh), on macOS or Linux:
 brew install mach6/tap/yore
 ```
 
-Or from source, which needs Go 1.26+:
+Or from source, which needs Go 1.27+:
 
 ```bash
 git clone https://github.com/mach6/yore.git && cd yore
