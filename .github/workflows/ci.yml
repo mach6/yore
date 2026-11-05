@@ -40,6 +40,9 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -47,7 +50,10 @@ jobs:
           go-version-file: go.mod
       - run: make tools
       - run: make test
-      - run: make coverage-check
+      - name: Check coverage
+        uses: mach6/go-covercheck-action@v1
+        with:
+          comment: ${{ github.event_name == 'pull_request' }}
 
   docker:
     needs: [yamllint, lint, test]
