@@ -1,7 +1,7 @@
 # A yore client container with zsh, bash and fish installed and the yore hooks
 # wired into each shell's rc. One image backs the `zsh`, `bash` and `fish`
 # sandbox services; you pick the shell when you `exec` in.
-FROM golang:1.26-alpine AS build
+FROM golang:1.27-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

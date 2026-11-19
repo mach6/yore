@@ -5,7 +5,7 @@ a change so it passes CI on the first try.
 
 ## Prerequisites
 
-- **Go 1.26+** (yore is CGO-free, so no C toolchain is needed).
+- **Go 1.27+** (yore is CGO-free, so no C toolchain is needed).
 - A C compiler for the `-race` test pass (the race detector needs cgo).
 - **Docker** for the image targets and the end-to-end harnesses.
 - [`yamllint`](https://yamllint.readthedocs.io/) (`pip install yamllint`): the
@@ -39,7 +39,7 @@ freebsd/amd64. WSL runs the linux binaries; native Windows is not yet supported.
 | `make yamllint` | Lint the repository's YAML with `.yamllint.yml`. |
 | `make test` | `go test` via gotestfmt: a coverage pass (writes `coverage.out`) then a `-race` pass. |
 | `make lint` | `golangci-lint run` (covers gofmt, goimports, and vet). |
-| `make coverage-check` | Enforce the repo-wide coverage floor with go-covercheck (run **after** `make test`). |
+| `make coverage-check` | Enforce the repo-wide coverage floor with go-covercheck (run **after** `make test`). CI runs the same check through the go-covercheck action, which also comments on pull requests. |
 | `make release` | Cross-compile the tier-1 platform matrix into `dist/`. |
 | `make build-docker` | Build the server image from `docker/Dockerfile` as `yore:dev` (override with `IMAGE_TAG=`). |
 | `make test-docker` | Smoke-test that image: print its version, then start the server on a fresh volume and wait for `/v1/ready`. |
